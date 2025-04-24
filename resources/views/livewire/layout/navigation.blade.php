@@ -13,6 +13,7 @@ new class extends Component
         $logout();
 
         $this->redirect('/', navigate: true);
+
     }
 }; ?>
 

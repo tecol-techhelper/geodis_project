@@ -4,7 +4,6 @@ namespace App\Core\InternalControllers;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AuditController extends Controller

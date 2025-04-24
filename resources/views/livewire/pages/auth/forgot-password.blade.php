@@ -21,7 +21,7 @@ new #[Layout('layouts.guest')] class extends Component {
         // need to show to the user. Finally, we'll send out a proper response.
         $status = Password::sendResetLink($this->only('email'));
 
-        dd($status);
+        // dd($status);
 
         if ($status != Password::RESET_LINK_SENT) {
             $this->addError('email', 'Este correo no se encuentra registrado');
@@ -34,7 +34,7 @@ new #[Layout('layouts.guest')] class extends Component {
         session()->flash('status', __($status));
     }
 }; ?>
-
+@section('title','Cambio de Contraseña')
 <div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border border-gray-300 shadow-lg space-y-6">
     <div class="mb-4 text-[12px] md:text-base lg:text-md  text-gray-600 dark:text-gray-400">
         {{ __('Ingre tu correo para recuperar el acceso a tu cuenta.') }}

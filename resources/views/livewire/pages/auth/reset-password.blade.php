@@ -46,7 +46,7 @@ new #[Layout('layouts.guest')] class extends Component
             $this->only('email', 'password', 'password_confirmation', 'token'),
             function ($user) {
                 $user->forceFill([
-                    'password' => Hash::make($this->password),
+                    'password' => $this->password,
                     'remember_token' => Str::random(60),
                 ])->save();
 
@@ -68,26 +68,26 @@ new #[Layout('layouts.guest')] class extends Component
         $this->redirectRoute('login', navigate: true);
     }
 }; ?>
-
-<div>
+@section('title','Cambio de Contraseña')
+<div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border border-gray-300 shadow-lg space-y-6">
     <form wire:submit="resetPassword">
         <!-- Email Address -->
-        <div>
+        {{-- <div>
             <x-input-label for="email" :value="__('Email')" />
             <x-text-input wire:model="email" id="email" class="block mt-1 w-full" type="email" name="email" required autofocus autocomplete="username" />
             <x-input-error :messages="$errors->get('email')" class="mt-2" />
-        </div>
+        </div> --}}
 
         <!-- Password -->
         <div class="mt-4">
-            <x-input-label for="password" :value="__('Password')" />
+            <x-input-label for="password" :value="__('Contraseña')" />
             <x-text-input wire:model="password" id="password" class="block mt-1 w-full" type="password" name="password" required autocomplete="new-password" />
             <x-input-error :messages="$errors->get('password')" class="mt-2" />
         </div>
 
         <!-- Confirm Password -->
         <div class="mt-4">
-            <x-input-label for="password_confirmation" :value="__('Confirm Password')" />
+            <x-input-label for="password_confirmation" :value="__('confirmar Contraseña')" />
 
             <x-text-input wire:model="password_confirmation" id="password_confirmation" class="block mt-1 w-full"
                           type="password"
@@ -97,9 +97,9 @@ new #[Layout('layouts.guest')] class extends Component
         </div>
 
         <div class="flex items-center justify-end mt-4">
-            <x-primary-button>
-                {{ __('Reset Password') }}
-            </x-primary-button>
+            <x-success-button>
+                {{ __('Reestablecer') }}
+            </x-success-button>
         </div>
     </form>
 </div>

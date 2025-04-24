@@ -35,7 +35,8 @@ new #[Layout('layouts.guest')] class extends Component
     }
 }; ?>
 
-<div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border border-gray-300 shadow-lg space-y-6">
+@section('title','Inicio de Sesión')
+<div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border shadow-lg space-y-6">
 
     <!-- Imagen centrada (máx 50% del ancho del contenedor) -->
     <div class="flex justify-center">
@@ -49,7 +50,7 @@ new #[Layout('layouts.guest')] class extends Component
             <x-input-label for="username" :value="'Usuario'" />
             <x-text-input id="username" type="text" name="username" wire:model.defer="form.username"
                 class="block mt-1 w-full" required autofocus />
-            <x-input-error :messages="$errors->get('username')" class="mt-2" />
+            <x-input-error :messages="$errors->get('form.username')" class="mt-2" />
         </div>
 
         <!-- Contraseña -->

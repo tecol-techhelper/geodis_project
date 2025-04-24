@@ -27,4 +27,12 @@ class SessionLogController extends Controller
             'login_at' => now(),
         ]);
     }
+
+    // Updating current session logout
+    public function logoutUpdateSession($session, $userId): void{
+        DB::table('session_logs')
+        ->where('user_id',$userId)
+        ->where('session_token',$session)
+        ->update(['logout_at'=>now()]);
+    }
 }
