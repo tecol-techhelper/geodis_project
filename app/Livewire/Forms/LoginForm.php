@@ -4,6 +4,8 @@ namespace App\Livewire\Forms;
 
 use App\Core\InternalControllers\BlockedIpController;
 use App\Core\InternalControllers\FailedSessionController;
+use App\Core\InternalControllers\SessionLogController;
+use Illuminate\Support\Facades\Session;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
@@ -57,6 +59,17 @@ class LoginForm extends Form
         }
 
         RateLimiter::clear($this->throttleKey());
+
+        Session::regenerate();
+
+        (new SessionLogController())->logSession(
+            Auth::id(),
+            Auth::user()->username,
+            Auth::user()->role->rol_key,
+            request()->ip(),
+            request()->userAgent(),
+            session()->id()
+        );
     }
 
     /**

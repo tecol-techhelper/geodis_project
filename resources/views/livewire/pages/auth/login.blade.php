@@ -1,8 +1,6 @@
 <?php
 
 use App\Livewire\Forms\LoginForm;
-use App\Core\InternalControllers\SessionLogController;
-use Illuminate\Support\Facades\Session;
 use Livewire\Attributes\Layout;
 use App\Models\User;
 use Livewire\Volt\Component;
@@ -19,17 +17,6 @@ new #[Layout('layouts.guest')] class extends Component
         $this->validate();
 
         $this->form->authenticate();
-
-        Session::regenerate();
-
-        (new SessionLogController())->logSession(
-            Auth::id(),
-            Auth::user()->username,
-            Auth::user()->role->rol_key,
-            request()->ip(),
-            request()->userAgent(),
-            session()->id()
-        );
 
         $this->redirectIntended(default: route('dashboard', absolute: false), navigate: true);
     }
@@ -75,7 +62,7 @@ new #[Layout('layouts.guest')] class extends Component
             <a href="{{route('password.request')}}" class="text-xs sm:text-sm lg:text-sm text-blue-600 hover:underline">¿Olvidaste tu
                 contraseña?</a>
             <x-success-button class="sm:w-24 lg:w-[40%]">
-                Iniciar sesión
+                Login
             </x-success-button>
         </div>
     </form>

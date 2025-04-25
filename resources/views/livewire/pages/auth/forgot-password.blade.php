@@ -56,7 +56,7 @@ new #[Layout('layouts.guest')] class extends Component {
             <a href="{{ route('login') }}"
                 class="text-xs sm:text-sm lg:text-sm text-blue-600 hover:underline">Regresar</a>
             <x-primary-button class="lg:w-[50%] lg:text-[10px]">
-                {{ __('Enviar correo de reestablecimiento') }}
+                {{ __('Enviar correo') }}
             </x-primary-button>
         </div>
     </form>

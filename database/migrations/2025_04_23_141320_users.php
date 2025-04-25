@@ -20,6 +20,7 @@ return new class extends Migration
             $table->string('email', 256)->unique();
             $table->string('password');
             $table->tinyInteger('is_active')->default(1);
+            $table->string('user_icon')->nullable();
             $table->foreignId('role_id')->constrained()->onDelete('cascade')->onUpdate('cascade');
             $table->rememberToken();
             $table->timestamps();
