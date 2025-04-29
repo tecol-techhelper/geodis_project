@@ -17,20 +17,16 @@
     @livewireStyles
 </head>
 
-<body class="font-sans antialiased" x-data="{ sidebarOpen: false, userMenuOpen: false }" >
-    <div  class="flex h-screen overflow-hidden">
-        <aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
-            class="fixed inset-y-0 left-0 z-30 w-64 transition-transform transform bg-red-300 border-r border-red-200 md:translate-x-0 md:static md:insect-0">
-            {{-- @include('layout.sidebar') --}}
-        </aside>
-    </div>
-    <div class="flex flex-col flex-1 overflow-hidden">
+<body class="font-sans antialiased flex flex-col min-h-screen overflow-hidden" x-data="{ sidebarOpen: false, userMenuOpen: false }">
+    <div class="flex flex-1">
         @livewire('layout.navigation')
-        <main>
-            {{ $slot }}
-        </main>
+        <div class="flex h-screen overflow-hidden pt-20 md:pt-24">
+            @include('livewire.layout.sidebar')
+            <main class="pt-4">
+                {{ $slot }}
+            </main>
+        </div>
     </div>
-
 
     {{-- <div class="min-h-screen bg-gray-100 dark:bg-gray-900">
             @livewire('layout.navigation', [
