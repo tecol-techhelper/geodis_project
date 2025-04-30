@@ -42,13 +42,24 @@ new class extends Component {
     <div class="relative">
         <button @click="userMenuOpen = !userMenuOpen" class="flex items-center px-3 md:px-6">
             <img src="{{ Auth::user()->user_icon ?? asset('images/logos/logo_top.png') }}" alt="Icono Usuario"
-                class="h-8 md:h-10 lg:h-12 xl:h-14 w-8 md:w-10 lg:w-12 xl:w-14 rounded-full border-2 border-transparent hover:border-gray-700 transition duration-300 object-cover bg-white">
+                class="h-8 md:h-10 lg:h-12 xl:h-14 w-8 md:w-10 lg:w-12 xl:w-14 rounded-lg border-2 border-gray-200 hover:border-gray-700 transition duration-300 object-cover bg-white">
         </button>
         <div x-show="userMenuOpen" @click.outside="userMenuOpen = false"
             class="absolute right-0 mt-2 w-48 bg-white rounded-md overflow-hidden shadow-xl z-20">
-            <div class="border-b border-outline block px-4 py-2 text-gray-700 hover:bg-gray-300 dark:hover:bg-gray-300">
-                <span>{{ Auth::user()->username }}</span>
-                <p class="text-xs">{{ Auth::user()->role->rol_key }}</p>
+            <div class="flex items-center border-b border-outline block px-4 py-2 text-gray-700 hover:bg-gray-300 dark:hover:bg-gray-300">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="lucide lucide-id-card-icon lucide-id-card">
+                    <path d="M16 10h2" />
+                    <path d="M16 14h2" />
+                    <path d="M6.17 15a3 3 0 0 1 5.66 0" />
+                    <circle cx="9" cy="11" r="2" />
+                    <rect x="2" y="5" width="20" height="14" rx="2" />
+                </svg>
+                <div class="px-2">
+                    <span>{{ Auth::user()->username }}</span>
+                    <p class="text-xs">{{ Auth::user()->role->rol_key }}</p>
+                </div>
             </div>
             <a href="#" class="flex items-center block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
@@ -57,7 +68,7 @@ new class extends Component {
                     <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
                     <circle cx="12" cy="7" r="4" />
                 </svg>
-                <span class="px-1">Perfil</span>
+                <span class="px-2">Perfil</span>
             </a>
             <button wire:click="logout"
                 class="flex items-center w-full text-start px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
@@ -68,7 +79,7 @@ new class extends Component {
                     <polyline points="16 17 21 12 16 7" />
                     <line x1="21" x2="9" y1="12" y2="12" />
                 </svg>
-                <span class="px-1">Cerrar Sesión</span></button>
+                <span class="px-2">Cerrar Sesión</span></button>
         </div>
     </div>
 </nav>

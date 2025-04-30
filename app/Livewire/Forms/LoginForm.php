@@ -5,6 +5,7 @@ namespace App\Livewire\Forms;
 use App\Core\InternalControllers\BlockedIpController;
 use App\Core\InternalControllers\FailedSessionController;
 use App\Core\InternalControllers\SessionLogController;
+use App\Enums\UserStatus;
 use Illuminate\Support\Facades\Session;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
@@ -44,7 +45,7 @@ class LoginForm extends Form
         }
 
         // For validating if user is active
-        if(!$userName->is_active){
+        if($userName->is_active->value !== 1){
             throw ValidationException::withMessages([
                 'form.username' => 'Usuarios inhabilitado. Comunicarse con el administrador'
             ]);
