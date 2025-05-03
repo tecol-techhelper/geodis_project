@@ -17,9 +17,12 @@ Route::middleware('guest')->group(function () {
 });
 
 
-Route::middleware(['auth', 'role:admin'])->group(function(){
+Route::middleware(['auth','role:admin'])->group(function(){
     Volt::route('register', 'pages.users.register')
     ->name('register');
+
+    Volt::route('users.index','pages.users.index')
+    ->name('user.index');
 });
 
 

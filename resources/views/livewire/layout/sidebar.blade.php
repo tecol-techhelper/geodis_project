@@ -26,7 +26,7 @@
             <span class="px-2">Servicios</span>
         </a>
         @if (Auth::user()?->hasRole('admin'))
-            <a href="#"
+            <a href="{{ route('user.index') }}"
                 class="flex text-lg text-gray-600 mb-3 px-3 border-t border-b border-gay-300 h-12 items-center items-center shadow-lg focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
