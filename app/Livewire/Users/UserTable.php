@@ -5,6 +5,7 @@ namespace App\Livewire\Users;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Log;
 use PowerComponents\LivewirePowerGrid\Button;
 use PowerComponents\LivewirePowerGrid\Column;
 use PowerComponents\LivewirePowerGrid\Facades\Filter;
@@ -38,10 +39,11 @@ final class UserTable extends PowerGridComponent
         return PowerGrid::fields()
             ->add('id')
             ->add('username')
-            ->add('fullname', fn(User $model)=> $model->first_name . ' ' . $model->last_name)
+            ->add('first_name')
+            ->add('last_name')
             ->add('email')
-            ->add('is_active_value', fn(User $model)=>$model->is_active->value)
-            ->add('is_active_label', fn(User $model)=>$model->is_active->label());
+            ->add('user_area')
+            ->add('is_active');
     }
 
     public function columns(): array
@@ -51,21 +53,19 @@ final class UserTable extends PowerGridComponent
                 ->sortable(),
 
             Column::make('Nombre de Usuario', 'username')
-                ->searchable()
                 ->sortable(),
 
-            Column::make('Nombre Completo', 'fullname')
-                ->searchable()
+            Column::make('Nombre Completo', 'first_name')
+                ->bodyAttribute('whitespace-nowrap')
                 ->sortable(),
 
             Column::make('Correo', 'email')
                 ->searchable()
                 ->sortable(),
 
-            Column::make('Estado', 'is_active_value', 'is_active_label')
-            ->toggleable('is_active', UserStatus::Active->value, UserStatus::Unactive->value)
-                ->sortable()
-                ->editOnClick(true),
+            Column::make('Estado', 'is_active')
+                ->toggleable()
+                ->sortable(),
 
             Column::action('Acciones')
         ];
@@ -76,29 +76,40 @@ final class UserTable extends PowerGridComponent
     {
         return [
             Button::add('edit')
-                ->slot('Edit: '.$row->id)
+                ->slot('<span class="text-blue-600 hover:underline">Editar</span>')
                 ->id($row->id)
-                ->class('pg-btn-white dark:ring-pg-primary-600 dark:border-pg-primary-600 dark:hover:bg-pg-primary-700 dark:ring-offset-pg-primary-800 dark:text-pg-primary-300 dark:bg-pg-primary-700')
+                ->class('cursor-pointer')
+                ->dispatch('edit-user',['id'=>$row->id])
         ];
+    }
+
+    public function onUpdatedToggleable(string|int $id, string $field, string $value): void
+    {
+        User::query()->find($id)->update([
+            $field => e($value),
+        ]);
+
+        $this->skipRender();
     }
 
     public function detailRow(User $user){
         return view('livewire.pages.users.partials.user-details', compact('user'))->render();
     }
 
-    public function filters(): array
-    {
-        return[
-            Filter::inputText('username','username'),
-            Filter::inputText('email','email'),
-            Filter::select('is_active','is_active'),
-            Filter::select('is_active', 'is_active')
-                ->dataSource(collect(UserStatus::cases())->map(fn($status) => [
-                    'id' => $status->value,
-                    'name' => $status->label(),
-                    ]))
-                    ->optionValue('id')
-                    ->optionLabel('name')
-        ];
-    }
+    // public function filters(): array
+    // {
+    //     return[
+    //         Filter::inputText('username','username'),
+    //         Filter::inputText('email','email'),
+    //         Filter::select('is_active', 'is_active')
+    //             ->dataSource(collect(UserStatus::cases())->map(fn($status) => [
+    //                 'id' => $status->value,
+    //                 'name' => $status->label(),
+    //                 ]))
+    //                 ->optionValue('id')
+    //                 ->optionLabel('name')
+    //     ];
+    // }
+
+
 }

@@ -45,7 +45,7 @@ class LoginForm extends Form
         }
 
         // For validating if user is active
-        if($userName->is_active->value !== 1){
+        if($userName->is_active !== 1){
             throw ValidationException::withMessages([
                 'form.username' => 'Usuarios inhabilitado. Comunicarse con el administrador'
             ]);

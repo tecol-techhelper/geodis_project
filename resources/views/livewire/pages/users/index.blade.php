@@ -11,5 +11,5 @@ new #[Layout('layouts.app')] class extends Component {};
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Usuarios', 'icon' => 'users']
     ]"></x-breadcrums>
-    <livewire:users.user-table />
+    <livewire:users.user-table/>
 </div>

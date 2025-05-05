@@ -52,7 +52,7 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
-            'is_active' => UserStatus::class
+            'is_active' => 'int'
         ];
     }
 
