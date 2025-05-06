@@ -1,7 +1,7 @@
 <x-app-layout>
             <div class="">
                 <x-breadcrums :items="[
-                    ['label' => 'Inicio','icon' =>'house']
+                    ['label' => 'Inicio','icon' =>'home']
                 ]"></x-breadcrums>
                 <div class="p-6 text-gray-900 dark:text-gray-100">
                     {{ __("You're logged in!") }}

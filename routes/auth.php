@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\VerifyEmailController;
+
 use Illuminate\Support\Facades\Route;
 use Livewire\Volt\Volt;
 
@@ -18,12 +19,19 @@ Route::middleware('guest')->group(function () {
 
 
 Route::middleware(['auth','role:admin'])->group(function(){
-    Volt::route('register', 'pages.users.register')
-    ->name('register');
+    
+    Volt::route('/userIndex/edit/{user?}', 'pages.users.user-form')
+    ->name('users.form');
 
-    Volt::route('users.index','pages.users.index')
+    // Volt::route('/userIndex/create', 'pages.users.user-form')
+    // ->name('users.create');
+
+    Volt::route('usersIndex','pages.users.index')
     ->name('user.index');
 });
+
+
+
 
 
 // Route::middleware('auth')->group(function () {

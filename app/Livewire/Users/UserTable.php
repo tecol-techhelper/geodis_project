@@ -5,7 +5,6 @@ namespace App\Livewire\Users;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\Log;
 use PowerComponents\LivewirePowerGrid\Button;
 use PowerComponents\LivewirePowerGrid\Column;
 use PowerComponents\LivewirePowerGrid\Facades\Filter;
@@ -26,21 +25,24 @@ final class UserTable extends PowerGridComponent
             PowerGrid::footer()
                 ->showPerPage()
                 ->showRecordCount(),
+                PowerGrid::detail()
+                ->view('livewire.pages.users.partials.user-details')
+                ->showCollapseIcon()
         ];
     }
 
     public function datasource(): Builder
     {
-        return User::query();
+        return User::query()->with('role');
     }
 
     public function fields(): PowerGridFields
     {
         return PowerGrid::fields()
             ->add('id')
+            ->add('user_icon', fn($user)=>'<img class="w-8 h-8 shrink-0 grow-0 rounded-full" src="' . asset("images/avatars/{$user->id}.jpeg") . '">')
             ->add('username')
-            ->add('first_name')
-            ->add('last_name')
+            ->add('full_name', fn(User $model)=> $model->first_name . ' ' .  $model->last_name)
             ->add('email')
             ->add('user_area')
             ->add('is_active');
@@ -52,10 +54,12 @@ final class UserTable extends PowerGridComponent
             Column::make('ID', 'id')
                 ->sortable(),
 
+            Column::make ('Icono','user_icon'),
+
             Column::make('Nombre de Usuario', 'username')
                 ->sortable(),
 
-            Column::make('Nombre Completo', 'first_name')
+            Column::make('Nombre Completo', 'full_name', 'first_name')
                 ->bodyAttribute('whitespace-nowrap')
                 ->sortable(),
 
@@ -79,7 +83,7 @@ final class UserTable extends PowerGridComponent
                 ->slot('<span class="text-blue-600 hover:underline">Editar</span>')
                 ->id($row->id)
                 ->class('cursor-pointer')
-                ->dispatch('edit-user',['id'=>$row->id])
+                ->route('users.form',['user'=>$row->id])
         ];
     }
 
@@ -92,9 +96,9 @@ final class UserTable extends PowerGridComponent
         $this->skipRender();
     }
 
-    public function detailRow(User $user){
-        return view('livewire.pages.users.partials.user-details', compact('user'))->render();
-    }
+    // public function detailRow(User $user){
+    //     return view('livewire.pages.users.partials.user-details', compact('user'))->render();
+    // }
 
     // public function filters(): array
     // {
@@ -110,6 +114,5 @@ final class UserTable extends PowerGridComponent
     //                 ->optionLabel('name')
     //     ];
     // }
-
 
 }
