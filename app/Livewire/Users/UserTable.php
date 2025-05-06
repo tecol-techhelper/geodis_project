@@ -83,7 +83,7 @@ final class UserTable extends PowerGridComponent
                 ->slot('<span class="text-blue-600 hover:underline">Editar</span>')
                 ->id($row->id)
                 ->class('cursor-pointer')
-                ->route('users.form',['user'=>$row->id])
+                ->route('user.edit',['user'=>$row->id])
         ];
     }
 

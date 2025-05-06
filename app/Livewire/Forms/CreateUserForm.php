@@ -5,14 +5,12 @@ namespace App\Livewire\Forms;
 use App\Enums\Rol;
 use App\Enums\UserStatus;
 use App\Models\User;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\Password;
-use Livewire\Attributes\Validate;
 use Livewire\Form;
 use Livewire\WithFileUploads;
 
-class UserForm extends Form
+class CreateUserForm extends Form
 {
     use WithFileUploads;
 
@@ -27,20 +25,6 @@ class UserForm extends Form
     public int $role_id = 1;
     public $user_icon;
 
-    // public function mount(?User $user = null): void
-    // {
-    //     if ($user) {
-    //         $this->user = $user;
-    //         $this->username = $user->username ?? '';
-    //         $this->first_name = $user->first_name ?? '';
-    //         $this->last_name = $user->last_name ?? '';
-    //         $this->user_area = $user->user_area ?? '';
-    //         $this->email = $user->email ?? '';
-    //         $this->is_active = $user->is_active ?? 0;
-    //         $this->role_id = $user->role_id ?? 0;
-    //     }
-    // }
-
     public function save(): User
     {
         $this->validate();
@@ -53,7 +37,7 @@ class UserForm extends Form
         $user->user_area = $this->user_area;
         $user->email = $this->email;
         $user->is_active = $this->is_active;
-        $user->rol_id = $this->role_id;
+        $user->role_id = $this->role_id;
 
         if ($this->password) {
             $user->forceFill([
@@ -65,14 +49,6 @@ class UserForm extends Form
             $path = $this->user_icon->store('users/icon', 'public');
             $user->user_icon = $path;
         }
-
-        // if ($this->user_icon) {
-        //     if ($user->user_icon && Storage::exists($user->user_icon)) {
-        //         Storage::delete($user->user_icon);
-        //     }
-        //     $path = $this->user_icon->store('users/icon', 'public');
-        //     $user->user_icon = $path;
-        // }
 
         $user->save();
 

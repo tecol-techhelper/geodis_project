@@ -19,12 +19,10 @@ Route::middleware('guest')->group(function () {
 
 
 Route::middleware(['auth','role:admin'])->group(function(){
-    
-    Volt::route('/userIndex/edit/{user?}', 'pages.users.user-form')
-    ->name('users.form');
-
-    // Volt::route('/userIndex/create', 'pages.users.user-form')
-    // ->name('users.create');
+    Volt::route('/userIndex/create', 'pages.users.create-user')
+    ->name('user.create');
+    Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
+    ->name('user.edit');
 
     Volt::route('usersIndex','pages.users.index')
     ->name('user.index');
