@@ -23,11 +23,24 @@
         <div class="flex flex-1 h-screen overflow-hidden pt-20 md:pt-24">
             @include('livewire.layout.sidebar')
             <main class="flex-1 pt-4 px-6 lg:px-8 bg-white dark:bg-gray-800 overflow-hidden shadow-sm sm:rounded-lg">
-                {{ $slot }}
+                {{ $slot }}
             </main>
         </div>
     </div>
     @livewireScripts
+    @stack('scripts')
+
+    <script>
+        document.addEventListener("livewire:load", function() {
+            Livewire.hook("message.processed", () => {
+                if (typeof refreshLucideIcons === 'function') {
+                    refreshLucideIcons();
+                } else {
+                    console.warn("refreshLucideIcons no está disponible.");
+                }
+            });
+        });
+    </script>
 </body>
 
 </html>
