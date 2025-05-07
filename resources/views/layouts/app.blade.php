@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
 
+    {{-- Icon page --}}
+    <link rel="icon" href="{{ asset('images/logos/logo_top.png') }}" type="image/png">
+
     <title>@yield('title', config('app.name', 'Laravel'))</title>
 
     <!-- Fonts -->

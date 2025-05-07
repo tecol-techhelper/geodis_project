@@ -36,7 +36,7 @@ class UserSeeder extends Seeder
             'user_area' => 'Nomina',
             'email' => 'nomina@transtecol.com.co',
             'password' =>'admin1234*',
-            'is_active' => 0,
+            'is_active' => 1,
             'role_id' => $coordRol->id,
             'created_at' => now(),
         ]);

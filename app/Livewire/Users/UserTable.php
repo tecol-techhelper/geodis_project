@@ -5,9 +5,9 @@ namespace App\Livewire\Users;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Storage;
 use PowerComponents\LivewirePowerGrid\Button;
 use PowerComponents\LivewirePowerGrid\Column;
-use PowerComponents\LivewirePowerGrid\Facades\Filter;
 use PowerComponents\LivewirePowerGrid\Facades\PowerGrid;
 use PowerComponents\LivewirePowerGrid\PowerGridFields;
 use PowerComponents\LivewirePowerGrid\PowerGridComponent;
@@ -40,7 +40,7 @@ final class UserTable extends PowerGridComponent
     {
         return PowerGrid::fields()
             ->add('id')
-            ->add('user_icon', fn($user)=>'<img class="w-8 h-8 shrink-0 grow-0 rounded-full" src="' . asset("images/avatars/{$user->id}.jpeg") . '">')
+            ->add('user_icon', fn(User $user)=>'<img class="w-8 h-8 shrink-0 grow-0 rounded-full" src="' . Storage::url($user->user_icon) . '">')
             ->add('username')
             ->add('full_name', fn(User $model)=> $model->first_name . ' ' .  $model->last_name)
             ->add('email')

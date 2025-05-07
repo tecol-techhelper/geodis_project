@@ -27,7 +27,7 @@ class RoleSeeder extends Seeder
                 'created_at' => now()
             ),
             array(
-                'rol_key'=>'acct',
+                'rol_key'=>'account',
                 'rol_name' => 'Contador',
                 'rol_description' => 'Usuario responsable de los datos contables. Tiene acceso a los campos relacionados con pagos y facturación',
                 'created_at' => now()

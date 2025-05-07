@@ -27,6 +27,7 @@ class EditUserForm extends Form
     public string $password_confirmation = '';
     public int $is_active = 1;
     public int $role_id = 1;
+    public ?string $user_icon_url = null;
     public $user_icon;
 
     public function mount(?User $user = null): void
@@ -40,6 +41,7 @@ class EditUserForm extends Form
             $this->email = $user->email ?? '';
             $this->is_active = $user->is_active ?? 0;
             $this->role_id = $user->role_id ?? 0;
+            $this->user_icon_url = $user->user_icon;
         }
     }
 

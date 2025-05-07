@@ -31,7 +31,7 @@ class PermissionRoleSeeder extends Seeder
         ]);
 
         // Permissions to accountant user
-        $accounting = Role::where('rol_key', 'acct')->first();
+        $accounting = Role::where('rol_key', 'account')->first();
         $accounting->permissions()->attach([
             Permission::where('permission_key','view_services')->value('id')=> ['created_at'=>now()],
             Permission::where('permission_key','edit_accounting_block')->value('id')=> ['created_at'=>now()]
