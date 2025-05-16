@@ -1,0 +1,25 @@
+{
+  "hash": "4a18aa4a",
+  "configHash": "a4f9ac11",
+  "lockfileHash": "6004b837",
+  "browserHash": "b4da05f1",
+  "optimized": {
+    "lucide": {
+      "src": "../../node_modules/lucide/dist/esm/lucide.js",
+      "file": "lucide.js",
+      "fileHash": "e732a87d",
+      "needsInterop": false
+    },
+    "axios": {
+      "src": "../../node_modules/axios/index.js",
+      "file": "axios.js",
+      "fileHash": "84050f5a",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-PZ5AY32C": {
+      "file": "chunk-PZ5AY32C.js"
+    }
+  }
+}
