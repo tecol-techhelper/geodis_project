@@ -6,6 +6,23 @@ use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * AuditController
+ * 
+ * Internal system controller responsible for recording made to 
+ * Eloquent models within the audit table ('audits')
+ * 
+ * ⚠️ This controller isn't publicy displayed or on routes.
+ * Its use is internal and programmatic
+ * 
+ * Every audit record includes:
+ * - Affected model
+ * - Old and new values (just modified fields)
+ * - User whose mades the change (ID, username and rol)
+ * - Ip and user agent 
+ * - Action performed ('create','update','delete')
+ */
+
 class AuditController extends Controller
 {
     public function log(

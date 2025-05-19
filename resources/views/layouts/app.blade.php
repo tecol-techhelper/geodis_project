@@ -20,7 +20,7 @@
     @livewireStyles
 </head>
 
-<body class="font-sans antialiased flex flex-col min-h-screen overflow-hidden" x-data="{ sidebarOpen: false, userMenuOpen: false }">
+<body class="font-sans antialiased flex flex-col min-h-screen overflow-hidden" x-data="{ sidebarOpen: false, userMenuOpen: false, open: false }">
     <div class="flex flex-1">
         @livewire('layout.navigation')
         <div class="flex flex-1 h-screen overflow-hidden pt-20 md:pt-24">
@@ -32,18 +32,8 @@
     </div>
     @livewireScripts
     @stack('scripts')
+    <script src="https://unpkg.com/lucide@latest"></script>
 
-    <script>
-        document.addEventListener("livewire:load", function() {
-            Livewire.hook("message.processed", () => {
-                if (typeof refreshLucideIcons === 'function') {
-                    refreshLucideIcons();
-                } else {
-                    console.warn("refreshLucideIcons no está disponible.");
-                }
-            });
-        });
-    </script>
 </body>
 
 </html>

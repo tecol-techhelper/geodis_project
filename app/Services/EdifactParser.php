@@ -35,7 +35,7 @@ class EdifactParser
             // Extracting the name of the segment
             $fields = explode("+", $line);
             $segmentID = $fields[0];
-            
+
             switch ($segmentID) {
                 case 'UNB':
                     $data = array_merge($data, self::parseUNB($fields));
@@ -50,21 +50,9 @@ class EdifactParser
                     $data = array_merge($data, self::parseDTM($fields));
                     break;
             }
-            
         }
-        
+
         return $data;
-    }
-
-
-
-    //Parsing UNB segment
-    public static function parseUNB(array $parts): array
-    {
-        return [
-            'message_date' => isset($parts[4]) ? self::formatingDateDDYYMM($parts[4]) : null,
-            'transmission_id' => $parts[5] ?? null
-        ];
     }
 
     //Parsing UNH segment
@@ -159,5 +147,69 @@ class EdifactParser
         $date = \DateTime::createFromFormat('Y-m-d H:i', $dateTime);
 
         return $date?->format('Y-m-d H:i:s');
+    }
+
+
+    /**
+     * Another methods for texting
+     */
+
+    public static function extractMessages(string $content): array
+    {
+        // Separating the message in segments
+        $segments = preg_split("/'\\s*/", trim($content));
+        $messages = [];
+        $currentMessage = [];
+
+        // walk through the array
+        foreach ($segments as $segment) {
+            // Discarting all spaces and empy segments
+            $segment = trim($segment);
+            if ($segment === '') continue;
+
+
+            // Validating if the current segment starts with UNH or UNT
+            if (str_starts_with($segment, 'UNH')) {
+                $currentMessage = [$segment];
+            } elseif (str_starts_with($segment, 'UNT')) {
+                // Adding final segment (UNT) to the message block UNH - UNT
+                $currentMessage[] = $segment;
+                $messages[] = implode("'", $currentMessage) . "'";
+                $currentMessage = [];
+            } else {
+                // Adding intermediate segments between UNH and UNT
+                $currentMessage[] = $segment;
+            }
+        }
+
+        // Returning a list of message(s)
+        return $messages;
+    }
+
+    /**
+     * Parsing UMBsegment apart because there's one per file
+     */
+
+    public static function extractUNBSegment(string $content): ?array
+    {
+        $segments = preg_split("/'\\s*/", trim($content));
+
+        foreach ($segments as $segment) {
+            if (str_starts_with($segment, 'UNB')) {
+                $parts = explode('+', $segment);
+                return self::parseUNB($parts);
+            }
+        }
+
+        return null;
+    }
+
+    //Parsing UNB segment
+    public static function parseUNB(array $parts): array
+    {
+        return [
+            'message_date' => isset($parts[4]) ? self::formatingDateDDYYMM($parts[4]) : null,
+            'transmission_id' => $parts[5] ?? null
+        ];
     }
 }
