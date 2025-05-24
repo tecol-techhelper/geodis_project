@@ -61,7 +61,7 @@ class ProcessEdifactFileCommand extends Command
                 // Build local routes in the project
                 $fileName = basename($remoteRoute);
                 $localRoute = "edifact/inbox/{$messageType}/{$fileName}";
-                $fullPath = storage_path("app/{$localRoute}");
+                $fullPath = storage_path("app/public/{$localRoute}");
 
                 // Creates directory if not exist
                 $directory = dirname($fullPath);
@@ -72,7 +72,7 @@ class ProcessEdifactFileCommand extends Command
                 Log::debug("Ruta a guardar: {$fullPath}");
 
                 // Save file in local disk
-                File::put($fullPath, $content);
+                Storage::disk('public')->put($localRoute, $content);
 
                 // Validates that files was saved correctly
                 if (!File::exists($fullPath)) {

@@ -12,7 +12,7 @@
             </svg>
             <span class="px-2">Menu Principal</span>
         </a>
-        <a href="#"
+        <a href="{{ route('service.index') }}"
             class="flex text-lg text-gray-600 mb-3 px-3 border-t border-b border-gay-300 h-12 items-center items-center shadow-lg focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -38,6 +38,32 @@
                 </svg>
                 <span class="px-2">Usuarios</span>
             </a>
+            <button @click="open = !open"
+                class="flex w-full items-center px-4 py-2 text-left text-gray-700 hover:bg-gray-200 focus:outline-none border shadow-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" stroke="currentColor"
+                    stroke-width="2" viewBox="0 0 24 24">
+                    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                    <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                    <path d="M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1" />
+                    <path d="M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1" />
+                </svg>
+                <span class="flex-1">Parsed Files</span>
+                <svg :class="{ 'rotate-180': open }" class="w-4 h-4 transition-transform" viewBox="0 0 20 20"
+                    fill="currentColor">
+                    <path fill-rule="evenodd"
+                        d="M5.23 7.21a.75.75 0 011.06.02L10 11.293l3.71-4.06a.75.75 0 111.1 1.02l-4.25 4.65a.75.75 0 01-1.1 0l-4.25-4.65a.75.75 0 01.02-1.06z"
+                        clip-rule="evenodd" />
+                </svg>
+            </button>
+
+            <!-- Contenido desplegable -->
+            <div x-show="open" x-cloak class="pl-5 mt-1 space-y-1 border">
+                <a href="{{ route('edifact.viewer') }}"
+                    class="block px-2 py-1 text-gray-600 rounded hover:bg-gray-100">Messages Viewer</a>
+                <a href="{{ route('edifactfiles.index') }}"
+                    class="block px-2 py-1 text-gray-600 rounded hover:bg-gray-100">Uploaded Files</a>
+            </div>
         @endif
     </div>
 </aside>
+

@@ -15,6 +15,10 @@
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=figtree:400,500,600&display=swap" rel="stylesheet" />
 
+    {{-- flatpickr --}}
+    {{-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script> --}}
+
     <!-- Scripts -->
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     @livewireStyles
@@ -25,7 +29,8 @@
         @livewire('layout.navigation')
         <div class="flex flex-1 h-screen overflow-hidden pt-20 md:pt-24">
             @include('livewire.layout.sidebar')
-            <main class="flex-1 pt-4 px-6 lg:px-8 bg-white dark:bg-gray-800 overflow-hidden shadow-sm sm:rounded-lg">
+            <main
+                class="flex-1 pt-4 px-6 lg:px-8 bg-white dark:bg-gray-800 overflow-hidden shadow-sm sm:rounded-lg overflow-y-auto">
                 {{ $slot }}
             </main>
         </div>

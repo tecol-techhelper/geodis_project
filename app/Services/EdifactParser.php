@@ -28,27 +28,67 @@ class EdifactParser
 
         foreach ($lines as $line) {
             $line = trim($line);
-            // If the current segment is empty, pass to the next segment
-            if ($line === "") {
-                continue;
-            }
-            // Extracting the name of the segment
+            if ($line === "") continue;
+
             $fields = explode("+", $line);
             $segmentID = $fields[0];
 
-            switch ($segmentID) {
-                case 'UNB':
-                    $data = array_merge($data, self::parseUNB($fields));
-                    break;
-                case 'UNH':
-                    $data = array_merge($data, self::parseUNH($fields));
-                    break;
-                case 'BGM':
-                    $data = array_merge($data, self::parseBGM($fields));
-                    break;
-                case 'DTM':
-                    $data = array_merge($data, self::parseDTM($fields));
-                    break;
+            try {
+                switch ($segmentID) {
+                    case 'UNB':
+                        $data = array_merge($data, self::parseUNB($fields));
+                        break;
+                    case 'UNH':
+                        $data = array_merge($data, self::parseUNH($fields));
+                        break;
+                    case 'BGM':
+                        $data = array_merge($data, self::parseBGM($fields));
+                        break;
+                    case 'DTM':
+                        $data = array_merge($data, self::parseDTM($fields));
+                        break;
+                    case 'NAD':
+                        $data = array_merge($data, self::parseNAD($fields) ?? []);
+                        break;
+                    case 'LOC':
+                        $data = array_merge($data, self::parseLOC($fields) ?? []);
+                        break;
+                    case 'CNI':
+                        $data = array_merge($data, self::parseCNI($fields));
+                        break;
+                    case 'CNT':
+                        $data = array_merge($data, self::parseCNT($fields) ?? []);
+                        break;
+                    case 'TDT':
+                        $data = array_merge($data, self::parseTDT($fields) ?? []);
+                        break;
+                    case 'STS':
+                        $data = array_merge($data, self::parseSTS($fields));
+                        break;
+                    case 'EQD':
+                        $data = array_merge($data, self::parseEQD($fields) ?? []);
+                        break;
+                    case 'FTX':
+                        $data = array_merge($data, self::parseFTX($fields) ?? []);
+                        break;
+                    case 'GID':
+                        $data = array_merge($data, self::parseGID($fields) ?? []);
+                        break;
+                    case 'PIA':
+                        $data = array_merge($data, self::parsePIA($fields) ?? []);
+                        break;
+                    case 'PCI':
+                        $data = array_merge($data, self::parsePCI($fields) ?? []);
+                        break;
+                    case 'MEA':
+                        $data = array_merge($data, self::parseMEA($fields) ?? []);
+                        break;
+                    case 'DIM':
+                        $data = array_merge($data, self::parseDIM($fields) ?? []);
+                        break;
+                }
+            } catch (\Throwable $e) {
+                Log::error("[{$segmentID}] Error parseando segmento: " . $e->getMessage());
             }
         }
 
@@ -103,6 +143,224 @@ class EdifactParser
         $dbField = self::QUALIFIER_MAP[$dateType] ?? null;
 
         return $dbField ? [$dbField => $dateFormated] : [];
+    }
+
+    /** 
+     * Pendientes implementar
+     * Parsing NAD
+     * NAD+<PartyQualifier>+<PartyID>+<CodeQualifier>+<Name>+<Street>+<City>+<Region>+<PostalCode>+<CountryCode>'
+     */
+    public static function parseNAD(array $parts): ?array
+    {
+        $qualifier = $parts[1] ?? null;
+        if (!$qualifier) return null;
+
+        return [
+            'party_qualifier' => $qualifier,
+            'party_id' => $parts[2] ?? null,
+            'name' => $parts[4] ?? null,
+            'street' => $parts[5] ?? null,
+            'city' => $parts[6] ?? null,
+            'region' => $parts[7] ?? null,
+            'country' => $parts[9] ?? null,
+        ];
+    }
+
+    // Parsing LOC
+    // LOC+<PlaceQualifier>+<LocationIdentification>:<CodeQualifier>'
+    public static function parseLOC(array $parts): ?array
+    {
+        $qualifier = $parts[1] ?? null;
+        if (!$qualifier) return null;
+
+        return [
+            'place_qualifier' => $qualifier,
+            'location_code' => $parts[2]
+        ];
+    }
+
+    // Parsing CNI
+    // CNI+<ConsignmentSequenceNumber>+<ConsignmentReferenceNumber>'
+    public static function parseCNI(array $parts): array
+    {
+        return [
+            'consignment_reference_number' => $parts[2] ?? null
+        ];
+    }
+
+    // Parsing CNT
+    // CNT+<ControlQualifier>:<Value>:<MeasurementUnit>'
+    public static function parseCNT(array $parts): ?array
+    {
+        if (!isset($parts[1])) return null;
+
+        $elements = explode(":", $parts[1]);
+
+        $qualifier = $elements[0] ?? null;
+        $value = $elements[1] ?? null;
+        $measurementUnit = $elements[2] ?? null;
+
+        if (!$qualifier) return null;
+
+        return [
+            'control_qualifier' => $qualifier,
+            'value' => $value,
+            'meausrementUnit' => $measurementUnit
+        ];
+    }
+
+    // Parsing STS
+    // STS+<StatusEventSequence>+<StatusCode>'
+    public static function parseSTS(array $parts): array
+    {
+        return [
+            'status_code' => $parts[2] ?? null
+        ];
+    }
+
+    // Parsing TDT
+    // TDT+<TransportStageCode>+<TransportID>+<TransportMode>+<CarrierID>+<CarrierCode>:<CodeListQualifier>:<ResponsibleAgency>:<CarrierName>+<TransportMeansCode>+<NationalityCode>'
+    public static function parseTDT(array $parts): ?array
+    {
+        $qualifier = $parts[1] ?? null;
+        if (!$qualifier) return null;
+
+        return [
+            'transport_stage_code' => $qualifier,
+            'transport_id' => $parts[2] ?? null,
+            'transport_mode' => $parts[3] ?? null,
+            'carrier_id' => $parts[4] ?? null,
+            'carrier_details' => $parts[5] ?? null
+        ];
+    }
+
+    // Parsing EQD
+    // EQD+<EquipmentTypeCode>+<EquipmentID>+<FullOrEmptyIndicator>+<EquipmentSizeAndType>+<EquipmentSupplier>+<SealID>+<EquipmentStatus>+<OwnershipIndicator>'
+    public static function parseEQD(array $parts): ?array
+    {
+        $equipmentType = $parts[1] ?? null;
+        if (!$equipmentType) return null;
+
+        return [
+            'equipment_type' => $equipmentType,
+            'equipment_id' => $parts[2] ?? null,
+            'container_load_status' => $parts[3] ?? null
+        ];
+    }
+
+    // Parsing GID
+    // GID+<ItemNumber>+<PackageCount>:<PackageType>'
+    public static function parseGID(array $parts): ?array
+    {
+        $itemNumber = $parts[1] ?? null;
+        if (!$itemNumber) return null;
+
+        $elements = explode(':', $parts[2]);
+        $pkCount = $elements[0] ?? null;
+        $pkType = $elements[1] ?? null;
+
+        return [
+            'item_number' => $itemNumber,
+            'package_count' => $pkCount,
+            'package_type' => $pkType
+        ];
+    }
+
+    // Parsing PCI
+    // PCI+<MarkingInstructions>+<PackageID>'
+    public static function parsePCI(array $parts): ?array
+    {
+        $markingExistence = $parts[1] ?? null;
+        if (!$markingExistence || $markingExistence == "25") return null;
+
+        return [
+            'marking_existence' => $markingExistence,
+            'package_id' => $parts[2] ?? null
+        ];
+    }
+
+    // Parsing PIA
+    // PIA+<ProductIdFunctionCode>+<ProductId>:<CodeListQualifier>'
+    public static function parsePIA(array $parts): ?array
+    {
+        if (!isset($parts[1])) return null;
+
+        $idFunction = $parts[1] ?? null;
+        $productID = $parts[2] ?? null;
+
+        return [
+            'id_function' => $idFunction,
+            'product_id' => $productID
+        ];
+    }
+
+    // Parsing MEA
+    //MEA+<MeasurementPurpose>+<MeasurementAttribute>+<UnitCode>:<Value>'
+    public static function parseMEA(array $parts): ?array
+    {
+        $purpose = $parts[1] ?? null;
+        if (!isset($purpose)) return null;
+
+        $measurementType = $parts[2] ?? null;
+
+        $measurementData = explode(':', $parts[3]);
+
+        $unit = $measurementData[0] ?? null;
+        $value = $measurementData[1] ?? null;
+
+        $hash = md5($purpose . '|' . $measurementType . '|' . $unit);
+
+        return [
+            'purpose' => $purpose,
+            'measurement_type' => $measurementType,
+            'unit' => $unit,
+            'value' => $value,
+            'hash' => $hash
+        ];
+    }
+
+    // Parsing DIM
+    // DIM+<DimensionQualifier>+<UnitCode>:<Length>:< Width >:<Height>'
+    public static function parseDIM(array $parts): ?array
+    {
+        $qualifier = $parts[1] ?? null;
+        if (!isset($qualifier)) return null;
+
+
+
+        $dimData = explode(':', $parts[2]);
+
+        $unit = $dimData[0] ?? null;
+        $length = $dimData[1] ?? null;
+        $width = $dimData[2] ?? null;
+        $height = $dimData[3] ?? null;
+
+
+        $hash = md5(implode('|', [$unit, $length, $width, $height]));
+
+        return [
+            'qualifier' => $qualifier,
+            'unit' => $unit,
+            'length' => $length,
+            'width' => $width,
+            'height' => $height,
+            'hash' => $hash
+        ];
+    }
+
+    // Parsing FTX
+    // FTX+<TextSubjectQualifier>+<TextFunction>+<TextReference>+<TextLine1>:<TextLine2>:<TextLine3>'
+    public static function parseFTX(array $parts): ?array
+    {
+        $qualifier = $parts[1] ?? null;
+        $message = $parts[4] ?? null;
+
+        if (!$qualifier || !$message) return null;
+
+        return [
+            'qualifier' => $parts[1],
+            'message' => str_replace(':', "\n", $message)
+        ];
     }
 
     /**
@@ -205,10 +463,12 @@ class EdifactParser
     }
 
     //Parsing UNB segment
+    // UNB+<SyntaxIdentifier>:<SyntaxVersion>+<SenderID>:<SenderQualifier>+<ReceiverID>:<ReceiverQualifier>+<Date>:<Time>+<InterchangeControlReference>'
     public static function parseUNB(array $parts): array
     {
         return [
             'message_date' => isset($parts[4]) ? self::formatingDateDDYYMM($parts[4]) : null,
+            'sender' => explode(':', $parts[2])[0] ?? null,
             'transmission_id' => $parts[5] ?? null
         ];
     }

@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\VerifyEmailController;
-
+use App\Livewire\EdifactViewer;
 use Illuminate\Support\Facades\Route;
 use Livewire\Volt\Volt;
 
@@ -18,14 +18,35 @@ Route::middleware('guest')->group(function () {
 });
 
 
-Route::middleware(['auth','role:admin'])->group(function(){
-    Volt::route('/userIndex/create', 'pages.users.create-user')
-    ->name('user.create');
-    Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
-    ->name('user.edit');
 
-    Volt::route('usersIndex','pages.users.index')
-    ->name('user.index');
+
+Route::middleware(['auth'])->group(function () {
+    Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
+        ->name('user.edit');
+
+    // Admin restrictions
+    Route::middleware(['role:admin'])->group(function () {
+
+        Volt::route('/userIndex/create', 'pages.users.create-user')
+            ->name('user.create');
+
+        Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
+            ->name('user.edit');
+
+        Volt::route('usersIndex', 'pages.users.index')
+            ->name('user.index');
+
+        Volt::route('edifactViewer', 'services.edifact-file-manager.edifact-file-viewer')
+            ->name('edifact.viewer');
+
+        Volt::route('filesIndex', 'services.edifact-file-manager.files-index')
+            ->name('edifactfiles.index');
+    });
+
+    Route::middleware(['role:admin,coord'])->group(function () {
+        Volt::route('/servicesIndex', 'services.edit-new-service')
+            ->name('service.index');
+    });
 });
 
 

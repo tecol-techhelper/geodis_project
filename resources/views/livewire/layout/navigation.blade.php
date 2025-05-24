@@ -58,7 +58,7 @@ new class extends Component {
             <div x-show="userMenuOpen" @click.outside="userMenuOpen = false"
                 class="absolute right-0 top-full mt-2 w-48 bg-white rounded-md overflow-hidden shadow-xl z-40">
                 <div class="flex items-center border-b border-outline block px-4 py-2 text-gray-700 hover:bg-gray-300">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="lucide lucide-id-card w-5 h-5" fill="none"
+                    <svg xmlns="http://www.w3.org/2000/svg" class="lucide lucide-id-card w-6 h-6" fill="none"
                         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M16 10h2" />
                         <path d="M16 14h2" />
@@ -67,13 +67,13 @@ new class extends Component {
                         <rect x="2" y="5" width="20" height="14" rx="2" />
                     </svg>
                     <div class="px-2">
-                        <span>{{ Auth::user()->username }}</span>
-                        <p class="text-xs">{{ Auth::user()->role->rol_key }}</p>
+                        <span>{{ ucwords(Auth::user()->first_name . ' ' . Auth::user()->last_name) }}</span>
+                        <p class="text-xs">{{ Auth::user()->role->rol_name }}</p>
                     </div>
                 </div>
 
-                <a href="#" class="flex items-center block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    <svg class="lucide lucide-user w-5 h-5" fill="none" stroke="currentColor" stroke-width="2"
+                <a href="{{ route('user.edit',Auth::user()->id) }}" class="flex items-center block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                    <svg class="lucide lucide-user w-6 h-6" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
                         <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
                         <circle cx="12" cy="7" r="4" />
@@ -83,7 +83,7 @@ new class extends Component {
 
                 <button wire:click="logout"
                     class="flex items-center w-full text-start px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    <svg class="lucide lucide-log-out w-5 h-5" fill="none" stroke="currentColor" stroke-width="2"
+                    <svg class="lucide lucide-log-out w-6 h-6" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                         <polyline points="16 17 21 12 16 7" />
