@@ -22,8 +22,8 @@ new class extends Component {
 }; ?>
 
 
-<nav
-    class="fixed top-0 left-0 right-0 z-50 bg-red-600 px-6 py-3 flex items-center justify-between border-b h-16 md:h-24 shadow-md md:shadow-xl">
+<!-- layouts/navbar.blade.php -->
+<nav class="bg-white px-6 py-3 flex items-center justify-between h-16 shadow-md">
 
     {{-- Botón hamburguesa y logo --}}
     <div class="flex items-center space-x-4">
@@ -33,25 +33,40 @@ new class extends Component {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
         </button>
-
-        <a href="{{ route('dashboard') }}">
+        <a href="{{ route('dashboard') }}" class="block visible md:hidden">
             <img src="{{ asset('images/logos/logo_top.png') }}" alt="Logo Empresa"
-                class="h-8 md:h-10 lg:h-12 xl:h-14 w-auto rounded-md bg-white">
+                class="h-12 w-auto rounded-md bg-white ">
         </a>
-    </div>
+        <div class="flex items-center space-x-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                class="lucide lucide-calendar-days-icon lucide-calendar-days">
+                <path d="M8 2v4" />
+                <path d="M16 2v4" />
+                <rect width="18" height="18" x="3" y="4" rx="2" />
+                <path d="M3 10h18" />
+                <path d="M8 14h.01" />
+                <path d="M12 14h.01" />
+                <path d="M16 14h.01" />
+                <path d="M8 18h.01" />
+                <path d="M12 18h.01" />
+                <path d="M16 18h.01" />
+            </svg>
+            <span>{{ ucfirst(\Carbon\Carbon::now()->locale('es')->translatedFormat('F d, Y')) }}</span>
+        </div>
 
+    </div>
     {{-- Campana + Menú Usuario --}}
-    <div class="flex items-center space-x-1 relative">
+    <div class="flex items-center justify-center space-x-1 relative">
         {{-- 🔔 Notificaciones --}}
         <livewire:services.notifications-bell />
-
 
         {{-- 👤 Menú usuario --}}
         <div class="relative" x-data="{ userMenuOpen: false }">
             <button @click="userMenuOpen = !userMenuOpen" class="flex items-center px-3 md:px-6 focus:outline-none">
                 <img src="{{ Storage::url(Auth::user()->user_icon) ?? asset('images/logos/logo_top.png') }}"
                     alt="Icono Usuario"
-                    class="h-8 md:h-10 lg:h-12 xl:h-14 w-8 md:w-10 lg:w-12 xl:w-14 rounded-full border-2 border-gray-200 hover:border-gray-700 transition duration-300 object-cover bg-white">
+                    class="h-10 md:h-12 w-10 md:w-12 rounded-full border-2 border-gray-200 hover:border-gray-700 transition duration-300 object-cover bg-white">
             </button>
 
             {{-- Dropdown de usuario --}}
@@ -72,7 +87,8 @@ new class extends Component {
                     </div>
                 </div>
 
-                <a href="{{ route('user.edit',Auth::user()->id) }}" class="flex items-center block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                <a href="{{ route('user.edit', Auth::user()->id) }}"
+                    class="flex items-center block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                     <svg class="lucide lucide-user w-6 h-6" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
                         <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />

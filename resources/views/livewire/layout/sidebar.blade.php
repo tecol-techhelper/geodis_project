@@ -1,8 +1,16 @@
-<aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
-    class="fixed inset-y-0 top-16 md:top-24 left-0 z-40 w-64 overflow-y-auto bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out md:translate-x-0 md:static md:inset-0 shadow-md">
-    <div class="py-4">
+<aside x-show="sidebarOpen" x-transition:enter="transition transform ease-out duration-300"
+    x-transition:enter-start="-translate-x-full opacity-0" x-transition:enter-end="translate-x-0 opacity-100"
+    x-transition:leave="transition transform ease-in duration-300" x-transition:leave-start="translate-x-0 opacity-100"
+    x-transition:leave-end="-translate-x-full opacity-0" @click.outside.window="if (!isDesktop) sidebarOpen = false"
+    class="fixed z-40 inset-y-0 left-0 w-64 bg-red-700 shadow-md transform md:translate-x-0 md:static md:inset-0 overflow-y-auto md:border-r md:border-gray-300"
+    style="display: none;">
+    <div>
+        <a href="{{ route('dashboard') }}" class="flex items-center justify-center  collapsed md:visible py-4">
+            <img src="{{ asset('images/logos/logo_top.png') }}" alt="Logo Empresa"
+                class="h-20 w-auto rounded-xl bg-white">
+        </a>
         <a href="{{ route('dashboard') }}"
-            class="flex text-lg text-gray-600 mb-3 px-3 border-t border-b border-gay-300 h-12 items-center items-center shadow-lg focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
+            class="flex text-lg px-3 border-t  border-red-900 h-12 items-center items-center bg-gray-50 focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                 class="lucide lucide-house-icon lucide-house">
@@ -13,7 +21,7 @@
             <span class="px-2">Menu Principal</span>
         </a>
         <a href="{{ route('service.index') }}"
-            class="flex text-lg text-gray-600 mb-3 px-3 border-t border-b border-gay-300 h-12 items-center items-center shadow-lg focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
+            class="flex text-lg text-gray-800 px-3 bg-gray-50 border-t border-red-900 h-12 items-center items-center focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                 class="lucide lucide-truck-icon lucide-truck">
@@ -27,7 +35,7 @@
         </a>
         @if (Auth::user()?->hasRole('admin'))
             <a href="{{ route('user.index') }}"
-                class="flex text-lg text-gray-600 mb-3 px-3 border-t border-b border-gay-300 h-12 items-center items-center shadow-lg focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
+                class="flex text-lg text-black bg-gray-50 px-3 border-t border-red-900 h-12 items-center items-center focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                     class="lucide lucide-users-icon lucide-users">
@@ -39,7 +47,7 @@
                 <span class="px-2">Usuarios</span>
             </a>
             <button @click="open = !open"
-                class="flex w-full items-center px-4 py-2 text-left text-gray-700 hover:bg-gray-200 focus:outline-none border shadow-lg">
+                class="flex h-12 w-full items-center bg-gray-50 border-red-900 px-4 py-2 text-left text-black hover:bg-gray-200 focus:outline-none border-t">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" stroke="currentColor"
                     stroke-width="2" viewBox="0 0 24 24">
                     <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
@@ -57,13 +65,12 @@
             </button>
 
             <!-- Contenido desplegable -->
-            <div x-show="open" x-cloak class="pl-5 mt-1 space-y-1 border">
+            <div x-show="open" x-cloak class="pl-5 space-y-1 border bg-white">
                 <a href="{{ route('edifact.viewer') }}"
-                    class="block px-2 py-1 text-gray-600 rounded hover:bg-gray-100">Messages Viewer</a>
+                    class="block px-2 py-1 text-black rounded hover:bg-gray-100">Messages Viewer</a>
                 <a href="{{ route('edifactfiles.index') }}"
-                    class="block px-2 py-1 text-gray-600 rounded hover:bg-gray-100">Uploaded Files</a>
+                    class="block px-2 py-1 text-black rounded hover:bg-gray-100">Uploaded Files</a>
             </div>
         @endif
     </div>
 </aside>
-
