@@ -70,6 +70,8 @@
                     class="block px-2 py-1 text-black rounded hover:bg-gray-100">Messages Viewer</a>
                 <a href="{{ route('edifactfiles.index') }}"
                     class="block px-2 py-1 text-black rounded hover:bg-gray-100">Uploaded Files</a>
+                    <a href="{{ route('upload.file') }}"
+                    class="block px-2 py-1 text-black rounded hover:bg-gray-100">Upload Files</a>
             </div>
         @endif
     </div>

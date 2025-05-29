@@ -41,6 +41,8 @@ Route::middleware(['auth'])->group(function () {
 
         Volt::route('filesIndex', 'services.edifact-file-manager.files-index')
             ->name('edifactfiles.index');
+
+        Volt::route('uploadFile', 'services.upload-file-modal')->name('upload.file');
     });
 
     Route::middleware(['role:admin,coord'])->group(function () {
@@ -48,7 +50,6 @@ Route::middleware(['auth'])->group(function () {
             ->name('service.index');
     });
 });
-
 
 
 

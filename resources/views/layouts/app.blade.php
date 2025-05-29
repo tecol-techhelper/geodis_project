@@ -45,7 +45,7 @@
             @livewire('layout.navigation')
 
             <!-- MAIN -->
-            <main class="flex-1 overflow-y-auto p-6">
+            <main class="flex-1 overflow-y-auto p-6 relative">
                 {{ $slot }}
             </main>
         </div>
@@ -57,6 +57,8 @@
                 sidebarOpen: window.innerWidth >= 768,
                 userMenuOpen: false,
                 open: false,
+                modalIsOpen: false,
+                confirmClear: false,
                 isDesktop: window.innerWidth >= 768,
 
                 init() {
