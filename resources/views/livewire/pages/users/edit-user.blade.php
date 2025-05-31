@@ -21,12 +21,11 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function update(): void
     {
-
         $this->form->update();
 
         if (Auth::user()->hasRole('admin')) {
             redirect()->route('user.index');
-        }else {
+        } else {
             redirect()->route('dashboard');
         }
     }
@@ -38,8 +37,20 @@ new #[Layout('layouts.app')] class extends Component {
         ['label' => 'Usuarios', 'url' => route('user.index'), 'icon' => 'users'],
         ['label' => 'Edición Usuario', 'icon' => 'user-pen'],
     ]"></x-breadcrums>
-    <h1 class="text-5xl font-extrabold dark:text-white py-8">Edición de Usuario</h1>
-    <form wire:submit="update">
+
+    <form wire:submit="update" class="px-6 py-6 space-y-6 my-4 border-2 border-gray-200 shadow-2xl rounded-2xl">
+        <h1 class="flex items-center text-5xl font-extrabold dark:text-white space-x-4">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                class="lucide lucide-user-pen-icon lucide-user-pen">
+                <path d="M11.5 15H7a4 4 0 0 0-4 4v2" />
+                <path
+                    d="M21.378 16.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" />
+                <circle cx="10" cy="7" r="4" />
+            </svg>
+            <span>Edición de Usuario</span>
+        </h1>
+
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 
             {{-- Columna izquierda --}}
@@ -72,7 +83,8 @@ new #[Layout('layouts.app')] class extends Component {
 
                 <div>
                     <x-input-label for="role_id">Rol</x-input-label>
-                    <select id="role_id" wire:model.defer="form.role_id"
+                    <select {{ !Auth::user()->hasRole('admin') ? 'disabled' : '' }} id="role_id"
+                        wire:model.defer="form.role_id"
                         class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
                         @foreach (App\Enums\Rol::cases() as $rol)
                             <option value="{{ $rol->value }}">{{ $rol->label() }}</option>
@@ -108,17 +120,18 @@ new #[Layout('layouts.app')] class extends Component {
                     <x-text-input type="password" id="password_confirmation"
                         wire:model.defer="form.password_confirmation" class="w-full" />
                 </div>
-
-                <div>
-                    <x-input-label for="is_active">Estado</x-input-label>
-                    <select id="is_active" wire:model.defer="form.is_active"
-                        class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
-                        @foreach (App\Enums\UserStatus::cases() as $status)
-                            <option value="{{ $status->value }}">{{ $status->label() }}</option>
-                        @endforeach
-                    </select>
-                    <x-input-error :messages="$errors->get('form.is_active')" class="mt-2" />
-                </div>
+                @if (Auth::user()->hasRole('admin'))
+                    <div>
+                        <x-input-label for="is_active">Estado</x-input-label>
+                        <select id="is_active" wire:model.defer="form.is_active"
+                            class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+                            @foreach (App\Enums\UserStatus::cases() as $status)
+                                <option value="{{ $status->value }}">{{ $status->label() }}</option>
+                            @endforeach
+                        </select>
+                        <x-input-error :messages="$errors->get('form.is_active')" class="mt-2" />
+                    </div>
+                @endif
             </div>
         </div>
 

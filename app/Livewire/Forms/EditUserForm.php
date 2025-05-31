@@ -5,6 +5,7 @@ namespace App\Livewire\Forms;
 use App\Enums\Rol;
 use App\Enums\UserStatus;
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\Password;
@@ -47,6 +48,7 @@ class EditUserForm extends Form
 
     public function update(): User
     {
+
         $this->validate();
 
         $this->user->username = $this->username;
@@ -54,8 +56,8 @@ class EditUserForm extends Form
         $this->user->last_name = $this->last_name;
         $this->user->user_area = $this->user_area;
         $this->user->email = $this->email;
-        $this->user->is_active = $this->is_active;
-        $this->user->role_id = $this->role_id;
+        $this->user->is_active = Auth::user()->hasRole('admin') ? $this->is_active : $this->user->is_active;
+        $this->user->role_id = Auth::user()->hasRole('admin') ? $this->role_id : $this->user->role_id;
 
         if ($this->password) {
             $this->user->forceFill([

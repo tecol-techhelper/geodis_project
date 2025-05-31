@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Livewire\Attributes\Layout;
 use Livewire\Volt\Component;
+use App\Services\SharePointUploader;
 
 new #[Layout('layouts.app')] class extends Component {
     use WithFileUploads;
@@ -28,6 +29,11 @@ new #[Layout('layouts.app')] class extends Component {
     {
         $this->form->clearTempFiles();
     }
+
+    public function saveFiles(SharePointUploader $sharePointUploader): void
+    {
+        $this->form->saveFiles($sharePointUploader);
+    }
 }; ?>
 <div>
     <x-primary-button x-on:click="modalIsOpen = true;$nextTick(() => $el.blur())" type="button" class="space-x-1">
@@ -42,19 +48,19 @@ new #[Layout('layouts.app')] class extends Component {
         <span>Carga Soportes</span></x-primary-button>
     <div x-cloak x-show="modalIsOpen" x-transition.opacity.duration.200ms x-trap.inert.noscroll="modalIsOpen"
         x-on:keydown.esc.window="modalIsOpen = false"
-        class="absolute inset-0 z-30 flex items-end justify-center bg-black/10 p-4 pb-8 backdrop-blur-md sm:items-center lg:p-8"
+        class="absolute inset-0 z-30 flex items-end justify-center bg-black/40 p-4 pb-8 backdrop-blur-xs sm:items-center lg:p-8"
         role="dialog" aria-modal="true" aria-labelledby="defaultModalTitle">
         <!-- Modal Dialog -->
         <div x-show="modalIsOpen"
             x-transition:enter="transition ease-out duration-200 delay-100 motion-reduce:transition-opacity"
             x-transition:enter-start="opacity-0 scale-50" x-transition:enter-end="opacity-100 scale-100"
-            class="flex max-w-lg flex-col gap-4 overflow-hidden rounded-md border border-neutral-300 bg-white text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+            class="flex max-w-lg overflow-auto max-h-[90vh] flex-col my-4 gap-4 rounded-md border border-neutral-300 bg-white text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
             <!-- Dialog Header -->
             <div
                 class="flex items-center justify-between border-b border-neutral-300 bg-neutral-50/60 p-4 dark:border-neutral-700 dark:bg-neutral-950/20">
                 <h3 id="defaultModalTitle" class="font-semibold tracking-wide text-neutral-900 dark:text-white">Cargue
                     de Soportes</h3>
-                <button x-on:click="modalIsOpen = false; $nextTick(() => $el.blur());" aria-label="close modal">
+                <button x-on:click="modalIsOpen = false;$nextTick(() => $el.blur())" aria-label="close modal">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor"
                         fill="none" stroke-width="1.4" class="w-5 h-5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -65,7 +71,7 @@ new #[Layout('layouts.app')] class extends Component {
             <div class="px-4 py-2">
                 <div class="space-y-1">
                     <x-input-label for="role_id">Tipo de Soporte</x-input-label>
-                    <select id="file_type" wire:model="form.file_type"
+                    <select id="file_type" wire:model="form.file_type" wire:change="$dispatch('input-updated')"
                         class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
                         <option selected value="">Seleccione un tipo</option>
                         <option value="CLI">Cumplido</option>
@@ -81,13 +87,17 @@ new #[Layout('layouts.app')] class extends Component {
                     <x-input-error :messages="$errors->get('form.file_type')" class="mt-2" />
                 </div>
                 <div class="py-4">
-                    <input multiple wire:model.defer="form.files" type="file"
+                    <input multiple wire:change="$dispatch('input-updated')" wire:model="form.files" type="file"
                         class="w-full text-slate-500 font-medium text-sm bg-gray-100 file:cursor-pointer cursor-pointer file:border-0 file:py-2 file:px-4 file:mr-4 file:bg-gray-800 file:hover:bg-gray-700 file:text-white rounded" />
-                    <x-input-error :messages="$errors->get('form.files')" class="mt-2" />
+                    {{-- <x-input-error :messages="$errors->get('form.files')" class="mt-2" /> --}}
+                    @error('form.files')
+                        <span class="text-red-500 text-xs">{{ $message }}</span>
+                    @enderror
                 </div>
                 <div>
                     <x-input-label>Archivos Cargados</x-input-label>
-                    <ul class="mt-2 space-y-1 text-sm text-gray-700 dark:text-gray-300 border-2 border-dashed px-4 py-4 rounded-md">
+                    <ul
+                        class="mt-2 space-y-1 text-sm text-gray-700 dark:text-gray-300 border-2 border-dashed px-4 py-4 rounded-md">
                         @foreach ($form->tempFiles as $index => $file)
                             <li class="flex items-center justify-between">
                                 <span>{{ $file['fileName'] }}</span>
@@ -102,11 +112,16 @@ new #[Layout('layouts.app')] class extends Component {
             <!-- Dialog Footer -->
             <div
                 class="flex flex-col-reverse justify-end gap-2 border-t border-neutral-300 bg-neutral-50/60 p-4 dark:border-neutral-700 dark:bg-neutral-950/20 sm:flex-row sm:items-center md:justify-end">
-                <x-danger-button x-on:click="confirmClear = true" type="button" class="space-x-1">
+                <x-danger-button
+                    x-on:click=" $wire.form.tempFiles.length> 0
+                    ? confirmClear = true
+                    : modalIsOpen = false
+                    "
+                    type="button" class="space-x-1">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                         stroke-linejoin="round" class="lucide lucide-trash2-icon lucide-trash-2">
-                        <path d="M3 6h18" />
+                        <path d=" M3 6h18" />
                         <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
                         <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
                         <line x1="10" x2="10" y1="11" y2="17" />
@@ -133,7 +148,6 @@ new #[Layout('layouts.app')] class extends Component {
                                 $wire.clearTempFiles()
                     modalIsOpen = false; 
                     confirmClear = false;
-                    $nextTick(() => $el.blur());
                 ">
                                 Sí, eliminar
                             </x-danger-button>
@@ -141,7 +155,8 @@ new #[Layout('layouts.app')] class extends Component {
                     </div>
                 </div>
 
-                <x-primary-button wire:click="uploadFiles" type="button" class="space-x-1">
+                <x-primary-button wire:click.prevent="uploadFiles"
+                    x-on:click="setTimeout(() => $wire.uploadFiles(), 100)" type="submit" class="space-x-1">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                         stroke-linejoin="round" class="lucide lucide-file-up-icon lucide-file-up">
@@ -152,7 +167,7 @@ new #[Layout('layouts.app')] class extends Component {
                     </svg>
                     <span>Cargar</span>
                 </x-primary-button>
-                <x-success-button x-on:click="modalIsOpen = false" type="button" class="space-x-1">
+                <x-success-button wire:click.prevent="saveFiles" type="submit" class="space-x-1">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                         stroke-linejoin="round" class="lucide lucide-save-icon lucide-save">

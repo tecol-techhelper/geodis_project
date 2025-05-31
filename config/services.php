@@ -34,5 +34,12 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
+    'msgraph' => [
+        'client_id' => env('MS_CLIENT_ID'),
+        'client_secret' => env('MS_CLIENT_SECRET'),
+        'tenant_id' => env('MS_TENANT_ID'),
+        'site_id' => env('MS_SITE_ID'),
+        'folder_path' => env('MS_FOLDER_PATH')
+    ],
 
 ];

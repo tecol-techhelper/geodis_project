@@ -64,9 +64,9 @@ new class extends Component {
         {{-- 👤 Menú usuario --}}
         <div class="relative" x-data="{ userMenuOpen: false }">
             <button @click="userMenuOpen = !userMenuOpen" class="flex items-center px-3 md:px-6 focus:outline-none">
-                <img src="{{ Storage::url(Auth::user()->user_icon) ?? asset('images/logos/logo_top.png') }}"
+                <img src="{{ Auth::user()->user_icon ? Storage::url(Auth::user()->user_icon) : asset('images/logos/logo_top.png') }}"
                     alt="Icono Usuario"
-                    class="h-10 md:h-12 w-10 md:w-12 rounded-full border-2 border-gray-200 hover:border-gray-700 transition duration-300 object-cover bg-white">
+                    class="h-10 md:h-12 w-10 md:w-12 rounded-full border-2 border-gray-300 hover:border-gray-700 transition duration-300 object-cover bg-white">
             </button>
 
             {{-- Dropdown de usuario --}}

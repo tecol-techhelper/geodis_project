@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\FileType;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -16,7 +17,8 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
             PermissionSeeder::class,
             PermissionRoleSeeder::class,
-            UserSeeder::class
+            UserSeeder::class,
+            FileTypeSeeder::class
         ]);
     }
 }

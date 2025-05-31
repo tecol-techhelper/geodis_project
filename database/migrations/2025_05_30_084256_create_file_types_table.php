@@ -11,9 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('permission_roles', function (Blueprint $table) {
-            $table->foreignId('permission_id')->constrained()->onUpdate('cascade');
-            $table->foreignId('role_id')->constrained()->onUpdate('cascade');
+        Schema::create('file_types', function (Blueprint $table) {
+            $table->id();
+            $table->enum('file_type',['CLI','CLP','IC','IF','RO','RT','ID','TRC','TDC']);
+            $table->string('file_type_full_name');
             $table->timestamps();
             $table->softDeletes();
         });
@@ -24,6 +25,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('permission_roles');
+        Schema::dropIfExists('file_types');
     }
 };

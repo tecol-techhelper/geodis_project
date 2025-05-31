@@ -5,6 +5,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    <!-- Manifest para PWA -->
+    <link rel="manifest" href="{{ asset('manifest.json') }}">
+    <meta name="theme-color" content="#1f2937">
+
+    <!-- Para iOS -->
+    <link rel="apple-touch-icon" href="{{ asset('images/logos/logo_top.png') }}">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Administración Servicios GEODIS">
+
 
     {{-- Icon page --}}
     <link rel="icon" href="{{ asset('images/logos/logo_top.png') }}" type="image/png">

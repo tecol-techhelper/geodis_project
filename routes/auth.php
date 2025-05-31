@@ -30,8 +30,8 @@ Route::middleware(['auth'])->group(function () {
         Volt::route('/userIndex/create', 'pages.users.create-user')
             ->name('user.create');
 
-        Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
-            ->name('user.edit');
+        // Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
+        //     ->name('user.edit');
 
         Volt::route('usersIndex', 'pages.users.index')
             ->name('user.index');
