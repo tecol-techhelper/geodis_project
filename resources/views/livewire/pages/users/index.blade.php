@@ -6,7 +6,7 @@ use Livewire\Volt\Component;
 new #[Layout('layouts.app')] class extends Component {};
 ?>
 @section('title', 'Usuarios')
-<div>
+<div class="space-y-6">
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Usuarios', 'icon' => 'users'],

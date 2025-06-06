@@ -66,7 +66,8 @@
             return {
                 sidebarOpen: window.innerWidth >= 768,
                 userMenuOpen: false,
-                open: false,
+                openFM: false,
+                openPF: false,
                 modalIsOpen: false,
                 confirmClear: false,
                 isDesktop: window.innerWidth >= 768,

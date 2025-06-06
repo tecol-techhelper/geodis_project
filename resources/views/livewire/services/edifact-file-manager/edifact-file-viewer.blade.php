@@ -1,9 +1,10 @@
-<div class="p-6">
+@section('title', 'Messages Edi Viewer')
+<div class="space-y-6">
     {{-- <h2 class="text-xl font-bold mb-4">Contenido procesado del archivo: {{ $fileName }}</h2> --}}
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Parsed Files', 'url' => '#', 'icon' => 'file-json'],
-        ['label' => 'Messages Viewer', 'icon' => 'user-pen'],
+        ['label' => 'Messages Viewer', 'icon' => 'eye']
     ]"></x-breadcrums>
     @forelse ($parsedMessages as $i => $message)
         <div class="mb-6 p-4 border border-gray-300 rounded shadow-sm bg-gray-50">

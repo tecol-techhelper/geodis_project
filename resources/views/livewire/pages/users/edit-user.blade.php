@@ -64,7 +64,7 @@ new #[Layout('layouts.app')] class extends Component {
                             <img src="{{ Storage::url($form->user_icon_url) }}" class="w-full h-full object-cover">
 
                         </div>
-                        <input type="file" id="user_icon" wire:model="form.user_icon"
+                        <input type="file" id="user_icon" wire:model="form.user_icon" accept="image/jpg, image/jpeg, image/png, image/webp"
                             class="block w-full text-sm text-gray-900 border border-gray-300 rounded-sm cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400" />
                     </div>
                     <x-input-error :messages="$errors->get('form.user_icon')" class="mt-2" />

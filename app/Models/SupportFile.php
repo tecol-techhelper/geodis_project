@@ -28,7 +28,7 @@ class SupportFile extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function support_file(): HasOne{
-        return $this->hasOne(FileType::class);
+    public function file_type(): BelongsTo{
+        return $this->belongsTo(FileType::class);
     }
 }

@@ -64,7 +64,7 @@ final class EdifactFileTable extends PowerGridComponent
                 ->sortable()
                 ->searchable(),
 
-            Column::make('Typo de mensaje', 'message_type')
+            Column::make('Tipo de mensaje', 'message_type')
                 ->sortable()
                 ->searchable(),
 
