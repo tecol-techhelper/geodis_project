@@ -85,6 +85,7 @@ class UploadFileForm extends Form
             }
         }
         $this->tempFiles = [];
+        \Illuminate\Support\Facades\File::cleanDirectory(\storage_path('app/livewire-tmp'));
     }
 
     public function saveFiles(SharePointUploader $sharePointUploader): void
@@ -98,17 +99,17 @@ class UploadFileForm extends Form
                 $extension = pathinfo($temp['fileName'], PATHINFO_EXTENSION);
                 $remoteFileName = $temp['fileName'];
 
+                $year = now()->format('Y');
+                $month = now()->format('m');
+                $remotePath = "DOCS/{$year}/{$month}/{$remoteFileName}";
+
                 try {
-                    $sharePointResponse = $sharePointUploader->upload($localPath, $remoteFileName);
+                    $sharePointResponse = $sharePointUploader->upload($localPath, $remotePath);
                     $sharePointUrl = $sharePointResponse['webUrl'] ?? null;
                 } catch (\Throwable $e) {
                     $this->addError('form.files', "Error en SharePoint: {$e->getMessage()}");
                     continue;
                 }
-
-                $year = now()->format('Y');
-                $month = now()->format('m');
-                $remotePath = "DOCS/{$year}/{$month}/{$remoteFileName}";
 
                 // Subida a SFTP
                 Storage::disk('sftp_geodis')->put($remotePath, fopen($localPath, 'r+'));

@@ -66,8 +66,8 @@ class EditUserForm extends Form
         }
 
         if ($this->user_icon) {
-            if ($this->user->user_icon && Storage::exists($this->user->user_icon)) {
-                Storage::delete($this->user->user_icon);
+            if ($this->user->user_icon && Storage::disk('public')->exists($this->user->user_icon)) {
+                Storage::disk('public')->delete($this->user->user_icon);
             }
             $path = $this->user_icon->store('users/icon', 'public');
             $this->user->user_icon = $path;

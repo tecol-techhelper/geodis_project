@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('edifact:process')->everyFiveMinutes();
+Schedule::command('custom:clean-livewire-tmp')->hourly();
