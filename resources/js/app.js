@@ -3,6 +3,6 @@ import { createIcons, icons } from 'lucide';
 import './../../vendor/power-components/livewire-powergrid/dist/powergrid'
 createIcons({icons});
 
-window.refreshLucideIcons = () => {
-    createIcons({ icons });
-};
+import flatpickr from "flatpickr"; 
+
+import 'flatpickr/dist/flatpickr.min.css';

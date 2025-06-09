@@ -3,7 +3,7 @@
 @component('mail::message')
 
 <div style="text-align: center; margin-bottom: 20px;" >
-    <img src="{{ asset('images/logos/logo_top.png') }}" alt="">
+    <img src="{{ asset('https://www.transtecol.com.co/images/logo_top.png') }}" alt="">
 </div>
 
 Hola <b>{{ ucfirst(strtolower($username)) }}</b>,

@@ -1,0 +1,8 @@
+{
+  "name": "Integración Carga Seca - GEODIS (Ecopetrol)",
+  "short_name": "Administración Servicios GEODIS",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1f2937"
+}

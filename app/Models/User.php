@@ -9,6 +9,7 @@ use App\Enums\UserStatus;
 use App\Mail\CustomResetPassword;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Mail;
@@ -58,37 +59,45 @@ class User extends Authenticatable
     }
 
     // Hashing password
-    public function setPasswordAttribute($value){
-        if($value){
+    public function setPasswordAttribute($value)
+    {
+        if ($value) {
             $this->attributes['password'] = bcrypt($value);
         }
     }
 
-    public function isActive(){
+    public function isActive()
+    {
         return $this->is_active;
     }
 
     // Relation one-to-one with roles table
     public function role(): BelongsTo
     {
-        return $this -> belongsTo(Role::class);
+        return $this->belongsTo(Role::class);
+    }
+
+    // Relation 1-to-many with support_files table
+    public function supportFiles():HasMany
+    {
+        return $this->hasMany(SupportFile::class);
     }
 
     // Polymorphic relation many-to-many with permissions through permissions_users table
     public function customPermissions()
     {
         return $this->morphToMany(Permission::class, 'userable', 'permission_users', 'userable_id', 'permission_id')
-                    ->withTimestamps();
+            ->withTimestamps();
     }
 
     // For checking if user has a defined role
-    public function hasRole($role):bool
+    public function hasRole($role): bool
     {
         return $this->role && $this->role->rol_key === $role;
     }
 
     // For checking if user has a permission, by rol or direct assignment
-    public function hasPermission($permissionKey):bool
+    public function hasPermission($permissionKey): bool
     {
         $rolePermissions = $this->role?->permissions()->where('permission_key', $permissionKey)->exist() ?? false;
 
@@ -102,6 +111,4 @@ class User extends Authenticatable
     {
         Mail::to($this->email)->send(new CustomResetPassword($token, $this->email, $this->first_name . " " . $this->last_name));
     }
-
-
 }

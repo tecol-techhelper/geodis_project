@@ -41,7 +41,7 @@ return [
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
-            'url' => env('APP_URL').'/storage',
+            'url' => env('APP_URL') . '/storage',
             'visibility' => 'public',
             'throw' => false,
             'report' => false,
@@ -59,6 +59,30 @@ return [
             'throw' => false,
             'report' => false,
         ],
+        'sftp' => [
+            'driver' => 'sftp',
+            'host' => env('SFTP_HOST'),
+            'port' => 22,
+            'username' => env('SFTP_USERNAME'),
+            'password' => env('SFTP_PASSWORD'),
+            'root' => env('SFTP_ROOT'),
+            'permPublic' => 0755,
+            'directoryPerm' => 0755,
+            'visibility' => 'public',
+            'timeout' => 30,
+        ],
+        'sftp_geodis' => [
+            'driver' => 'sftp',
+            'host' => env('SFTP_HOST_GEODIS'),
+            'port' => 22,
+            'username' => env('SFTP_USERNAME_GEODIS'),
+            'password' => env('SFTP_PASSWORD_GEODIS'),
+            'root' => env('SFTP_ROOT_GEODIS'),
+            'permPublic' => 0755,
+            'directoryPerm' => 0755,
+            'visibility' => 'public',
+            'timeout' => 30,
+        ]
 
     ],
 

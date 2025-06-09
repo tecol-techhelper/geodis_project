@@ -1,6 +1,9 @@
 @import './../../vendor/power-components/livewire-powergrid/dist/tailwind.css';
+@import "flatpickr/dist/flatpickr.min.css";
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@custom-variant dark (&:where(.dark, .dark *));
 
