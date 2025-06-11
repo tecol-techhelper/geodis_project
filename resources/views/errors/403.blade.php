@@ -6,11 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="ie=edge">
     <title>403 Denied Access</title>
-    @vite(['resources/css/403.css', 'resources/js/app.js'])
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
     @livewireStyles
 </head>
 
-<body>
+<body class="body_403">
     <div class="hover">
         <div class="background">
             <div class="door">403</div>
