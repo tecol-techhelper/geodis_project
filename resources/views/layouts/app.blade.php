@@ -31,7 +31,7 @@
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script> --}}
 
     <!-- Scripts -->
-    @vite(['resources/css/app.css', 'resources/js/app.js', 'resources/css/bell.css'])
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
     @livewireStyles
 </head>
 
