@@ -58,6 +58,26 @@ class FileTypeSeeder extends Seeder
                 'file_type' => 'TDC',
                 'file_type_full_name' => 'Tirilla de Devolución de Contenedores',
                 'created_at' => now()
+            ),
+            array(
+                'file_type' => 'GABF301',
+                'file_type_full_name' => 'Formato de inspección de contenedores y unidades de carga para importación y exportación',
+                'created_at' => now()
+            ),
+            array(
+                'file_type' => 'PDR',
+                'file_type_full_name' => 'Plan de Ruta Contenedores – Impo // Expo',
+                'created_at' => now()
+            ),
+            array(
+                'file_type' => 'GPS',
+                'file_type_full_name' => 'Reporte de GPS – Impo // Expo',
+                'created_at' => now()
+            ),
+            array(
+                'file_type' => 'RP',
+                'file_type_full_name' => 'Reempaques',
+                'created_at' => now()
             )
         );
 

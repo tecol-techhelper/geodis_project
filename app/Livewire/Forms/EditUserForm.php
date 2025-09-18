@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Forms;
 
+use App\Core\InternalControllers\AuditController;
 use App\Enums\Rol;
 use App\Enums\UserStatus;
 use App\Models\User;
@@ -48,35 +49,47 @@ class EditUserForm extends Form
 
     public function update(): User
     {
-
         $this->validate();
 
-        $this->user->username = $this->username;
-        $this->user->first_name = $this->first_name;
-        $this->user->last_name = $this->last_name;
-        $this->user->user_area = $this->user_area;
-        $this->user->email = $this->email;
-        $this->user->is_active = Auth::user()->hasRole('admin') ? $this->is_active : $this->user->is_active;
-        $this->user->role_id = Auth::user()->hasRole('admin') ? $this->role_id : $this->user->role_id;
+        // Recargar el modelo directamente desde la base de datos por seguridad
+        $user = User::findOrFail($this->user->id);
+
+        // Realizar modificaciones
+        $user->username = $this->username;
+        $user->first_name = $this->first_name;
+        $user->last_name = $this->last_name;
+        $user->user_area = $this->user_area;
+        $user->email = $this->email;
+        $user->is_active = Auth::user()->hasRole('admin') ? $this->is_active : $user->is_active;
+        $user->role_id = Auth::user()->hasRole('admin') ? $this->role_id : $user->role_id;
 
         if ($this->password) {
-            $this->user->forceFill([
+            $user->forceFill([
                 'password' => $this->password
             ]);
         }
 
         if ($this->user_icon) {
-            if ($this->user->user_icon && Storage::disk('public')->exists($this->user->user_icon)) {
-                Storage::disk('public')->delete($this->user->user_icon);
+            if ($user->user_icon && Storage::disk('public')->exists($user->user_icon)) {
+                Storage::disk('public')->delete($user->user_icon);
             }
             $path = $this->user_icon->store('users/icon', 'public');
-            $this->user->user_icon = $path;
+            $user->user_icon = $path;
         }
+        
+        (new AuditController())->log(
+            model: $user,
+            userId: Auth::id(),
+            username: Auth::user()->username,
+            userRole: Auth::user()->role->rol_key,
+            action: 'UPDATED'
+        );
 
-        $this->user->save();
+        $user->save();
 
-        return $this->user;
+        return $user;
     }
+
 
     protected function rules(): array
     {

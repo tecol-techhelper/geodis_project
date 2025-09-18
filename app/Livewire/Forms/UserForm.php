@@ -2,9 +2,11 @@
 
 namespace App\Livewire\Forms;
 
+
 use App\Enums\Rol;
 use App\Enums\UserStatus;
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Enum;
 use Illuminate\Validation\Rules\Password;
@@ -29,6 +31,7 @@ class UserForm extends Form
 
     public function save(): User
     {
+        // file_put_contents(storage_path('test.txt'), 'Sí pasó por aquí');
         $this->validate();
 
         $user = new User();
@@ -54,6 +57,7 @@ class UserForm extends Form
 
         $user->save();
 
+        
         return $user;
     }
 

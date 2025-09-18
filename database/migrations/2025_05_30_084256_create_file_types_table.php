@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('file_types', function (Blueprint $table) {
             $table->id();
-            $table->enum('file_type',['CLI','CLP','IC','IF','RO','RT','ID','TRC','TDC']);
+            $table->enum('file_type',['CLI','CLP','IC','IF','RO','RT','ID','TRC','TDC','GABF301','PDR','GPS','RP']);
             $table->string('file_type_full_name');
             $table->timestamps();
             $table->softDeletes();

@@ -26,8 +26,11 @@ class UploadFileForm extends Form
 
     public array $tempFiles = [];
 
-    #[Validate('string|in:CLI,CLP,IC,IF,RO,RT,ID,TRC,TDC')]
+    #[Validate('string|in:CLI,CLP,IC,IF,RO,RT,ID,TRC,TDC,GABF301,PDR,GPS,RP')]
     public string|null $file_type = null;
+
+
+    public string|null $free_text = null;
 
 
     public function uploadFiles(): void
@@ -35,15 +38,15 @@ class UploadFileForm extends Form
         if (!$this->files) {
             $this->addError('form.files', 'Debe seleccionar al menos 1 archivo');
         }
+        if (!$this->file_type || $this->file_type === '') {
+            $this->addError('file_type', 'Debes seleccionar un tipo de soporte.');
+            return;
+        }
         foreach ($this->files as $file) {
-            if (!$this->file_type || $this->file_type === '') {
-                $this->addError('file_type', 'Debes seleccionar un tipo de soporte.');
-                return;
-            }
 
             $extension = $file->getClientOriginalExtension();
 
-            $newFileName = 'N_' . $this->file_type . '_' . Str::random(8) . "." . $extension;
+            $newFileName = 'N_' . $this->file_type . '_' . $this->free_text . '_' . Str::random(8) . "." . $extension;
 
             $tempPath = $file->storeAs('temp_support_files', $newFileName, 'local');
 
@@ -56,6 +59,7 @@ class UploadFileForm extends Form
         }
 
         $this->resetErrorBag('files');
+        // dd($this->tempFiles);
         $this->files = [];
     }
 
@@ -91,18 +95,47 @@ class UploadFileForm extends Form
     public function saveFiles(SharePointUploader $sharePointUploader): void
     {
         if (Auth::user()->hasRole('admin') || Auth::user()->hasRole('coord')) {
-            $successfulCount = 0; // Contador de archivos exitosos
-            $totalCount = count($this->tempFiles); // Total de archivos
+            $successfulCount = 0;
+            $totalCount = count($this->tempFiles);
+
+            // Directorio remoto (DOCS/año/mes)
+            $year  = now()->format('Y');
+            $month = now()->format('m');
+            $remoteDir = "DOCS/{$year}/{$month}";
+
+            // --- Crear directorio remoto con reintentos por latencia ---
+            try {
+                if (!Storage::disk('sftp')->exists($remoteDir)) {
+                    Storage::disk('sftp')->makeDirectory($remoteDir);
+
+                    $attempts = 0;
+                    while ($attempts < 5 && !Storage::disk('sftp')->exists($remoteDir)) {
+                        usleep(300000 * ($attempts + 1)); // backoff: 0.3s, 0.6s, 0.9s...
+                        $attempts++;
+                    }
+
+                    if ($attempts === 5) {
+                        $this->addError('form.files', "No se pudo confirmar la creación del directorio remoto {$remoteDir} por latencia.");
+                        return;
+                    }
+                }
+            } catch (\Throwable $e) {
+                $this->addError('form.files', "Error creando directorio remoto: {$e->getMessage()}");
+                return;
+            }
 
             foreach ($this->tempFiles as $temp) {
-                $localPath = storage_path('app/private/' . $temp['temp_path']);
+                $localPath = storage_path('app/private/' . ltrim($temp['temp_path'], '/'));
                 $extension = pathinfo($temp['fileName'], PATHINFO_EXTENSION);
                 $remoteFileName = $temp['fileName'];
+                $remotePath = "{$remoteDir}/{$remoteFileName}";
 
-                $year = now()->format('Y');
-                $month = now()->format('m');
-                $remotePath = "DOCS/{$year}/{$month}/{$remoteFileName}";
+                if (!is_file($localPath)) {
+                    $this->addError('form.files', "No se encontró el archivo temporal: {$localPath}");
+                    continue;
+                }
 
+                // 1) Subida a SharePoint
                 try {
                     $sharePointResponse = $sharePointUploader->upload($localPath, $remotePath);
                     $sharePointUrl = $sharePointResponse['webUrl'] ?? null;
@@ -111,41 +144,58 @@ class UploadFileForm extends Form
                     continue;
                 }
 
-                // Subida a SFTP
-                Storage::disk('sftp_geodis')->put($remotePath, fopen($localPath, 'r+'));
+                // 2) Subida a SFTP con reintentos por latencia
+                $uploaded = false;
+                $attempts = 0;
 
-                sleep(1);
-
-                // Validar existencia en servidor remoto
-                if (Storage::disk('sftp_geodis')->exists($remotePath)) {
+                while (!$uploaded && $attempts < 5) {
                     try {
-                        $fileType = FileType::where('file_type', $temp['file_type'])->first();
-                        $fileTypeId = $fileType?->id ?? null;
+                        Storage::disk('sftp')->putFileAs(
+                            $remoteDir,
+                            new \Illuminate\Http\File($localPath),
+                            $remoteFileName
+                        );
 
-                        SupportFile::create([
-                            'file_name'      => explode('.', $remoteFileName)[0],
-                            'file_url'       => $sharePointUrl,
-                            'file_size'      => filesize($localPath),
-                            'file_extension' => $extension,
-                            'uploaded_at'    => now()->toDateString(),
-                            'user_id'        => Auth::id(),
-                            'file_type_id'   => $fileTypeId,
-                        ]);
-
-                        if (Storage::exists($temp['fileName'])) {
-                            Storage::delete($temp['fileName']);
+                        if (Storage::disk('sftp')->exists($remotePath)) {
+                            $uploaded = true;
+                            break;
                         }
-
-                        $successfulCount++; // Marca como exitoso
                     } catch (\Throwable $e) {
-                        Log::error("Fallo al guardar en la base de datos: " . $e->getMessage());
+                        Log::warning("Reintento {$attempts} fallido para {$remoteFileName}: " . $e->getMessage());
                     }
-                } else {
-                    $this->addError('form.files', "No se confirmó la subida del archivo {$remoteFileName} al servidor SFTP.");
+
+                    usleep(500000 * ($attempts + 1)); // backoff: 0.5s, 1s, 1.5s...
+                    $attempts++;
+                }
+
+                if (!$uploaded) {
+                    $this->addError('form.files', "No se confirmó la subida del archivo {$remoteFileName} en el SFTP (latencia alta).");
+                    continue;
+                }
+
+                // 3) Registro en BD
+                try {
+                    $fileType   = \App\Models\FileType::where('file_type', $temp['file_type'])->first();
+                    $fileTypeId = $fileType?->id ?? null;
+
+                    \App\Models\SupportFile::create([
+                        'file_name'      => explode('.', $remoteFileName)[0],
+                        'file_url'       => $sharePointUrl,
+                        'file_size'      => filesize($localPath),
+                        'file_extension' => $extension,
+                        'uploaded_at'    => now()->toDateString(),
+                        'user_id'        => Auth::id(),
+                        'file_type_id'   => $fileTypeId,
+                    ]);
+
+                    Storage::disk('local')->delete($temp['temp_path']);
+                    $successfulCount++;
+                } catch (\Throwable $e) {
+                    Log::error("Fallo al guardar en BD: " . $e->getMessage());
                 }
             }
 
-            // Mostrar mensaje solo si todos fueron exitosos
+            // 4) Resumen al usuario
             if ($successfulCount === $totalCount) {
                 flash()->title('Archivos Guardados')->success('Todos los archivos han sido almacenados correctamente!');
                 $this->clearTempFiles();

@@ -33,19 +33,22 @@ class LoginForm extends Form
      */
     public function authenticate(): void
     {
-        $this -> ensureIpIsNotBlocked();
+        $this->ensureIpIsNotBlocked();
 
         $userName  = User::where('username', $this->username)->first();
 
         // For validating if user exists
-        if(!$userName){
+        if (!$userName) {
+            $ipAddress = request()->ip();
+            (new FailedSessionController())->logFailedSession($this->username, $ipAddress, request()->userAgent(), 'Usuario no encontrado');
+            (new BlockedIpController)->evaluateAndBlockIp($ipAddress);
             throw ValidationException::withMessages([
                 'form.username' => 'Usuario no encontrado'
             ]);
         }
 
         // For validating if user is active
-        if($userName->is_active !== 1){
+        if ($userName->is_active !== 1) {
             throw ValidationException::withMessages([
                 'form.username' => 'Usuarios inhabilitado. Comunicarse con el administrador'
             ]);
@@ -53,7 +56,7 @@ class LoginForm extends Form
 
         if (! Auth::attempt($this->only(['username', 'password']), $this->remember)) {
             RateLimiter::hit($this->throttleKey());
-            (new FailedSessionController())->logFailedSession($this->username, request()->ip(), request()->userAgent());
+            (new FailedSessionController())->logFailedSession($this->username, request()->ip(), request()->userAgent(), 'Credenciales incorrectas');
             throw ValidationException::withMessages([
                 'form.username' => trans('auth.failed'),
             ]);
@@ -76,12 +79,13 @@ class LoginForm extends Form
     /**
      * Ensure the authentication request is not rate limited.
      */
-    protected function ensureIpIsNotBlocked():void {
+    protected function ensureIpIsNotBlocked(): void
+    {
         $ipAddress = request()->ip();
 
         $blocked = (new BlockedIpController())->isBlocked($ipAddress);
 
-        if($blocked){
+        if ($blocked) {
             throw ValidationException::withMessages([
                 'username' => 'Ty IP ha sido bloqueada por seguridad. Contacta con el administrador'
             ]);
@@ -92,6 +96,6 @@ class LoginForm extends Form
      */
     protected function throttleKey(): string
     {
-        return Str::transliterate(Str::lower($this->username).'|'.request()->ip());
+        return Str::transliterate(Str::lower($this->username) . '|' . request()->ip());
     }
 }

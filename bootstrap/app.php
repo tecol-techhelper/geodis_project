@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\BlockedIpMiddleware;
+use App\Http\Middleware\CheckUserIsActive;
 use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -13,7 +15,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->alias([
-            'role'=>RoleMiddleware::class
+            'role'=>RoleMiddleware::class,
+            'blocked'=> BlockedIpMiddleware::class,
+            'is_active' => CheckUserIsActive::class
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

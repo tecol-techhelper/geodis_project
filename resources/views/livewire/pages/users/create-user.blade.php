@@ -1,6 +1,8 @@
 <?php
 
 use App\Models\User;
+use App\Core\InternalControllers\AuditController;
+use Illuminate\Support\Facades\Log;
 use Livewire\WithFileUploads;
 use App\Livewire\Forms\CreateUserForm;
 use Illuminate\Auth\Events\Registered;
@@ -16,11 +18,16 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function register(): void
     {
-        $this->form->save();
+        // dd('Entró al save');
+        $user = $this->form->save();
+
+        Log::info('Usuario guardado: ' . $user->id);
+
+        (new AuditController())->log($user, Auth::id(), Auth::user()->username, Auth::user()->role->rol_key, 'CREATED');
         redirect()->route('user.index');
     }
 }; ?>
-@section('title', 'Registro')
+@section('title', 'Nuevo Usuario')
 <div>
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
