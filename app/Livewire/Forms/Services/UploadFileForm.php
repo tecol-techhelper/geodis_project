@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Forms\Services;
 
+use App\Core\InternalControllers\AuditController;
 use App\Models\FileType;
 use App\Models\SupportFile;
 use App\Services\SharePointUploader;
@@ -146,6 +147,7 @@ class UploadFileForm extends Form
 
                 // 2) Subida a SFTP con reintentos por latencia
                 $uploaded = false;
+                $sftpError = null;
                 $attempts = 0;
 
                 while (!$uploaded && $attempts < 5) {
@@ -161,6 +163,7 @@ class UploadFileForm extends Form
                             break;
                         }
                     } catch (\Throwable $e) {
+                        $sftpError = $e->getMessage();
                         Log::warning("Reintento {$attempts} fallido para {$remoteFileName}: " . $e->getMessage());
                     }
 
@@ -178,7 +181,7 @@ class UploadFileForm extends Form
                     $fileType   = \App\Models\FileType::where('file_type', $temp['file_type'])->first();
                     $fileTypeId = $fileType?->id ?? null;
 
-                    \App\Models\SupportFile::create([
+                    $supportFile = \App\Models\SupportFile::create([
                         'file_name'      => explode('.', $remoteFileName)[0],
                         'file_url'       => $sharePointUrl,
                         'file_size'      => filesize($localPath),
@@ -186,7 +189,17 @@ class UploadFileForm extends Form
                         'uploaded_at'    => now()->toDateString(),
                         'user_id'        => Auth::id(),
                         'file_type_id'   => $fileTypeId,
+                        'uploaded_sftp'  => $uploaded ? 1 : 0,
+                        'sftp_error'     => $uploaded ? null : $sftpError,
                     ]);
+
+                    (new AuditController())->log(
+                        model: $supportFile,
+                        userId: Auth::id(),
+                        username: Auth::user()->username,
+                        userRole: Auth::user()->roles->first()?->rol_key,
+                        action: 'CREATED'
+                    );
 
                     Storage::disk('local')->delete($temp['temp_path']);
                     $successfulCount++;

@@ -69,7 +69,7 @@ class LoginForm extends Form
         (new SessionLogController())->logSession(
             Auth::id(),
             Auth::user()->username,
-            Auth::user()->role->rol_key,
+            Auth::user()->roles->first()?->rol_key,
             request()->ip(),
             request()->userAgent(),
             session()->id()

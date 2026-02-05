@@ -9,6 +9,7 @@ use App\Enums\UserStatus;
 use App\Mail\CustomResetPassword;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -32,7 +33,7 @@ class User extends Authenticatable
         'password',
         'user_icon',
         'is_active',
-        'rol_id'
+        'guard_name'
     ];
 
     /**
@@ -71,37 +72,30 @@ class User extends Authenticatable
         return $this->is_active;
     }
 
-    // Relation one-to-one with roles table
-    public function role(): BelongsTo
+    // Relation many-to-many with roles through role_user table
+    public function roles(): BelongsToMany
     {
-        return $this->belongsTo(Role::class);
+        return $this->belongsToMany(Role::class, 'role_user');
     }
 
-    // Relation 1-to-many with support_files table
-    public function supportFiles():HasMany
+    // Relation many-to-many with permissions through permissions_users table
+    public function permissions(): BelongsToMany
     {
-        return $this->hasMany(SupportFile::class);
-    }
-
-    // Polymorphic relation many-to-many with permissions through permissions_users table
-    public function customPermissions()
-    {
-        return $this->morphToMany(Permission::class, 'userable', 'permission_users', 'userable_id', 'permission_id')
-            ->withTimestamps();
+        return $this->belongsToMany(Permission::class, 'permission_users');
     }
 
     // For checking if user has a defined role
-    public function hasRole($role): bool
+    public function hasRole($key): bool
     {
-        return $this->role && $this->role->rol_key === $role;
+        return $this->roles()->where('rol_key', $key)->exists();
     }
 
     // For checking if user has a permission, by rol or direct assignment
-    public function hasPermission($permissionKey): bool
+    public function hasPermission($key): bool
     {
-        $rolePermissions = $this->role?->permissions()->where('permission_key', $permissionKey)->exist() ?? false;
+        $rolePermissions = $this->roles()->whereHas('permissions', fn($q) => $q->where('permission_key', $key))->exists();
 
-        $userPermissions = $this->customPermissions()->where('permission_key', $permissionKey)->exist();
+        $userPermissions = $this->permissions()->where('permission_key', $key)->exists();
 
         return $rolePermissions || $userPermissions;
     }

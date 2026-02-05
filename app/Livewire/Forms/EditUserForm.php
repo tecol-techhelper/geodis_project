@@ -42,8 +42,8 @@ class EditUserForm extends Form
             $this->user_area = $user->user_area ?? '';
             $this->email = $user->email ?? '';
             $this->is_active = $user->is_active ?? 0;
-            $this->role_id = $user->role_id ?? 0;
-            $this->user_icon_url = $user->user_icon;
+            $this->role_id = $user->roles->first()?->id ?? 0;
+            $this->user_icon_url = $user->user_icon; 
         }
     }
 
@@ -61,7 +61,6 @@ class EditUserForm extends Form
         $user->user_area = $this->user_area;
         $user->email = $this->email;
         $user->is_active = Auth::user()->hasRole('admin') ? $this->is_active : $user->is_active;
-        $user->role_id = Auth::user()->hasRole('admin') ? $this->role_id : $user->role_id;
 
         if ($this->password) {
             $user->forceFill([
@@ -81,11 +80,15 @@ class EditUserForm extends Form
             model: $user,
             userId: Auth::id(),
             username: Auth::user()->username,
-            userRole: Auth::user()->role->rol_key,
+            userRole: Auth::user()->roles->first()?->rol_key,
             action: 'UPDATED'
         );
 
         $user->save();
+
+        if(Auth::user()->hasRole('admin') && $this->role_id){
+            $user->roles()->sync([$this->role_id]);
+        }
 
         return $user;
     }
@@ -101,7 +104,7 @@ class EditUserForm extends Form
             'email' => ['required', 'email', 'max:256', 'lowercase'],
             'password' => ['max:256', 'confirmed', Password::min(8)->letters()->mixedCase()->numbers()->symbols()->uncompromised()],
             'is_active' => ['required', 'integer', new Enum(UserStatus::class)],
-            'role_id' => ['required', 'integer', new Enum(Rol::class)],
+            'role_id' => ['required', 'integer', 'exists:roles,id'],
             'user_icon' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:1024']
         ];
     }

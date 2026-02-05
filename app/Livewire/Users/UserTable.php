@@ -33,7 +33,7 @@ final class UserTable extends PowerGridComponent
 
     public function datasource(): Builder
     {
-        return User::query()->with('role');
+        return User::query()->with('roles');
     }
 
     public function fields(): PowerGridFields

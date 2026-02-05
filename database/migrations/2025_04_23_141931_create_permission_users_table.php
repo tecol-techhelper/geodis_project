@@ -12,14 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::create('permission_users', function (Blueprint $table) {
-            $table->id();
-            // Polymorfic relation with users table
-            $table->string('model_type');
-            $table->unsignedBigInteger('model_id');
-            //Indexing for easier lookup: model_id + model_type
-            $table->index(['model_id','model_type'], 'permission_model_type_index');
-            // Foreing key to permission table
-            $table->foreignId('permission_id')->constrained()->onDelete('cascade')->onUpdate('cascade');
+            $table->foreignId('permission_id')->constrained('permissions')->cascadeOnDelete()->cascadeOnUpdate();
+            $table->foreignId('user_id')->constrained('users')->cascadeOnDelete()->cascadeOnUpdate();
+            $table->primary(['permission_id','user_id']);
             $table->timestamps();
         });
     }

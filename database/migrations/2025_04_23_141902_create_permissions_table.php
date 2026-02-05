@@ -17,7 +17,6 @@ return new class extends Migration
             $table->string('permission_name', 64)->unique();
             $table->string('permission_description');
             $table->timestamps();
-            $table->softDeletes();
         });
     }
 

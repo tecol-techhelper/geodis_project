@@ -14,10 +14,10 @@ class UserSeeder extends Seeder
      */
     public function run(): void
     {
-        $adminRol = Role::where('rol_key', 'admin')->first();
-        $coordRol = Role::where('rol_key', 'coord')->first();
+        $adminRole = Role::where('rol_key', 'admin')->first();
+        $coordRole = Role::where('rol_key', 'coord')->first();
 
-        User::create([
+        $userAdmin = User::create([
             'first_name' => 'Ernesto',
             'last_name' => 'Cortés',
             'username' => 'askmeee12',
@@ -25,11 +25,10 @@ class UserSeeder extends Seeder
             'email' => 'auxiliarnomina@transtecol.com.co',
             'password' =>'admin1234*',
             'is_active' => 1,
-            'role_id' => $adminRol->id,
             'created_at' => now(),
         ]);
 
-        User::create([
+        $userCoord = User::create([
             'first_name' => 'Jeimi',
             'last_name' => 'Leal',
             'username' => 'nomina2024',
@@ -37,8 +36,10 @@ class UserSeeder extends Seeder
             'email' => 'nomina@transtecol.com.co',
             'password' =>'admin1234*',
             'is_active' => 1,
-            'role_id' => $coordRol->id,
             'created_at' => now(),
         ]);
+
+        $userAdmin->roles()->attach($adminRole->id);
+        $userCoord->roles()->attach($coordRole->id);
     }
 }

@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class SupportFile extends Model
@@ -19,16 +18,22 @@ class SupportFile extends Model
         'file_extension',
         'uploaded_at',
         'user_id',
-        'file_type_id'
+        'uploaded_sftp',
+        'sftp_error',
+        'file_type_id',
     ];
 
-    // Relation N-to-1 with users table
-    public function user(): BelongsTo
+    // Relation(as son) 
+
+    //1-to-1 with file_type table 
+    public function file_type(): BelongsTo
     {
-        return $this->belongsTo(User::class);
+        return $this->belongsTo(FileType::class, 'file_type_id');
     }
 
-    public function file_type(): BelongsTo{
-        return $this->belongsTo(FileType::class);
+    //1-to-N with services table
+    public function service(): BelongsTo
+    {
+        return $this->belongsTo(Service::class, 'service_id');
     }
 }

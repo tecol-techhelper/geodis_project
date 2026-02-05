@@ -126,11 +126,11 @@ new #[Layout('layouts.app')] class extends Component {
                     <select {{ !Auth::user()->hasRole('admin') ? 'disabled' : '' }} id="role_id"
                         wire:model.defer="form.role_id"
                         class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
-                        @foreach (App\Enums\Rol::cases() as $rol)
-                            <option value="{{ $rol->value }}">{{ $rol->label() }}</option>
+                        @foreach (\App\Models\Role::all() as $rol)
+                            <option value="{{ $rol->id }}">{{ $rol->rol_name }}</option>
                         @endforeach
                     </select>
-                    <x-input-error :messages="$errors->get('form.role_id')" class="mt-2" />
+                    <x-input-error :messages="$errors->get('form.role_id')" class="mt-2"  />
                 </div>
 
                 @if (Auth::user()->hasRole('admin'))

@@ -9,8 +9,6 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Role extends Model
 {
-    use SoftDeletes;
-
     //For create_at and update_at
     public $timestamps = true;
 
@@ -27,7 +25,7 @@ class Role extends Model
     }
 
     // Relation many-to-many with users table through role_users table
-    public function users() : HasMany {
-        return $this->hasMany(User::class);
+    public function users() : BelongsToMany {
+        return $this->belongsToMany(User::class, 'role_users');
     }
 }

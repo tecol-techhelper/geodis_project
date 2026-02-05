@@ -69,6 +69,7 @@
                 userMenuOpen: false,
                 openFM: false,
                 openPF: false,
+                openAD: false,
                 modalIsOpen: false,
                 confirmClear: false,
                 isDesktop: window.innerWidth >= 768,

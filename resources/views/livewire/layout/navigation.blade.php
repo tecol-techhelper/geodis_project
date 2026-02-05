@@ -83,7 +83,7 @@ new class extends Component {
                     </svg>
                     <div class="px-2">
                         <span>{{ ucwords(Auth::user()->first_name . ' ' . Auth::user()->last_name) }}</span>
-                        <p class="text-xs">{{ Auth::user()->role->rol_name }}</p>
+                        <p class="text-xs">{{ Auth::user()->roles->first()?->rol_name }}</p>
                     </div>
                 </div>
 

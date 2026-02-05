@@ -2,474 +2,538 @@
 
 namespace App\Services;
 
-use DateTime;
 use Illuminate\Support\Facades\Log;
 
 class EdifactParser
 {
-    // Mapping EDI fields with DB fields base on codes
-    private const QUALIFIER_MAP = [
-        '137' => 'recived_at', // Fecha del mensaje
-        '11'  => 'despatch_date',          // Fecha de despacho (Pending confirmation by GEODIS)
-        '132' => 'arrival_date',           // Fecha de llegada (Pending confirmation by GEODIS)
-        '2'   => 'delivery_date',          // Fecha de entrega (Pending confirmation by GEODIS)
-        // More mapping fields are Pending confirmation by GEODIS
+    // DTM qualifier -> campo “semántico”
+    private const DTM_QUALIFIER_MAP = [
+        '137' => 'recived_at',     // tu BD lo tiene así (mal escrito)
+        '11'  => 'despatch_date',
+        '132' => 'arrival_date',
+        '2'   => 'delivery_date',
     ];
 
     /**
-     * Main methods: 
-     * - Parsing segment general file
-     * - Parsing every segment
+     * Parser principal orientado a DB.
+     * Devuelve un payload con entidades alineadas a tus tablas.
      */
-    public static function parse(string $content): array
+    public static function parseForDatabase(string $content, ?string $fileName = null): array
     {
-        $lines = preg_split("/'\\s*/", trim($content));
-        $data = [];
+        $segments = self::splitSegments($content);
 
-        foreach ($lines as $line) {
-            $line = trim($line);
-            if ($line === "") continue;
+        $unb = null;
+        $unh = null;
 
-            $fields = explode("+", $line);
-            $segmentID = $fields[0];
+        // Entidades DB
+        $service = null;                // services (BGM)
+        $serviceDates = [];             // service_dates (DTM)
+        $serviceEquipment = [];         // service_equipment (EQD)
+
+        $purchaseOrders = [];           // purchase_orders (CNI)
+        $currentPOIndex = null;
+
+        $currentItemIndex = null;
+
+        // Metadata file-level para edifact_files
+        $file = [
+            'transmission_id' => null,
+            'message_type' => null,     // UNH msg type
+            'file_name' => $fileName,
+            'purchase_order' => null,   // se decide: CNI o BGM
+            'recived_at' => null,       // DATE
+            'sended_at' => null,        // DATE (UNB)
+        ];
+
+        foreach ($segments as $seg) {
+            $parts = explode('+', $seg);
+            $tag = $parts[0] ?? null;
+            if (!$tag) continue;
 
             try {
-                switch ($segmentID) {
-                    case 'UNB':
-                        $data = array_merge($data, self::parseUNB($fields));
-                        break;
-                    case 'UNH':
-                        $data = array_merge($data, self::parseUNH($fields));
-                        break;
-                    case 'BGM':
-                        $data = array_merge($data, self::parseBGM($fields));
-                        break;
-                    case 'DTM':
-                        $data = array_merge($data, self::parseDTM($fields));
-                        break;
-                    case 'NAD':
-                        $data = array_merge($data, self::parseNAD($fields) ?? []);
-                        break;
-                    case 'LOC':
-                        $data = array_merge($data, self::parseLOC($fields) ?? []);
-                        break;
-                    case 'CNI':
-                        $data = array_merge($data, self::parseCNI($fields));
-                        break;
-                    case 'CNT':
-                        $data = array_merge($data, self::parseCNT($fields) ?? []);
-                        break;
-                    case 'TDT':
-                        $data = array_merge($data, self::parseTDT($fields) ?? []);
-                        break;
-                    case 'STS':
-                        $data = array_merge($data, self::parseSTS($fields));
-                        break;
-                    case 'EQD':
-                        $data = array_merge($data, self::parseEQD($fields) ?? []);
-                        break;
-                    case 'FTX':
-                        $data = array_merge($data, self::parseFTX($fields) ?? []);
-                        break;
-                    case 'GID':
-                        $data = array_merge($data, self::parseGID($fields) ?? []);
-                        break;
-                    case 'PIA':
-                        $data = array_merge($data, self::parsePIA($fields) ?? []);
-                        break;
-                    case 'PCI':
-                        $data = array_merge($data, self::parsePCI($fields) ?? []);
-                        break;
-                    case 'MEA':
-                        $data = array_merge($data, self::parseMEA($fields) ?? []);
-                        break;
-                    case 'DIM':
-                        $data = array_merge($data, self::parseDIM($fields) ?? []);
-                        break;
+                switch ($tag) {
+
+                    // -----------------
+                    // UNB (file metadata)
+                    // -----------------
+                    case 'UNB': {
+                            $unb = self::parseUNB($parts, $seg);
+                            $file['transmission_id'] = $unb['transmission_id'];
+                            $file['sended_at'] = $unb['sended_at'];
+                            break;
+                        }
+
+                        // -----------------
+                        // UNH (message type)
+                        // -----------------
+                    case 'UNH': {
+                            $unh = self::parseUNH($parts, $seg);
+                            $file['message_type'] = $unh['message_type'];
+                            break;
+                        }
+
+                        // -----------------
+                        // BGM -> SERVICES
+                        // -----------------
+                    case 'BGM': {
+                            $bgm = self::parseBGM($parts, $seg);
+
+                            // services requiere raw_segment NOT NULL
+                            $service = [
+                                'segment_tag' => 'BGM',
+                                'raw_segment' => $bgm['raw_segment'],
+
+                                // extras útiles para tu dominio (si luego los quieres mapear)
+                                'document_code' => $bgm['document_code'],
+                                'document_number' => $bgm['document_number'],
+                                'message_function_code' => $bgm['message_function_code'],
+                            ];
+
+                            // Purchase order "candidate": BGM doc number (fallback)
+                            if (!$file['purchase_order'] && !empty($bgm['document_number'])) {
+                                $file['purchase_order'] = $bgm['document_number'];
+                            }
+
+                            break;
+                        }
+
+                        // -----------------
+                        // DTM -> SERVICE_DATES (y también edifact_files.recived_at si aplica)
+                        // -----------------
+                    case 'DTM': {
+                            $dtm = self::parseDTM($parts, $seg);
+                            if (!$dtm) break;
+
+                            // Si hay CNI activo, muchos DTM son por orden. Pero tu tabla service_dates
+                            // solo cuelga de service_id, así que los guardamos como service_dates siempre.
+                            $serviceDates[] = [
+                                'segment_tag' => 'DTM',
+                                'raw_segment' => $dtm['raw_segment'],
+                                'service_date' => $dtm['date'],          // date Y-m-d (NOT NULL)
+                                'format_date' => $dtm['format_code'],    // int (nullable)
+                                'date_type_code' => $dtm['qualifier'],   // para lookup -> date_type_id
+                            ];
+
+                            // Si qualifier 137, eso lo quieres en edifact_files.recived_at
+                            if (($dtm['qualifier'] ?? null) === '137' && !$file['recived_at']) {
+                                $file['recived_at'] = $dtm['date'];
+                            }
+
+                            break;
+                        }
+
+                        // -----------------
+                        // EQD -> SERVICE_EQUIPMENT
+                        // -----------------
+                    case 'EQD': {
+                            $eqd = self::parseEQD($parts, $seg);
+                            if (!$eqd) break;
+
+                            $serviceEquipment[] = [
+                                'segment_tag' => 'EQD',
+                                'raw_segment' => $eqd['raw_segment'],
+                                'equipment_identifier' => $eqd['equipment_identifier'],
+                                'equipment_type_code' => $eqd['equipment_type_code'], // lookup -> equipment_type_id
+                            ];
+
+                            break;
+                        }
+
+                        // -----------------
+                        // CNI -> PURCHASE_ORDERS (abre orden)
+                        // -----------------
+                    case 'CNI': {
+                            $cni = self::parseCNI($parts, $seg);
+
+                            $purchaseOrders[] = [
+                                'segment_tag' => 'CNI',
+                                'raw_segment' => $cni['raw_segment'],
+                                'purchase_order_secuence' => $cni['sequence'] ? (int)$cni['sequence'] : null,
+                                'purchase_order_number' => $cni['consignment_reference_number'],
+
+                                // hijos
+                                'items' => [],
+                                'references' => [],
+                                'contacts' => [],
+                                'measurements' => [],
+                                'requirements' => [],
+                            ];
+
+                            $currentPOIndex = count($purchaseOrders) - 1;
+                            $currentItemIndex = null;
+
+                            // Para edifact_files.purchase_order: si CNI trae número, tiene prioridad
+                            if (!empty($cni['consignment_reference_number'])) {
+                                $file['purchase_order'] = $cni['consignment_reference_number'];
+                            }
+
+                            break;
+                        }
+
+                        // -----------------
+                        // GID -> PURCHASE_ORDER_ITEMS (hijo de la orden)
+                        // -----------------
+                    case 'GID': {
+                            $gid = self::parseGID($parts, $seg);
+                            if (!$gid) break;
+
+                            // Si llega GID sin CNI previo: crea una orden "dummy" (para no perder el ítem)
+                            if ($currentPOIndex === null) {
+                                $purchaseOrders[] = [
+                                    'segment_tag' => 'CNI',
+                                    'raw_segment' => null,
+                                    'purchase_order_secuence' => null,
+                                    'purchase_order_number' => $file['purchase_order'], // lo que haya
+                                    'items' => [],
+                                    'references' => [],
+                                    'contacts' => [],
+                                    'measurements' => [],
+                                    'requirements' => [],
+                                ];
+                                $currentPOIndex = count($purchaseOrders) - 1;
+                            }
+
+                            $purchaseOrders[$currentPOIndex]['items'][] = [
+                                'segment_tag' => 'GID',
+                                'raw_segment' => $gid['raw_segment'],
+                                'item_number' => (int)$gid['item_number'],     // NOT NULL
+                                'item_count' => (int)$gid['item_count'],       // NOT NULL
+                                'item_type' => (string)$gid['item_type'],      // NOT NULL
+
+                                // futuros hijos si luego creas tablas: PIA/MEA/DIM/PCI...
+                                'products' => [],
+                                'packages' => [],
+                                'measurements' => [],
+                                'dimensions' => [],
+                            ];
+
+                            $currentItemIndex = count($purchaseOrders[$currentPOIndex]['items']) - 1;
+                            break;
+                        }
+
+                        // -----------------
+                        // RFF -> ORDER_REFERENCES (cuelga de purchase_order_id)
+                        // -----------------
+                    case 'RFF': {
+                            $rff = self::parseRFF($parts, $seg);
+                            if (!$rff) break;
+
+                            if ($currentPOIndex === null) {
+                                // Sin orden, lo dejamos “huérfano” en la primera PO dummy
+                                $purchaseOrders[] = [
+                                    'segment_tag' => 'CNI',
+                                    'raw_segment' => null,
+                                    'purchase_order_secuence' => null,
+                                    'purchase_order_number' => $file['purchase_order'],
+                                    'items' => [],
+                                    'references' => [],
+                                    'contacts' => [],
+                                    'measurements' => [],
+                                    'requirements' => [],
+                                ];
+                                $currentPOIndex = count($purchaseOrders) - 1;
+                            }
+
+                            $purchaseOrders[$currentPOIndex]['references'][] = [
+                                'segment_tag' => 'RFF',
+                                'raw_segment' => $rff['raw_segment'],
+                                'order_reference_value' => $rff['value'],
+                                'reference_type_code' => $rff['qualifier'], // lookup -> reference_type_id
+                            ];
+
+                            break;
+                        }
+
+                        // -----------------
+                        // CTA -> SERVICE_CONTACTS (cuelga de service_id y purchase_order_id)
+                        // -----------------
+                    case 'CTA': {
+                            $cta = self::parseCTA($parts, $seg);
+                            if (!$cta) break;
+
+                            if ($currentPOIndex === null) {
+                                // Igual que arriba: crea PO dummy para no perder el contacto
+                                $purchaseOrders[] = [
+                                    'segment_tag' => 'CNI',
+                                    'raw_segment' => null,
+                                    'purchase_order_secuence' => null,
+                                    'purchase_order_number' => $file['purchase_order'],
+                                    'items' => [],
+                                    'references' => [],
+                                    'contacts' => [],
+                                    'measurements' => [],
+                                    'requirements' => [],
+                                ];
+                                $currentPOIndex = count($purchaseOrders) - 1;
+                            }
+
+                            $purchaseOrders[$currentPOIndex]['contacts'][] = [
+                                'segmemt_tag' => 'CTA', // tu tabla tiene typo segmemt_tag
+                                'raw_segment' => $cta['raw_segment'],
+                                'contact_name' => $cta['contact_name'],
+                                'contact_type_code' => $cta['qualifier'], // lookup -> contact_type_id
+                            ];
+
+                            break;
+                        }
+
+                        // -----------------
+                        // CNT -> SERVICE_MEASUREMENTS (cuelga de service_id y purchase_order_id)
+                        // -----------------
+                    case 'CNT': {
+                            $cnt = self::parseCNT($parts, $seg);
+                            if (!$cnt) break;
+
+                            if ($currentPOIndex === null) {
+                                $purchaseOrders[] = [
+                                    'segment_tag' => 'CNI',
+                                    'raw_segment' => null,
+                                    'purchase_order_secuence' => null,
+                                    'purchase_order_number' => $file['purchase_order'],
+                                    'items' => [],
+                                    'references' => [],
+                                    'contacts' => [],
+                                    'measurements' => [],
+                                    'requirements' => [],
+                                ];
+                                $currentPOIndex = count($purchaseOrders) - 1;
+                            }
+
+                            $purchaseOrders[$currentPOIndex]['measurements'][] = [
+                                'segment_tag' => 'CNT',
+                                'raw_segment' => $cnt['raw_segment'],
+                                'measure_value' => $cnt['value'],
+                                'measure_unit' => $cnt['unit'],
+                                'global_measure_type_code' => $cnt['qualifier'], // lookup -> global_measure_type_id
+                            ];
+
+                            break;
+                        }
+
+                        // Requerimientos: tu tabla purchase_order_requirements tiene campos NOT NULL.
+                        // Solo los llenamos si el segmento trae esa estructura (si no, NO inventamos).
+                        // case '...': parseRequirements...
+
                 }
             } catch (\Throwable $e) {
-                Log::error("[{$segmentID}] Error parseando segmento: " . $e->getMessage());
+                Log::error("[EdifactParser][$tag] Error: " . $e->getMessage());
             }
         }
 
-        return $data;
-    }
-
-    //Parsing UNH segment
-    //UNH+<MessageRefNumber>+<MessageIdentifier>:<Version>:<Release>:<Agency>'
-    public static function parseUNH(array $parts): array
-    {
         return [
-            'message_id' => $parts[1] ?? null,
-            'message_type' => isset($parts[2]) ? explode(':', $parts[2])[0] : null
+            'file' => $file,
+            'service' => $service, // luego el Job crea Service y obtiene service_id
+            'service_dates' => $serviceDates,
+            'service_equipment' => $serviceEquipment,
+            'purchase_orders' => $purchaseOrders,
         ];
     }
 
-    //Parsing BGM segment
-    //BGM+<DocumentCode>+<DocumentNumber>+<MessageFunctionCode>'
-    public static function  parseBGM(array $parts): array
+    // -------------------------
+    // Segment parsers (DB-friendly)
+    // -------------------------
+
+    private static function parseUNB(array $parts, string $raw): array
+    {
+        $senderRaw = $parts[2] ?? null;
+        $receiverRaw = $parts[3] ?? null;
+
+        $senderId = $senderRaw ? (explode(':', $senderRaw)[0] ?? null) : null;
+        $receiverId = $receiverRaw ? (explode(':', $receiverRaw)[0] ?? null) : null;
+
+        $dt = isset($parts[4]) ? self::formatUNBDateTime($parts[4]) : null;
+
+        return [
+            'raw_segment' => $raw,
+            'transmission_id' => $parts[5] ?? null,
+            'sender_id' => $senderId,
+            'receiver_id' => $receiverId,
+            'sended_at' => $dt ? substr($dt, 0, 10) : null,
+        ];
+    }
+
+    private static function parseUNH(array $parts, string $raw): array
+    {
+        $msgId = $parts[1] ?? null;
+        $msgType = isset($parts[2]) ? (explode(':', $parts[2])[0] ?? null) : null;
+
+        return [
+            'raw_segment' => $raw,
+            'message_id' => $msgId,
+            'message_type' => $msgType,
+        ];
+    }
+
+    private static function parseBGM(array $parts, string $raw): array
     {
         return [
+            'raw_segment' => $raw,
             'document_code' => $parts[1] ?? null,
-            'documento_number' => $parts[2] ?? null,
-            'message_function_code' => $parts[3] ?? null
+            'document_number' => $parts[2] ?? null,
+            'message_function_code' => $parts[3] ?? null,
         ];
     }
 
-    //Parsing DTM segment
-    //DTM+<DateQualifier>:<DateValue>:<FormatCode>'
-    public static function parseDTM(array $parts): array
-    {
-        // Validating if there's date values setted
-        if (!isset($parts[1])) return [];
-
-        // Separating every subfield
-        $elements = explode(":", $parts[1]);
-
-        $dateType = $elements[0];
-        $date = $elements[1];
-        $formatCode = $elements[2];
-
-
-        if (!$dateType || !$date || !$formatCode) return [];
-
-
-        // Formating date base on format code
-        $dateFormated = self::interDateByFormat($date, $formatCode);
-
-        if (!$dateFormated) return [];
-
-        // Searching the database field name base on dateType code
-        $dbField = self::QUALIFIER_MAP[$dateType] ?? null;
-
-        return $dbField ? [$dbField => $dateFormated] : [];
-    }
-
-    /** 
-     * Pendientes implementar
-     * Parsing NAD
-     * NAD+<PartyQualifier>+<PartyID>+<CodeQualifier>+<Name>+<Street>+<City>+<Region>+<PostalCode>+<CountryCode>'
-     */
-    public static function parseNAD(array $parts): ?array
-    {
-        $qualifier = $parts[1] ?? null;
-        if (!$qualifier) return null;
-
-        return [
-            'party_qualifier' => $qualifier,
-            'party_id' => $parts[2] ?? null,
-            'name' => $parts[4] ?? null,
-            'street' => $parts[5] ?? null,
-            'city' => $parts[6] ?? null,
-            'region' => $parts[7] ?? null,
-            'country' => $parts[9] ?? null,
-        ];
-    }
-
-    // Parsing LOC
-    // LOC+<PlaceQualifier>+<LocationIdentification>:<CodeQualifier>'
-    public static function parseLOC(array $parts): ?array
-    {
-        $qualifier = $parts[1] ?? null;
-        if (!$qualifier) return null;
-
-        return [
-            'place_qualifier' => $qualifier,
-            'location_code' => $parts[2]
-        ];
-    }
-
-    // Parsing CNI
-    // CNI+<ConsignmentSequenceNumber>+<ConsignmentReferenceNumber>'
-    public static function parseCNI(array $parts): array
-    {
-        return [
-            'consignment_reference_number' => $parts[2] ?? null
-        ];
-    }
-
-    // Parsing CNT
-    // CNT+<ControlQualifier>:<Value>:<MeasurementUnit>'
-    public static function parseCNT(array $parts): ?array
+    private static function parseDTM(array $parts, string $raw): ?array
     {
         if (!isset($parts[1])) return null;
 
-        $elements = explode(":", $parts[1]);
+        $e = explode(':', $parts[1]);
+        $qualifier = $e[0] ?? null;
+        $value = $e[1] ?? null;
+        $formatCode = $e[2] ?? null;
 
-        $qualifier = $elements[0] ?? null;
-        $value = $elements[1] ?? null;
-        $measurementUnit = $elements[2] ?? null;
+        if (!$qualifier || !$value || !$formatCode) return null;
 
-        if (!$qualifier) return null;
+        $dt = self::interpretDateByFormat($value, $formatCode);
+        if (!$dt) return null;
 
         return [
-            'control_qualifier' => $qualifier,
-            'value' => $value,
-            'meausrementUnit' => $measurementUnit
+            'raw_segment' => $raw,
+            'qualifier' => $qualifier,
+            'format_code' => (int)$formatCode,
+            'date' => substr($dt, 0, 10),
+            'mapped_field' => self::DTM_QUALIFIER_MAP[$qualifier] ?? null,
         ];
     }
 
-    // Parsing STS
-    // STS+<StatusEventSequence>+<StatusCode>'
-    public static function parseSTS(array $parts): array
+    private static function parseCNI(array $parts, string $raw): array
     {
         return [
-            'status_code' => $parts[2] ?? null
+            'raw_segment' => $raw,
+            'sequence' => $parts[1] ?? null,
+            'consignment_reference_number' => $parts[2] ?? null,
         ];
     }
 
-    // Parsing TDT
-    // TDT+<TransportStageCode>+<TransportID>+<TransportMode>+<CarrierID>+<CarrierCode>:<CodeListQualifier>:<ResponsibleAgency>:<CarrierName>+<TransportMeansCode>+<NationalityCode>'
-    public static function parseTDT(array $parts): ?array
+    private static function parseGID(array $parts, string $raw): ?array
     {
-        $qualifier = $parts[1] ?? null;
-        if (!$qualifier) return null;
+        $itemNumber = $parts[1] ?? null;
+        if (!$itemNumber) return null;
+
+        $pkgRaw = $parts[2] ?? '';
+        $x = explode(':', $pkgRaw);
+
+        $count = $x[0] ?? null;
+        $type = $x[1] ?? null;
+
+        // Tu tabla exige NOT NULL: item_count e item_type. Si no vienen, no invento: lo marco 0 / 'UNK'
+        // Si prefieres fallar duro, cambia esto por "return null" cuando falte.
+        if ($count === null) $count = 0;
+        if (!$type) $type = 'UNK';
 
         return [
-            'transport_stage_code' => $qualifier,
-            'transport_id' => $parts[2] ?? null,
-            'transport_mode' => $parts[3] ?? null,
-            'carrier_id' => $parts[4] ?? null,
-            'carrier_details' => $parts[5] ?? null
+            'raw_segment' => $raw,
+            'item_number' => $itemNumber,
+            'item_count' => $count,
+            'item_type' => $type,
         ];
     }
 
-    // Parsing EQD
-    // EQD+<EquipmentTypeCode>+<EquipmentID>+<FullOrEmptyIndicator>+<EquipmentSizeAndType>+<EquipmentSupplier>+<SealID>+<EquipmentStatus>+<OwnershipIndicator>'
-    public static function parseEQD(array $parts): ?array
+    private static function parseEQD(array $parts, string $raw): ?array
     {
         $equipmentType = $parts[1] ?? null;
         if (!$equipmentType) return null;
 
         return [
-            'equipment_type' => $equipmentType,
-            'equipment_id' => $parts[2] ?? null,
-            'container_load_status' => $parts[3] ?? null
+            'raw_segment' => $raw,
+            'equipment_type_code' => $equipmentType,
+            'equipment_identifier' => $parts[2] ?? null,
         ];
     }
 
-    // Parsing GID
-    // GID+<ItemNumber>+<PackageCount>:<PackageType>'
-    public static function parseGID(array $parts): ?array
+    private static function parseRFF(array $parts, string $raw): ?array
     {
-        $itemNumber = $parts[1] ?? null;
-        if (!$itemNumber) return null;
-
-        $elements = explode(':', $parts[2]);
-        $pkCount = $elements[0] ?? null;
-        $pkType = $elements[1] ?? null;
-
-        return [
-            'item_number' => $itemNumber,
-            'package_count' => $pkCount,
-            'package_type' => $pkType
-        ];
-    }
-
-    // Parsing PCI
-    // PCI+<MarkingInstructions>+<PackageID>'
-    public static function parsePCI(array $parts): ?array
-    {
-        $markingExistence = $parts[1] ?? null;
-        if (!$markingExistence || $markingExistence == "25") return null;
-
-        return [
-            'marking_existence' => $markingExistence,
-            'package_id' => $parts[2] ?? null
-        ];
-    }
-
-    // Parsing PIA
-    // PIA+<ProductIdFunctionCode>+<ProductId>:<CodeListQualifier>'
-    public static function parsePIA(array $parts): ?array
-    {
+        // RFF+QUAL:VALUE
         if (!isset($parts[1])) return null;
 
-        $idFunction = $parts[1] ?? null;
-        $productID = $parts[2] ?? null;
+        $e = explode(':', $parts[1]);
+        $qual = $e[0] ?? null;
+        $val = $e[1] ?? null;
+        if (!$qual) return null;
 
         return [
-            'id_function' => $idFunction,
-            'product_id' => $productID
+            'raw_segment' => $raw,
+            'qualifier' => $qual,
+            'value' => $val,
         ];
     }
 
-    // Parsing MEA
-    //MEA+<MeasurementPurpose>+<MeasurementAttribute>+<UnitCode>:<Value>'
-    public static function parseMEA(array $parts): ?array
+    private static function parseCTA(array $parts, string $raw): ?array
     {
-        $purpose = $parts[1] ?? null;
-        if (!isset($purpose)) return null;
-
-        $measurementType = $parts[2] ?? null;
-
-        $measurementData = explode(':', $parts[3]);
-
-        $unit = $measurementData[0] ?? null;
-        $value = $measurementData[1] ?? null;
-
-        $hash = md5($purpose . '|' . $measurementType . '|' . $unit);
+        // CTA+QUAL+NAME
+        $qual = $parts[1] ?? null;
+        if (!$qual) return null;
 
         return [
-            'purpose' => $purpose,
-            'measurement_type' => $measurementType,
+            'raw_segment' => $raw,
+            'qualifier' => $qual,
+            'contact_name' => $parts[2] ?? null,
+        ];
+    }
+
+    private static function parseCNT(array $parts, string $raw): ?array
+    {
+        // CNT+QUAL:VALUE:UNIT (en la práctica varía, así que lo tolero)
+        if (!isset($parts[1])) return null;
+
+        $e = explode(':', $parts[1]);
+        $qual = $e[0] ?? null;
+        $val = $e[1] ?? null;
+        $unit = $e[2] ?? null;
+
+        if (!$qual) return null;
+
+        return [
+            'raw_segment' => $raw,
+            'qualifier' => $qual,
+            'value' => $val !== null ? (float)$val : null,
             'unit' => $unit,
-            'value' => $value,
-            'hash' => $hash
         ];
     }
 
-    // Parsing DIM
-    // DIM+<DimensionQualifier>+<UnitCode>:<Length>:< Width >:<Height>'
-    public static function parseDIM(array $parts): ?array
+    // -------------------------
+    // Helpers
+    // -------------------------
+
+    private static function splitSegments(string $content): array
     {
-        $qualifier = $parts[1] ?? null;
-        if (!isset($qualifier)) return null;
-
-
-
-        $dimData = explode(':', $parts[2]);
-
-        $unit = $dimData[0] ?? null;
-        $length = $dimData[1] ?? null;
-        $width = $dimData[2] ?? null;
-        $height = $dimData[3] ?? null;
-
-
-        $hash = md5(implode('|', [$unit, $length, $width, $height]));
-
-        return [
-            'qualifier' => $qualifier,
-            'unit' => $unit,
-            'length' => $length,
-            'width' => $width,
-            'height' => $height,
-            'hash' => $hash
-        ];
+        $segments = preg_split("/'\\s*/", trim($content));
+        $segments = array_map('trim', $segments);
+        return array_values(array_filter($segments, fn($s) => $s !== ''));
     }
 
-    // Parsing FTX
-    // FTX+<TextSubjectQualifier>+<TextFunction>+<TextReference>+<TextLine1>:<TextLine2>:<TextLine3>'
-    public static function parseFTX(array $parts): ?array
-    {
-        $qualifier = $parts[1] ?? null;
-        $message = $parts[4] ?? null;
-
-        if (!$qualifier || !$message) return null;
-
-        return [
-            'qualifier' => $parts[1],
-            'message' => str_replace(':', "\n", $message)
-        ];
-    }
-
-    /**
-     * Auxiliar methods: 
-     * - Formating dates
-     */
-
-    // Formating by format code
-    public static function interDateByFormat(string $value, string $formatCode): ?string
+    private static function interpretDateByFormat(string $value, string $formatCode): ?string
     {
         return match ($formatCode) {
-            '102' => self::formatingGeneralDate($value, 'Ymd'),
-            '203' => self::formatingGeneralDate($value, 'YmdHi'),
-            '303' => self::formatingGeneralDate($value, 'Hi'),
-            '718' => self::formatingDateDDYYMM($value),
-            default => null
+            '102' => self::formatGeneralDate($value, 'Ymd'),
+            '203' => self::formatGeneralDate($value, 'YmdHi'),
+            '303' => self::formatGeneralDate($value, 'Hi'),
+            '718' => self::formatUNBDateTime($value),
+            default => null,
         };
     }
 
-    //Formating 102, 203, 303 and 718 codes
-    public static function formatingGeneralDate(string $value, string $format): ?string
+    private static function formatGeneralDate(string $value, string $format): ?string
     {
         return \DateTime::createFromFormat($format, $value)?->format('Y-m-d H:i:s');
     }
 
-    // Formating Date and Hour for YYMMDD
-    public static function formatingDateDDYYMM(string $dateHour)
+    private static function formatUNBDateTime(string $dateHour): ?string
     {
-        [$date, $hour] = explode(':', $dateHour);
+        if (!str_contains($dateHour, ':')) return null;
 
-        // Extracting Day, Month and Year
-        $year = "20" . substr($date, 0, 2);
+        [$date, $hour] = explode(':', $dateHour, 2);
+        if (strlen($date) < 6 || strlen($hour) < 4) return null;
+
+        $year = '20' . substr($date, 0, 2);
         $month = substr($date, 2, 2);
         $day = substr($date, 4, 2);
 
-        // Extracting Hour and Minute
-        $hourExt = substr($hour, 0, 2);
-        $minuteExt = substr($hour, 2, 2);
+        $h = substr($hour, 0, 2);
+        $m = substr($hour, 2, 2);
 
-        $dateTime = "{$year}-{$month}-{$day} {$hourExt}:{$minuteExt}";
-
-        $date = \DateTime::createFromFormat('Y-m-d H:i', $dateTime);
-
-        return $date?->format('Y-m-d H:i:s');
-    }
-
-
-    /**
-     * Another methods for texting
-     */
-
-    public static function extractMessages(string $content): array
-    {
-        // Separating the message in segments
-        $segments = preg_split("/'\\s*/", trim($content));
-        $messages = [];
-        $currentMessage = [];
-
-        // walk through the array
-        foreach ($segments as $segment) {
-            // Discarting all spaces and empy segments
-            $segment = trim($segment);
-            if ($segment === '') continue;
-
-
-            // Validating if the current segment starts with UNH or UNT
-            if (str_starts_with($segment, 'UNH')) {
-                $currentMessage = [$segment];
-            } elseif (str_starts_with($segment, 'UNT')) {
-                // Adding final segment (UNT) to the message block UNH - UNT
-                $currentMessage[] = $segment;
-                $messages[] = implode("'", $currentMessage) . "'";
-                $currentMessage = [];
-            } else {
-                // Adding intermediate segments between UNH and UNT
-                $currentMessage[] = $segment;
-            }
-        }
-
-        // Returning a list of message(s)
-        return $messages;
-    }
-
-    /**
-     * Parsing UMBsegment apart because there's one per file
-     */
-
-    public static function extractUNBSegment(string $content): ?array
-    {
-        $segments = preg_split("/'\\s*/", trim($content));
-
-        foreach ($segments as $segment) {
-            if (str_starts_with($segment, 'UNB')) {
-                $parts = explode('+', $segment);
-                return self::parseUNB($parts);
-            }
-        }
-
-        return null;
-    }
-
-    //Parsing UNB segment
-    // UNB+<SyntaxIdentifier>:<SyntaxVersion>+<SenderID>:<SenderQualifier>+<ReceiverID>:<ReceiverQualifier>+<Date>:<Time>+<InterchangeControlReference>'
-    public static function parseUNB(array $parts): array
-    {
-        return [
-            'message_date' => isset($parts[4]) ? self::formatingDateDDYYMM($parts[4]) : null,
-            'sender' => explode(':', $parts[2])[0] ?? null,
-            'transmission_id' => $parts[5] ?? null
-        ];
+        $dt = \DateTime::createFromFormat('Y-m-d H:i', "{$year}-{$month}-{$day} {$h}:{$m}");
+        return $dt?->format('Y-m-d H:i:s');
     }
 }

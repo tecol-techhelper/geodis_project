@@ -18,8 +18,11 @@ return new class extends Migration
             $table->string('file_name');
             $table->string('purchase_order')->nullable();
             $table->date('recived_at')->nullable();
+            $table->date('sended_at')->nullable();
             $table->string('file_url',2048)->nullable();
             $table->string('file_path',2048)->nullable();
+            $table->foreignId('service_id')->constrained('services')->cascadeOnDelete();
+            $table->softDeletes();
             $table->timestamps();
         });
     }

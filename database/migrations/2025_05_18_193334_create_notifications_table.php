@@ -17,7 +17,8 @@ return new class extends Migration
             $table->string('message', 2048)->nullable();
             $table->boolean('is_read')->default(false);
             $table->string('purchase_order');
-            //  $table->foreignId('service_id')->constrained()->onDelete('cascade')->onUpdate('cascade');
+            $table->foreignId('service_id')->constrained('services')->cascadeOnUpdate();
+            $table->softDeletes();
             $table->timestamps();
         });
     }

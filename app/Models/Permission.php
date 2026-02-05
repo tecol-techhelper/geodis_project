@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Permission extends Model
 {
-    use SoftDeletes;
+    // use SoftDeletes;
 
     //For create_at and update_at
     public $timestamps = true;
@@ -27,7 +27,7 @@ class Permission extends Model
     }
 
     // Polymorfic relation many-to-many with users table through role_users table
-    public function users() : MorphToMany {
-        return $this->morphedByMany(User::class, 'permission_users');
+    public function users() : BelongsToMany {
+        return $this->belongsToMany(User::class, 'permission_users');
     }
 }
