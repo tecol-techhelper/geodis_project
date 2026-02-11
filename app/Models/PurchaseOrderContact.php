@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class ServiceContact extends Model
+class PurchaseOrderContact extends Model
 {
     use SoftDeletes;
 
@@ -15,6 +15,7 @@ class ServiceContact extends Model
         'segment_tag',
         'contact_name',
         'raw_segment',
+        'purchase_order_id',
         'service_id',
         'contact_type_id'
     ];
@@ -22,6 +23,7 @@ class ServiceContact extends Model
     protected $casts = [
         'id' => 'integer',
         'service_id' => 'integer',
+        'purchase_order_id' => 'integer',
         'contact_type_id' => 'integer'
     ];
 
@@ -33,23 +35,23 @@ class ServiceContact extends Model
 
     // Relation (as father)
 
-    // 1-to-N with service_contact_details table
-    public function service_contact_details(): HasMany
+    // 1-to-N with purchase_order_contact_details table
+    public function purchase_order_contact_details(): HasMany
     {
-        return $this->hasMany(ServiceContactDetail::class, 'service_contact_id', 'id');
+        return $this->hasMany(PurchaseOrderContactDetail::class, 'service_contact_id', 'id');
     }
 
     // Relation (as son)
-
-    //1-to-N with services table
-    public function service(): BelongsTo
-    {
-        return $this->belongsTo(Service::class, 'service_id', 'id');
-    }
 
     // 1-to-1 with contact_types table
     public function contact_type(): BelongsTo
     {
         return $this->belongsTo(ContactType::class, 'contact_type_id', 'id');
+    }
+
+    // 1-to-N with purchase_order table
+    public function purchase_order(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class, 'purchase_order_id', 'id');
     }
 }

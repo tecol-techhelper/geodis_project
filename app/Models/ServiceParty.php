@@ -4,9 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use PowerComponents\LivewirePowerGrid\Concerns\SoftDeletes;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
-class Party extends Model
+class ServiceParty extends Model
 {
     use SoftDeletes;
 
@@ -19,14 +19,12 @@ class Party extends Model
         'party_country_code',
         'raw_segment',
         'service_id',
-        'purchase_order_id',
         'party_type_id'
     ];
 
     protected $casts = [
         'id' => 'integer',
         'service_id' => 'integer',
-        'purchase_order_id' => 'integer',
         'party_type_id' => 'integer'
     ];
 
@@ -48,11 +46,5 @@ class Party extends Model
     public function service(): BelongsTo
     {
         return $this->belongsTo(Service::class, 'service_id');
-    }
-
-    // 1-to-N with party_type table
-    public function purchase_order(): BelongsTo
-    {
-        return $this->belongsTo(PurchaseOrder::class, 'purchase_order_id');
     }
 }

@@ -43,4 +43,10 @@ class ItemNote extends Model
     {
         return $this->belongsTo(PurchaseOrderItem::class, 'purchase_order_item_id');
     }
+
+    // 1-to-N with service table
+    public function purchase_order(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrderItem::class, 'purchase_order_id');
+    }
 }

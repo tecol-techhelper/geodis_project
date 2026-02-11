@@ -11,12 +11,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('service_contacts', function (Blueprint $table) {
+        Schema::create('purchase_order_contacts', function (Blueprint $table) {
             $table->id();
             $table->string('segment_tag')->default('CTA');
             $table->string('contact_name')->nullable();
             $table->string('raw_segment');
-            $table->foreignId('service_id')->constrained('services')->cascadeOnUpdate();
+            $table->foreignId('purchase_order_id')->constrained('purchase_orders')->cascadeOnUpdate();
             $table->foreignId('contact_type_id')->constrained('contact_types')->cascadeOnUpdate();
             $table->softDeletes();
             $table->timestamps();
@@ -28,6 +28,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('service_contacts');
+        Schema::dropIfExists('purchase_order_contacts');
     }
 };

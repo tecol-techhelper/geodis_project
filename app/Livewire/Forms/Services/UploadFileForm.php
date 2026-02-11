@@ -106,11 +106,11 @@ class UploadFileForm extends Form
 
             // --- Crear directorio remoto con reintentos por latencia ---
             try {
-                if (!Storage::disk('sftp')->exists($remoteDir)) {
-                    Storage::disk('sftp')->makeDirectory($remoteDir);
+                if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
+                    Storage::disk('sftp_geodis')->makeDirectory($remoteDir);
 
                     $attempts = 0;
-                    while ($attempts < 5 && !Storage::disk('sftp')->exists($remoteDir)) {
+                    while ($attempts < 5 && !Storage::disk('sftp_geodis')->exists($remoteDir)) {
                         usleep(300000 * ($attempts + 1)); // backoff: 0.3s, 0.6s, 0.9s...
                         $attempts++;
                     }
@@ -152,13 +152,13 @@ class UploadFileForm extends Form
 
                 while (!$uploaded && $attempts < 5) {
                     try {
-                        Storage::disk('sftp')->putFileAs(
+                        Storage::disk('sftp_geodis')->putFileAs(
                             $remoteDir,
                             new \Illuminate\Http\File($localPath),
                             $remoteFileName
                         );
 
-                        if (Storage::disk('sftp')->exists($remotePath)) {
+                        if (Storage::disk('sftp_geodis')->exists($remotePath)) {
                             $uploaded = true;
                             break;
                         }

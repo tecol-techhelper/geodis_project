@@ -35,21 +35,15 @@ class PurchaseOrder extends Model
 
 
     // 1-to-N service_measurements table
-    public function service_measurements(): HasMany
+    public function purchase_order_measurements(): HasMany
     {
-        return $this->hasMany(ServiceMeasurement::class, 'purchase_order_id');
-    }
-
-    // 1-to-N service_contacts table
-    public function service_contacts(): HasMany
-    {
-        return $this->hasMany(ServiceContact::class, 'purchase_order_id');
+        return $this->hasMany(PurchaseOrderMeasurement::class, 'purchase_order_id');
     }
 
     // 1-to-N parties table
     public function parties(): HasMany
     {
-        return $this->hasMany(Party::class, 'purchase_order_id');
+        return $this->hasMany(PurchaseOrderParty::class, 'purchase_order_id');
     }
 
     // 1-to-N order_references table
@@ -80,6 +74,19 @@ class PurchaseOrder extends Model
     public function purchase_order_items(): HasMany
     {
         return $this->hasMany(PurchaseOrderItem::class, 'purchase_order_id');
+    }
+
+
+    // 1-to-N purchase_order_items table
+    public function purchase_order_notes(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderNote::class, 'purchase_order_id');
+    }
+
+    // 1-to-N purchase_order_items table
+    public function purchase_order_contacts(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderContact::class, 'purchase_order_id');
     }
 
     // Relations (as son)

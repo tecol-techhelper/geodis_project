@@ -4,9 +4,9 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\SoftDeletes;
+use PowerComponents\LivewirePowerGrid\Concerns\SoftDeletes;
 
-class ContactDetail extends Model
+class ServiceContactDetail extends Model
 {
     use SoftDeletes;
 
@@ -31,7 +31,7 @@ class ContactDetail extends Model
 
     // Relation (as son)
 
-    // 1-to-N with servicecontacts table
+    // 1-to-N with service_contacts table
     public function service_contact(): BelongsTo
     {
         return $this->belongsTo(ServiceContact::class, 'service_contact_id');

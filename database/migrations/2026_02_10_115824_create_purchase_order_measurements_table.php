@@ -11,13 +11,13 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('service_measurements', function (Blueprint $table) {
+        Schema::create('purchase_order_measurements', function (Blueprint $table) {
             $table->id();
             $table->string('segment_tag')->default('CNT');
             $table->decimal('measure_value', 16, 2)->nullable();
             $table->string('measure_unit')->nullable();
             $table->text('raw_segment');
-            $table->foreignId('service_id')->constrained('services')->cascadeOnUpdate();
+            $table->foreignId('purchase_order_id')->constrained('purchase_orders')->cascadeOnUpdate();
             $table->foreignId('global_measure_type_id')->constrained('global_measure_types')->cascadeOnUpdate();
             $table->softDeletes();
             $table->timestamps();
@@ -29,6 +29,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('service_measurements');
+        Schema::dropIfExists('purchase_order_measurements');
     }
 };

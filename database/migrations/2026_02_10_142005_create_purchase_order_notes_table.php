@@ -11,18 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('parties', function (Blueprint $table) {
+        Schema::create('purchase_order_notes', function (Blueprint $table) {
             $table->id();
-            $table->string('segment_tag',3)->default('NAD');
+            $table->string('segment_tag', 3)->default('FTX');
             $table->text('raw_segment');
-            $table->string('party_name')->nullable();
-            $table->string('party_street')->nullable();
-            $table->string('party_city');
-            $table->string('party_region');
-            $table->string('party_country_code');
-            $table->foreignId('party_type_id')->constrained('party_types')->cascadeOnUpdate();
-            $table->foreignId('service_id')->constrained('services')->cascadeOnUpdate();
+            $table->text('note_text')->nullable();
+
+
             $table->foreignId('purchase_order_id')->constrained('purchase_orders')->cascadeOnUpdate();
+            $table->foreignId('note_types_id')->constrained('note_types')->cascadeOnUpdate();
+
             $table->softDeletes();
             $table->timestamps();
         });
@@ -33,6 +31,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('parties');
+        Schema::dropIfExists('purchase_order_notes');
     }
 };

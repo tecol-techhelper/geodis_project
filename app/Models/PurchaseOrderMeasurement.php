@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class ServiceMeasurement extends Model
+class PurchaseOrderMeasurement extends Model
 {
     use SoftDeletes;
 
@@ -15,13 +15,13 @@ class ServiceMeasurement extends Model
         'measure_value',
         'measure_unit',
         'raw_segment',
-        'service_id',
+        'purchase_order_id',
         'global_measure_type_id'
     ];
 
     protected $casts = [
         'id' => 'integer',
-        'service_id' => 'integer',
+        'purchase_order_id' => 'integer',
         'global_measure_type_id' => 'integer',
     ];
 
@@ -39,9 +39,9 @@ class ServiceMeasurement extends Model
         return $this->belongsTo(GlobalMeasureType::class, 'global_measure_type_id');
     }
 
-    // 1-to-N with services table
-    public function service(): BelongsTo
+    // 1-to-N with purchase_order table
+    public function purchase_order(): BelongsTo
     {
-        return $this->belongsTo(Service::class, 'service_id');
+        return $this->belongsTo(PurchaseOrder::class, 'purchase_order_id');
     }
 }

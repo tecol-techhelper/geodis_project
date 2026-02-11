@@ -11,7 +11,7 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('contact_details', function (Blueprint $table) {
+        Schema::create('service_contact_details', function (Blueprint $table) {
             $table->id();
             $table->string('segment_tag')->default('COM');
             $table->string('channel_contact');
@@ -28,6 +28,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('contact_details');
+        Schema::dropIfExists('service_contact_details');
     }
 };

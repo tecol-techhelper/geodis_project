@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('party_types', function (Blueprint $table) {
             $table->id();
             $table->string('party_qualifier', 3)->unique();
-            $table->string('party_type_name', 16);
+            $table->string('party_type_name', 32);
             $table->string('party_type_description');
             $table->softDeletes();
             $table->timestamps();

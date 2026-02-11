@@ -37,7 +37,8 @@ class DatabaseSeeder extends Seeder
             DimensionTypeSeeder::class,
             ProductIdentifierRoleSeeder::class,
             ProductIdentifierTypeSeeder::class,
-            DeliveryTermCatalogSeeder::class
+            DeliveryTermCatalogSeeder::class,
+            PartyTypeSeeder::class
         ]);
     }
 }

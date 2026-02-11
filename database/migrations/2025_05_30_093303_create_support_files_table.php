@@ -21,7 +21,8 @@ return new class extends Migration
             $table->boolean('uploaded_sftp')->default(0);
             $table->text('sftp_error')->nullable();
             $table->foreignId('file_type_id')->constrained('file_types')->cascadeOnUpdate();
-            $table->foreignId('service_id')->constrained('services')->cascadeOnUpdate();
+            $table->foreignId('service_id')->nullable()->constrained('services')->cascadeOnUpdate();
+            $table->foreignId('user_id')->constrained('users')->cascadeOnUpdate();
             $table->softDeletes();
             $table->timestamps();
         });
