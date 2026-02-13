@@ -48,7 +48,7 @@ class PurchaseOrderItem extends Model
     }
 
     // 1-to-N with item_measures table
-    public function item_dimension(): HasMany
+    public function item_dimensions(): HasMany
     {
         return $this->hasMany(ItemDimension::class, 'purchase_order_item_id');
     }
@@ -60,13 +60,13 @@ class PurchaseOrderItem extends Model
     }
 
     // 1-to-N with item_unit_identifier table
-    public function item_unit_identifier(): HasMany
+    public function item_unit_identifiers(): HasMany
     {
         return $this->hasMany(ItemUnitIdentifier::class, 'purchase_order_item_id');
     }
 
     // 1-to-N with item_unit_identifier table
-    public function item_product_identifier(): HasMany
+    public function item_product_identifiers(): HasMany
     {
         return $this->hasMany(ItemProductIdentifier::class, 'purchase_order_item_id');
     }

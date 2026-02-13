@@ -41,7 +41,7 @@ class PurchaseOrder extends Model
     }
 
     // 1-to-N parties table
-    public function parties(): HasMany
+    public function purchase_order_parties(): HasMany
     {
         return $this->hasMany(PurchaseOrderParty::class, 'purchase_order_id');
     }

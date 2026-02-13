@@ -1,0 +1,5 @@
+<button
+    <?php echo e($attributes->merge(['type' => 'submit', 'class' => 'inline-flex items-center justify-center px-4 py-2 bg-white dark:bg-white border-[1px] border-green-800 rounded-lg font-semibold text-xs text-green-800 dark:text-white-800 uppercase tracking-widest hover:shadow-lg hover:bg-green-800 hover:text-white dark:hover:bg-green-800 focus:bg-green-700 focus:text-green-800 dark:focus:bg-green-800 active:bg-green-900 dark:active:bg-green-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-green-800 transition ease-in-out duration-150'])); ?>>
+    <?php echo e($slot); ?>
+
+</button><?php /**PATH C:\Users\ASUS\Documents\Proyectos\geodis_project\resources\views/components/success-button.blade.php ENDPATH**/ ?>

@@ -47,9 +47,12 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
         Volt::route('file_management', 'services.uploaded-file')->name('uploaded.file');
     });
 
-    Route::middleware(['role:admin,coord', 'blocked'])->group(function () {
-        Volt::route('/servicesIndex', 'services.edit-new-service')
-            ->name('service.index');
+    Route::middleware(['blocked'])->group(function () {
+        Volt::route('/services', 'services.index')
+            ->name('services.index');
+
+        Volt::route('/services/servicedetail/{service?}', 'services.manage')
+            ->name('service.manage');
     });
 });
 

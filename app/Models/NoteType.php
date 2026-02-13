@@ -30,8 +30,14 @@ class NoteType extends Model
     // Relation (as father)
 
     // 1-to-1 with item_note table
-    public function item_note(): HasMany
+    public function item_notes(): HasMany
     {
-        return $this->hasMany(ItemNote::class, 'note_type_id');
+        return $this->hasMany(ItemNote::class, 'note_types_id');
+    }
+
+    // 1-to-1 with item_note table
+    public function purchase_order_note(): HasMany
+    {
+        return $this->hasMany(ItemNote::class, 'note_types_id');
     }
 }

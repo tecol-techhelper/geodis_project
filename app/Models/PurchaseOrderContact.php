@@ -38,7 +38,7 @@ class PurchaseOrderContact extends Model
     // 1-to-N with purchase_order_contact_details table
     public function purchase_order_contact_details(): HasMany
     {
-        return $this->hasMany(PurchaseOrderContactDetail::class, 'service_contact_id', 'id');
+        return $this->hasMany(PurchaseOrderContactDetail::class, 'purchase_order_contact_id', 'id');
     }
 
     // Relation (as son)

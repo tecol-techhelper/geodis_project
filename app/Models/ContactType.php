@@ -30,6 +30,12 @@ class ContactType extends Model
     // 1-to-1 with servicecontacts table
     public function service_contact(): HasMany
     {
-        return $this->hasMany(ContactDetail::class, 'contact_type_id');
+        return $this->hasMany(ServiceContact::class, 'contact_type_id');
+    }
+
+    // 1-to-1 with servicecontacts table
+    public function purchase_order_contact(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderContact::class, 'contact_type_id');
     }
 }

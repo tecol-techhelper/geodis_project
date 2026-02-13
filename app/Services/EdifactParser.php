@@ -45,11 +45,16 @@ class EdifactParser
 
         $file = [
             'transmission_id' => null,
-            'message_type' => null,
-            'file_name' => $fileName,
-            'purchase_order' => null, // concatenated CNI numbers
-            'recived_at' => null,     // from DTM+137
-            'sended_at' => null,      // from UNB
+            'message_type'    => null,
+            'file_name'       => $fileName,
+            'purchase_order'  => null, // concatenated CNI numbers
+            'recived_at'      => null, // from DTM+137
+            'sended_at'       => null, // from UNB
+
+            // ---- BGM metadata (NO va a services)
+            'bgm_document_code'   => null,
+            'bgm_function_code'   => null,
+            'bgm_document_number' => null, // mismo consecutivo, pero a nivel archivo como metadata si lo quieres
         ];
 
         // Track PO numbers to build edifact_files.purchase_order
@@ -70,8 +75,8 @@ class EdifactParser
                     // -----------------
                     case 'UNB': {
                             $unb = self::parseUNB($parts, $seg);
-                            $file['transmission_id'] = $unb['transmission_id'];
-                            $file['sended_at'] = $unb['sended_at'];
+                            $file['transmission_id'] = $unb['transmission_id'] ?? null;
+                            $file['sended_at']       = $unb['sended_at'] ?? null;
                             break;
                         }
 
@@ -80,21 +85,26 @@ class EdifactParser
                         // -----------------
                     case 'UNH': {
                             $unh = self::parseUNH($parts, $seg);
-                            $file['message_type'] = $unh['message_type'];
+                            $file['message_type'] = $unh['message_type'] ?? null;
                             break;
                         }
 
                         // -----------------
-                        // BGM -> SERVICES
+                        // BGM -> SERVICE (solo consecutivo) + metadata en FILE
                         // -----------------
                     case 'BGM': {
                             $bgm = self::parseBGM($parts, $seg);
+
+                            // Metadata del mensaje (no servicio)
+                            $file['bgm_document_code']   = $bgm['document_code'] ?? null;
+                            $file['bgm_function_code']   = $bgm['message_function_code'] ?? null;
+                            $file['bgm_document_number'] = $bgm['document_number'] ?? null;
+
+                            // Service: SOLO lo que aplica al contexto del servicio
                             $service = [
-                                'segment_tag' => 'BGM',
-                                'raw_segment' => $bgm['raw_segment'],
-                                'document_code' => $bgm['document_code'],
-                                'document_number' => $bgm['document_number'],
-                                'message_function_code' => $bgm['message_function_code'],
+                                'segment_tag'     => 'BGM',
+                                'raw_segment'     => $bgm['raw_segment'],
+                                'document_number' => $bgm['document_number'], // ESTE ES EL CONSECUTIVO
                             ];
                             break;
                         }
@@ -113,21 +123,21 @@ class EdifactParser
                                 }
 
                                 $messageDates[] = [
-                                    'segment_tag' => 'DTM',
-                                    'raw_segment' => $dtm['raw_segment'],
-                                    'date' => $dtm['date'],
-                                    'format_date' => $dtm['format_code'],
+                                    'segment_tag'    => 'DTM',
+                                    'raw_segment'    => $dtm['raw_segment'],
+                                    'date'           => $dtm['date'],
+                                    'format_date'    => $dtm['format_code'],
                                     'date_type_code' => $dtm['qualifier'],
                                 ];
                                 break;
                             }
 
-                            // everything else is service_dates (as per your current model)
+                            // Everything else is service_dates
                             $serviceDates[] = [
-                                'segment_tag' => 'DTM',
-                                'raw_segment' => $dtm['raw_segment'],
-                                'service_date' => $dtm['date'],
-                                'format_date' => $dtm['format_code'],
+                                'segment_tag'    => 'DTM',
+                                'raw_segment'    => $dtm['raw_segment'],
+                                'service_date'   => $dtm['date'],
+                                'format_date'    => $dtm['format_code'],
                                 'date_type_code' => $dtm['qualifier'],
                             ];
 
@@ -142,10 +152,10 @@ class EdifactParser
                             if (!$eqd) break;
 
                             $serviceEquipment[] = [
-                                'segment_tag' => 'EQD',
-                                'raw_segment' => $eqd['raw_segment'],
+                                'segment_tag'          => 'EQD',
+                                'raw_segment'          => $eqd['raw_segment'],
                                 'equipment_identifier' => $eqd['equipment_identifier'],
-                                'equipment_type_code' => $eqd['equipment_type_code'],
+                                'equipment_type_code'  => $eqd['equipment_type_code'],
                             ];
                             break;
                         }
@@ -158,10 +168,10 @@ class EdifactParser
                             if (!$loc) break;
 
                             $row = [
-                                'segment_tag' => 'LOC',
-                                'raw_segment' => $loc['raw_segment'],
-                                'location_code' => $loc['location_code'],
-                                'location_details' => $loc['location_details'],
+                                'segment_tag'       => 'LOC',
+                                'raw_segment'       => $loc['raw_segment'],
+                                'location_code'     => $loc['location_code'],
+                                'location_details'  => $loc['location_details'],
                             ];
 
                             if ($currentPOIndex !== null) {
@@ -180,11 +190,11 @@ class EdifactParser
                             if (!$tdt) break;
 
                             $transportDetails[] = [
-                                'segment_tag' => 'TDT',
-                                'raw_segment' => $tdt['raw_segment'],
-                                'vehicle_details' => $tdt['vehicle_details'],
+                                'segment_tag'          => 'TDT',
+                                'raw_segment'          => $tdt['raw_segment'],
+                                'vehicle_details'      => $tdt['vehicle_details'],
                                 'transport_stage_code' => $tdt['transport_stage_code'],
-                                'transport_mode_code' => $tdt['transport_mode_code'], // can be null
+                                'transport_mode_code'  => $tdt['transport_mode_code'], // can be null
                             ];
                             break;
                         }
@@ -197,14 +207,14 @@ class EdifactParser
                             if (!$nad) break;
 
                             $row = [
-                                'segment_tag' => 'NAD',
-                                'raw_segment' => $nad['raw_segment'],
-                                'party_name' => $nad['party_name'],
-                                'party_street' => $nad['party_street'],
-                                'party_city' => $nad['party_city'],
-                                'party_region' => $nad['party_region'],
+                                'segment_tag'        => 'NAD',
+                                'raw_segment'        => $nad['raw_segment'],
+                                'party_name'         => $nad['party_name'],
+                                'party_street'       => $nad['party_street'],
+                                'party_city'         => $nad['party_city'],
+                                'party_region'       => $nad['party_region'],
                                 'party_country_code' => $nad['party_country_code'],
-                                'party_type_code' => $nad['party_type_code'],
+                                'party_type_code'    => $nad['party_type_code'],
                             ];
 
                             if ($currentPOIndex !== null) {
@@ -222,21 +232,21 @@ class EdifactParser
                             $cni = self::parseCNI($parts, $seg);
 
                             $purchaseOrders[] = [
-                                'segment_tag' => 'CNI',
-                                'raw_segment' => $cni['raw_segment'],
+                                'segment_tag'             => 'CNI',
+                                'raw_segment'             => $cni['raw_segment'],
                                 'purchase_order_secuence' => $cni['sequence'] !== null ? (int)$cni['sequence'] : null,
-                                'purchase_order_number' => $cni['consignment_reference_number'],
+                                'purchase_order_number'   => $cni['consignment_reference_number'],
 
-                                'items' => [],
-                                'references' => [],
-                                'contacts' => [],
-                                'measurements' => [],
-                                'requirements' => [],
-                                'delivery_terms' => [],
+                                'items'            => [],
+                                'references'       => [],
+                                'contacts'         => [],
+                                'measurements'     => [],
+                                'requirements'     => [],
+                                'delivery_terms'   => [],
                                 'transport_charges' => [],
-                                'notes' => [],
-                                'parties' => [],
-                                'locations' => [],
+                                'notes'            => [],
+                                'parties'          => [],
+                                'locations'        => [],
                             ];
 
                             $currentPOIndex = count($purchaseOrders) - 1;
@@ -260,20 +270,20 @@ class EdifactParser
 
                             if ($currentPOIndex === null) {
                                 $purchaseOrders[] = [
-                                    'segment_tag' => 'CNI',
-                                    'raw_segment' => null,
+                                    'segment_tag'             => 'CNI',
+                                    'raw_segment'             => null,
                                     'purchase_order_secuence' => null,
-                                    'purchase_order_number' => null,
-                                    'items' => [],
-                                    'references' => [],
-                                    'contacts' => [],
-                                    'measurements' => [],
-                                    'requirements' => [],
-                                    'delivery_terms' => [],
+                                    'purchase_order_number'   => null,
+                                    'items'            => [],
+                                    'references'       => [],
+                                    'contacts'         => [],
+                                    'measurements'     => [],
+                                    'requirements'     => [],
+                                    'delivery_terms'   => [],
                                     'transport_charges' => [],
-                                    'notes' => [],
-                                    'parties' => [],
-                                    'locations' => [],
+                                    'notes'            => [],
+                                    'parties'          => [],
+                                    'locations'        => [],
                                 ];
                                 $currentPOIndex = count($purchaseOrders) - 1;
                             }
@@ -282,15 +292,15 @@ class EdifactParser
                                 'segment_tag' => 'GID',
                                 'raw_segment' => $gid['raw_segment'],
                                 'item_number' => (int)$gid['item_number'],
-                                'item_count' => (int)$gid['item_count'],
-                                'item_type' => (string)$gid['item_type'],
+                                'item_count'  => (int)$gid['item_count'],
+                                'item_type'   => (string)$gid['item_type'],
 
-                                'products' => [],
-                                'packages' => [],
-                                'identifiers' => [],
+                                'products'     => [],
+                                'packages'     => [],
+                                'identifiers'  => [],
                                 'measurements' => [],
-                                'dimensions' => [],
-                                'notes' => [],
+                                'dimensions'   => [],
+                                'notes'        => [],
                             ];
 
                             $currentItemIndex = count($purchaseOrders[$currentPOIndex]['items']) - 1;
@@ -307,10 +317,10 @@ class EdifactParser
                             if ($currentPOIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['references'][] = [
-                                'segment_tag' => 'RFF',
-                                'raw_segment' => $rff['raw_segment'],
+                                'segment_tag'           => 'RFF',
+                                'raw_segment'           => $rff['raw_segment'],
                                 'order_reference_value' => $rff['value'],
-                                'reference_type_code' => $rff['qualifier'],
+                                'reference_type_code'   => $rff['qualifier'],
                             ];
                             break;
                         }
@@ -323,25 +333,25 @@ class EdifactParser
                             if (!$cta) break;
 
                             $row = [
-                                'segment_tag' => 'CTA',
-                                'raw_segment' => $cta['raw_segment'],
-                                'contact_name' => $cta['contact_name'],
+                                'segment_tag'       => 'CTA',
+                                'raw_segment'       => $cta['raw_segment'],
+                                'contact_name'      => $cta['contact_name'],
                                 'contact_type_code' => $cta['qualifier'],
-                                'details' => [],
+                                'details'           => [],
                             ];
 
                             if ($currentPOIndex !== null) {
                                 $purchaseOrders[$currentPOIndex]['contacts'][] = $row;
                                 $lastContactContext = [
-                                    'scope' => 'po',
-                                    'poIndex' => $currentPOIndex,
+                                    'scope'        => 'po',
+                                    'poIndex'      => $currentPOIndex,
                                     'contactIndex' => count($purchaseOrders[$currentPOIndex]['contacts']) - 1,
                                 ];
                             } else {
                                 $serviceContacts[] = $row;
                                 $lastContactContext = [
-                                    'scope' => 'service',
-                                    'poIndex' => null,
+                                    'scope'        => 'service',
+                                    'poIndex'      => null,
                                     'contactIndex' => count($serviceContacts) - 1,
                                 ];
                             }
@@ -357,9 +367,9 @@ class EdifactParser
                             if (!$com || !$lastContactContext) break;
 
                             $detail = [
-                                'segment_tag' => 'COM',
-                                'raw_segment' => $com['raw_segment'],
-                                'channel_contact' => $com['channel_contact'],
+                                'segment_tag'         => 'COM',
+                                'raw_segment'         => $com['raw_segment'],
+                                'channel_contact'     => $com['channel_contact'],
                                 'contact_information' => $com['contact_information'],
                             ];
 
@@ -367,7 +377,7 @@ class EdifactParser
                                 $idx = $lastContactContext['contactIndex'];
                                 $serviceContacts[$idx]['details'][] = $detail;
                             } else {
-                                $po = $lastContactContext['poIndex'];
+                                $po  = $lastContactContext['poIndex'];
                                 $idx = $lastContactContext['contactIndex'];
                                 $purchaseOrders[$po]['contacts'][$idx]['details'][] = $detail;
                             }
@@ -383,11 +393,11 @@ class EdifactParser
                             if (!$cnt) break;
 
                             $row = [
-                                'segment_tag' => 'CNT',
-                                'raw_segment' => $cnt['raw_segment'],
-                                'measure_value' => $cnt['value'],
-                                'measure_unit' => $cnt['unit'],
-                                'global_measure_type_code' => $cnt['qualifier'],
+                                'segment_tag'               => 'CNT',
+                                'raw_segment'               => $cnt['raw_segment'],
+                                'measure_value'             => $cnt['value'],
+                                'measure_unit'              => $cnt['unit'],
+                                'global_measure_type_code'  => $cnt['qualifier'],
                             ];
 
                             if ($currentPOIndex !== null) {
@@ -407,10 +417,10 @@ class EdifactParser
                             if (!$ftx) break;
 
                             $row = [
-                                'segment_tag' => 'FTX',
-                                'raw_segment' => $ftx['raw_segment'],
+                                'segment_tag'    => 'FTX',
+                                'raw_segment'    => $ftx['raw_segment'],
                                 'note_type_code' => $ftx['note_type_code'],
-                                'note_text' => $ftx['note_text'],
+                                'note_text'      => $ftx['note_text'],
                             ];
 
                             if ($currentPOIndex !== null && $currentItemIndex !== null) {
@@ -431,10 +441,10 @@ class EdifactParser
                             if ($currentPOIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['delivery_terms'][] = [
-                                'segment_tag' => 'TOD',
-                                'raw_segment' => $tod['raw_segment'],
-                                'freight_payment_code' => $tod['freight_payment_code'],
-                                'delivery_term_function' => $tod['delivery_term_function'],
+                                'segment_tag'               => 'TOD',
+                                'raw_segment'               => $tod['raw_segment'],
+                                'freight_payment_code'      => $tod['freight_payment_code'],
+                                'delivery_term_function'    => $tod['delivery_term_function'],
                                 'delivery_term_catalog_code' => $tod['delivery_term_catalog_code'],
                             ];
                             break;
@@ -449,12 +459,12 @@ class EdifactParser
                             if ($currentPOIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['requirements'][] = [
-                                'segment_tag' => 'TSR',
-                                'raw_segment' => $tsr['raw_segment'],
+                                'segment_tag'                      => 'TSR',
+                                'raw_segment'                      => $tsr['raw_segment'],
                                 'contract_carriage_condition_code' => $tsr['contract_carriage_condition_code'],
-                                'po_requirements_code' => $tsr['po_requirements_code'],
-                                'additional_po_requirement_code' => $tsr['additional_po_requirement_code'],
-                                'transport_priority' => $tsr['transport_priority'],
+                                'po_requirements_code'             => $tsr['po_requirements_code'],
+                                'additional_po_requirement_code'   => $tsr['additional_po_requirement_code'],
+                                'transport_priority'               => $tsr['transport_priority'],
                             ];
                             break;
                         }
@@ -480,25 +490,23 @@ class EdifactParser
                             if ($currentPOIndex === null) break;
 
                             $tcc = $pendingTCC ?? [
-                                'raw_segment' => '',
-                                'charge_code' => 'UNK',
+                                'raw_segment'   => '',
+                                'charge_code'   => 'UNK',
                                 'rate_class_code' => 'UNK',
                             ];
 
                             $purchaseOrders[$currentPOIndex]['transport_charges'][] = [
-                                'charge_code' => $tcc['charge_code'],
-                                'rate_class_code' => $pri['rate_class_code'] ?? $tcc['rate_class_code'] ?? 'UNK',
-                                'price_amount' => $pri['price_amount'],
-                                'unit_price_basis' => $pri['unit_price_basis'],
-                                'measure_unit_code' => $pri['measure_unit_code'],
-                                'pri_segment_raw' => $pri['raw_segment'],
-                                'tcc_segment_raw' => $tcc['raw_segment'],
+                                'charge_code'          => $tcc['charge_code'],
+                                'rate_class_code'      => $pri['rate_class_code'] ?? $tcc['rate_class_code'] ?? 'UNK',
+                                'price_amount'         => $pri['price_amount'],
+                                'unit_price_basis'     => $pri['unit_price_basis'],
+                                'measure_unit_code'    => $pri['measure_unit_code'],
+                                'pri_segment_raw'      => $pri['raw_segment'],
+                                'tcc_segment_raw'      => $tcc['raw_segment'],
                                 'price_qualifier_code' => $pri['price_qualifier_code'],
                             ];
 
-                            // consume pairing so next PRI doesn't reuse old TCC
                             $pendingTCC = null;
-
                             break;
                         }
 
@@ -511,10 +519,10 @@ class EdifactParser
                             if ($currentPOIndex === null || $currentItemIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['items'][$currentItemIndex]['products'][] = [
-                                'segment_tag' => 'PIA',
-                                'raw_segment' => $pia['raw_segment'],
-                                'role_code' => $pia['role_code'],
-                                'identifier_value' => $pia['identifier_value'],
+                                'segment_tag'          => 'PIA',
+                                'raw_segment'          => $pia['raw_segment'],
+                                'role_code'            => $pia['role_code'],
+                                'identifier_value'     => $pia['identifier_value'],
                                 'identifier_type_code' => $pia['identifier_type_code'],
                             ];
                             break;
@@ -526,9 +534,9 @@ class EdifactParser
                             if ($currentPOIndex === null || $currentItemIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['items'][$currentItemIndex]['packages'][] = [
-                                'segment_tag' => 'PCI',
-                                'raw_segment' => $pci['raw_segment'],
-                                'identifier_type_code' => $pci['identifier_type_code'],
+                                'segment_tag'              => 'PCI',
+                                'raw_segment'              => $pci['raw_segment'],
+                                'identifier_type_code'     => $pci['identifier_type_code'],
                                 'package_identifier_value' => $pci['package_identifier_value'],
                             ];
                             break;
@@ -540,10 +548,10 @@ class EdifactParser
                             if ($currentPOIndex === null || $currentItemIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['items'][$currentItemIndex]['identifiers'][] = [
-                                'segment_tag' => 'GIN',
-                                'raw_segment' => $gin['raw_segment'],
-                                'identifier_qualifier' => $gin['identifier_qualifier'],
-                                'identifier_value' => $gin['identifier_value'],
+                                'segment_tag'           => 'GIN',
+                                'raw_segment'           => $gin['raw_segment'],
+                                'identifier_qualifier'  => $gin['identifier_qualifier'],
+                                'identifier_value'      => $gin['identifier_value'],
                             ];
                             break;
                         }
@@ -554,12 +562,12 @@ class EdifactParser
                             if ($currentPOIndex === null || $currentItemIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['items'][$currentItemIndex]['measurements'][] = [
-                                'segment_tag' => 'MEA',
-                                'raw_segment' => $mea['raw_segment'],
-                                'purpose_code' => $mea['purpose_code'],
+                                'segment_tag'   => 'MEA',
+                                'raw_segment'   => $mea['raw_segment'],
+                                'purpose_code'  => $mea['purpose_code'],
                                 'attribute_code' => $mea['attribute_code'],
-                                'unit' => $mea['unit'],
-                                'value' => $mea['value'],
+                                'unit'          => $mea['unit'],
+                                'value'         => $mea['value'],
                             ];
                             break;
                         }
@@ -570,13 +578,13 @@ class EdifactParser
                             if ($currentPOIndex === null || $currentItemIndex === null) break;
 
                             $purchaseOrders[$currentPOIndex]['items'][$currentItemIndex]['dimensions'][] = [
-                                'segment_tag' => 'DIM',
-                                'raw_segment' => $dim['raw_segment'],
+                                'segment_tag'         => 'DIM',
+                                'raw_segment'         => $dim['raw_segment'],
                                 'dimension_type_code' => $dim['dimension_type_code'],
-                                'unit' => $dim['unit'],
-                                'length' => $dim['length'],
-                                'width' => $dim['width'],
-                                'height' => $dim['height'],
+                                'unit'                => $dim['unit'],
+                                'length'              => $dim['length'],
+                                'width'               => $dim['width'],
+                                'height'              => $dim['height'],
                             ];
                             break;
                         }
@@ -616,12 +624,13 @@ class EdifactParser
 
     private static function parseUNB(array $parts, string $raw): array
     {
+        // UNB+...+...+...+YYMMDD:HHMM+<transmission_id>
         $dt = isset($parts[4]) ? self::formatUNBDateTime($parts[4]) : null;
 
         return [
-            'raw_segment' => $raw,
+            'raw_segment'     => $raw,
             'transmission_id' => $parts[5] ?? null,
-            'sended_at' => $dt ? substr($dt, 0, 10) : null,
+            'sended_at'       => $dt ? substr($dt, 0, 10) : null,
         ];
     }
 
@@ -635,13 +644,39 @@ class EdifactParser
         ];
     }
 
+    /**
+     * BGM usually:
+     * BGM+<C002 doc msg name>+<C106 doc/message number>+<1225 message function>
+     *
+     * Important FIX:
+     * - parts[1], parts[2], parts[3] pueden ser compuestos con ':'
+     * - Para tu DB, el "consecutivo" es el document_number (C106.1004), o sea el primer componente de parts[2]
+     */
     private static function parseBGM(array $parts, string $raw): array
     {
+        $docCode = $parts[1] ?? null;
+        if ($docCode !== null && str_contains($docCode, ':')) {
+            $docCode = explode(':', $docCode)[0] ?? $docCode;
+        }
+
+        $docNumberRaw = $parts[2] ?? null;
+        $docNumber = $docNumberRaw;
+        if ($docNumberRaw !== null && str_contains($docNumberRaw, ':')) {
+            // C106 can be like "167:..."; 1004 is first
+            $docNumber = explode(':', $docNumberRaw)[0] ?? $docNumberRaw;
+        }
+
+        $functionRaw = $parts[3] ?? null;
+        $function = $functionRaw;
+        if ($functionRaw !== null && str_contains($functionRaw, ':')) {
+            $function = explode(':', $functionRaw)[0] ?? $functionRaw;
+        }
+
         return [
             'raw_segment' => $raw,
-            'document_code' => $parts[1] ?? null,
-            'document_number' => $parts[2] ?? null,
-            'message_function_code' => $parts[3] ?? null,
+            'document_code' => $docCode,
+            'document_number' => $docNumber,
+            'message_function_code' => $function,
         ];
     }
 
@@ -763,7 +798,9 @@ class EdifactParser
         $val = $e[1] ?? null;
         $unit = $e[2] ?? null;
 
-        $val = str_replace(',',  '.', $val);
+        if ($val !== null) {
+            $val = str_replace(',', '.', $val);
+        }
 
         if (!$qual) return null;
 
@@ -833,14 +870,12 @@ class EdifactParser
             return null;
         }
 
-        // mode may be missing in short TDT (e.g., TDT+20')
         $modeRaw = $parts[3] ?? null;
         $mode = null;
         if ($modeRaw !== null && trim((string)$modeRaw) !== '') {
             $mode = (int)$modeRaw;
         }
 
-        // Vehicle details can be in parts[2] or parts[4], but may be absent
         $vehicle = trim((string)($parts[2] ?? ''));
         if ($vehicle === '') {
             $vehicle = trim((string)($parts[4] ?? ''));
@@ -852,7 +887,7 @@ class EdifactParser
         return [
             'raw_segment' => $raw,
             'transport_stage_code' => (int)$stageRaw,
-            'transport_mode_code' => $mode, // nullable
+            'transport_mode_code' => $mode,
             'vehicle_details' => $vehicle,
         ];
     }
@@ -1053,18 +1088,15 @@ class EdifactParser
     // -------------------------
 
     /**
-     * Segment separator is the apostrophe (') in these files.
-     * Don't rely on \r\n. EDIFACT doesn't owe you line breaks.
+     * Segment separator is apostrophe (') with optional whitespace/newlines.
      */
     private static function splitSegments(string $content): array
     {
         $content = trim($content);
 
-        // Split by apostrophe + optional whitespace/newlines
         $segments = preg_split("/'\\s*/u", $content) ?: [];
         $segments = array_map('trim', $segments);
 
-        // Remove empties
         return array_values(array_filter($segments, static fn($s) => $s !== ''));
     }
 

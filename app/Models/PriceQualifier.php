@@ -27,7 +27,7 @@ class PriceQualifier extends Model
     ];
 
     // Relation(as father) 1-to-1 with transport_charge table
-    public function transport_charge(): HasMany
+    public function transport_charges(): HasMany
     {
         return $this->hasMany(TransportCharge::class, 'price_qualifier_id');
     }

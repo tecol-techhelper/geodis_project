@@ -118,7 +118,7 @@ class Service extends Model
     }
 
     // 1-to-N parties table
-    public function _service_parties(): HasMany
+    public function service_parties(): HasMany
     {
         return $this->hasMany(ServiceParty::class, 'service_id');
     }

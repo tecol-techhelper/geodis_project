@@ -5,11 +5,11 @@
     class="fixed z-40 inset-y-0 left-0 w-64 bg-red-700 shadow-md transform md:translate-x-0 md:static md:inset-0 overflow-y-auto md:border-r md:border-gray-300"
     style="display: none;">
     <div class="shadow-lg">
-        <a href="{{ route('dashboard') }}" class="flex items-center justify-center shadow-lg collapsed md:visible py-4">
-            <img src="{{ asset('images/logos/logo_top.png') }}" alt="Logo Empresa"
+        <a href="<?php echo e(route('dashboard')); ?>" class="flex items-center justify-center shadow-lg collapsed md:visible py-4">
+            <img src="<?php echo e(asset('images/logos/logo_top.png')); ?>" alt="Logo Empresa"
                 class="h-20 w-auto rounded-xl bg-white">
         </a>
-        <a href="{{ route('dashboard') }}"
+        <a href="<?php echo e(route('dashboard')); ?>"
             class="flex text-lg px-3 space-x-2 justify-start  border-t  border-red-900 h-12 items-center bg-gray-50 focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline hover:border-l-4 hover:border-gray-700">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -20,7 +20,7 @@
             </svg>
             <span>Menu Principal</span>
         </a>
-        <a href="{{ route('services.index') }}"
+        <a href="<?php echo e(route('services.index')); ?>"
             class="flex text-lg text-gray-800 px-3 bg-gray-50 space-x-2  border-t border-red-900 space-x-2 h-12 items-center focus:bg-gray-200 focus:border-outline hover:bg-gray-200 hover:border-outline hover:border-l-4 hover:border-gray-700">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -33,8 +33,8 @@
             </svg>
             <span>Servicios</span>
         </a>
-        @if (Auth::user()?->hasRole('admin'))
-            {{-- Administración del sistema --}}
+        <?php if(Auth::user()?->hasRole('admin')): ?>
+            
             <button @click="openAD = !openAD"
                 class="flex h-12 w-full items-center justify-start bg-gray-50 border-red-900 px-4 py-2 text-left text-black hover:bg-gray-200 focus:outline-none border-t hover:border-l-4 hover:border-gray-700">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" width="24" height="24"
@@ -54,7 +54,7 @@
             </button>
             <!-- Contenido desplegable -->
             <div x-show="openAD" x-cloak class="space-y-1 border bg-white">
-                <a href="{{ route('user.index') }}"
+                <a href="<?php echo e(route('user.index')); ?>"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Usuarios
                 </a>
                 <a href="#"
@@ -62,7 +62,7 @@
                 </a>
             </div>
 
-            {{-- Administración de Archivos EDI --}}
+            
             <button @click="openPF = !openPF"
                 class="flex h-12 w-full items-center justify-start bg-gray-50 border-red-900 px-4 py-2 text-left text-black hover:bg-gray-200 focus:outline-none border-t hover:border-l-4 hover:border-gray-700">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mr-2" fill="none" stroke="currentColor"
@@ -83,15 +83,15 @@
 
             <!-- Contenido desplegable -->
             <div x-show="openPF" x-cloak class="space-y-1 border bg-white">
-                <a href="{{ route('edifact.viewer') }}"
+                <a href="<?php echo e(route('edifact.viewer')); ?>"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Mensajes
                     Extraidos</a>
-                <a href="{{ route('edifactfiles.index') }}"
+                <a href="<?php echo e(route('edifactfiles.index')); ?>"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Archivos
                     Edi Leidos</a>
             </div>
 
-            {{-- Administración de Soporte --}}
+            
             <button @click="openFM = !openFM"
                 class="flex h-12 w-full items-center justify-start bg-gray-50 border-red-900 px-4 py-2 text-left space-x-2 text-black hover:bg-gray-200 focus:outline-none border-t hover:border-l-4 hover:border-gray-700">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
@@ -112,13 +112,14 @@
 
             <!-- Contenido desplegable -->
             <div x-show="openFM" x-cloak class="space-y-1 border bg-white">
-                <a href="{{ route('uploaded.file') }}"
+                <a href="<?php echo e(route('uploaded.file')); ?>"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Soportes
                     Cargados</a>
-                <a href="{{ route('upload.file') }}"
+                <a href="<?php echo e(route('upload.file')); ?>"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Cargar
                     Soportes</a>
             </div>
-        @endif
+        <?php endif; ?>
     </div>
 </aside>
+<?php /**PATH C:\Users\ASUS\Documents\Proyectos\geodis_project\resources\views/livewire/layout/sidebar.blade.php ENDPATH**/ ?>

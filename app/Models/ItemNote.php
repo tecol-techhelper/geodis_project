@@ -35,18 +35,12 @@ class ItemNote extends Model
     // 1-to-1 with note_type table
     public function note_type(): BelongsTo
     {
-        return $this->belongsTo(NoteType::class, 'note_type_id');
+        return $this->belongsTo(NoteType::class, 'note_types_id');
     }
 
     // 1-to-N with service table
     public function purchase_order_item(): BelongsTo
     {
         return $this->belongsTo(PurchaseOrderItem::class, 'purchase_order_item_id');
-    }
-
-    // 1-to-N with service table
-    public function purchase_order(): BelongsTo
-    {
-        return $this->belongsTo(PurchaseOrderItem::class, 'purchase_order_id');
     }
 }
