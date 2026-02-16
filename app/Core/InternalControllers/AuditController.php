@@ -5,6 +5,7 @@ namespace App\Core\InternalControllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 /**
  * AuditController
@@ -30,36 +31,40 @@ class AuditController extends Controller
         int $userId,
         string $username,
         string $userRole,
-        string $action): void
-    {
-        // Getting the columns that have been changed and their values
+        string $action
+    ): void {
         $dirty = $model->getDirty();
 
-        // If there are no changes, we don't need to log anything
-        if (empty($dirty)) {
-            return;
+        // Si no hay cambios y no es una creación, salimos
+        // if (empty($dirty)) {
+        //     return;
+        // }
+
+        $oldValues = null;
+        $newValues = null;
+
+
+        if ($action === 'CREATED') {
+            $newValues = $model->getAttributes();
+        } elseif ($action === 'UPDATED') {
+            $newValues = $dirty;
+            $oldValues = array_intersect_key($model->getOriginal(), $dirty);
+        } elseif ($action === 'DELETED') {
+            $oldValues = $model->getAttributes();
         }
 
-        // Getting just the original values of the changed columns
-        $original = array_intersect_key($model->getOriginal(), $dirty);
-
-        // Sortting the arrays by key to make the comparison easier
-        ksort($original);
-        ksort($dirty);
-
-        // Inserting the audit values into the database
         DB::table('audits')->insert([
-            'auditable_type' => get_class($model),
-            'auditable_id' => $model->getKey(),
+            'auditable_type'   => get_class($model),
+            'auditable_id'     => $model->getKey(),
             'auditable_action' => $action,
-            'old_values' => json_encode($original),
-            'new_values' => json_encode($dirty),
-            'user_id' => $userId,
-            'username' => $username,
-            'user_role' => $userRole,
-            'ip_address' => request()->ip(),
-            'user_agent' => request()->userAgent(),
-            'performed_at' => now(),
+            'old_value'        => $oldValues ? json_encode($oldValues) : null,
+            'new_value'        => $newValues ? json_encode($newValues) : null,
+            'user_id'          => $userId,
+            'username'         => $username,
+            'user_rol'        => $userRole,
+            'ip_address'       => request()->ip(),
+            'user_agent'       => request()->userAgent(),
+            'performed_at'     => now(),
         ]);
     }
 }

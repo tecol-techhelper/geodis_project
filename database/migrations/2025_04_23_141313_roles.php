@@ -17,7 +17,6 @@ return new class extends Migration
             $table->string('rol_name', 64)->unique();
             $table->string('rol_description');
             $table->timestamps();
-            $table->softDeletes();
         });
     }
 

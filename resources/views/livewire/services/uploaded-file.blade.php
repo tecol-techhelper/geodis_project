@@ -10,7 +10,7 @@ new #[Layout('layouts.app')] class extends Component {};
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Parsed Files', 'url' => '#', 'icon' => 'file-json'],
-        ['label' => 'Uploaded Files', 'icon' => 'file-up']
+        ['label' => 'Uploaded Files', 'icon' => 'file-up'],
     ]"></x-breadcrums>
     <div class="py-6 px-6 border-2 rounded-lg shadow-lg bg-white dark:bg-white">
         <livewire:services.files-management.support-file-table />

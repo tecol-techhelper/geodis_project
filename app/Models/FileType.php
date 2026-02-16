@@ -3,12 +3,16 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class FileType extends Model
 {
-    
-    public function support_file(): HasOne{
-        return $this->hasOne(SupportFile::class);
+    use SoftDeletes;
+
+    // Relation(as father) 1-to-1 with support_file table
+    public function support_file(): HasMany
+    {
+        return $this->HasMany(SupportFile::class, 'file_type_id');
     }
 }

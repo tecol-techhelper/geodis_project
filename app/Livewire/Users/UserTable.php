@@ -25,7 +25,7 @@ final class UserTable extends PowerGridComponent
             PowerGrid::footer()
                 ->showPerPage()
                 ->showRecordCount(),
-                PowerGrid::detail()
+            PowerGrid::detail()
                 ->view('livewire.pages.users.partials.user-details')
                 ->showCollapseIcon()
         ];
@@ -33,16 +33,16 @@ final class UserTable extends PowerGridComponent
 
     public function datasource(): Builder
     {
-        return User::query()->with('role');
+        return User::query()->with('roles');
     }
 
     public function fields(): PowerGridFields
     {
         return PowerGrid::fields()
             ->add('id')
-            ->add('user_icon', fn(User $user)=>'<img class="w-8 h-8 shrink-0 grow-0 rounded-full" src="' . Storage::url($user->user_icon) . '">')
+            ->add('user_icon', fn(User $user) => '<img class="w-8 h-8 shrink-0 grow-0 rounded-full" src="' . Storage::url($user->user_icon) . '">')
             ->add('username')
-            ->add('full_name', fn(User $model)=> $model->first_name . ' ' .  $model->last_name)
+            ->add('full_name', fn(User $model) => $model->first_name . ' ' .  $model->last_name)
             ->add('email')
             ->add('user_area')
             ->add('is_active');
@@ -54,7 +54,7 @@ final class UserTable extends PowerGridComponent
             Column::make('ID', 'id')
                 ->sortable(),
 
-            Column::make ('Icono','user_icon'),
+            Column::make('Icono', 'user_icon'),
 
             Column::make('Nombre de Usuario', 'username')
                 ->sortable(),
@@ -83,7 +83,7 @@ final class UserTable extends PowerGridComponent
                 ->slot('<span class="text-blue-600 hover:underline">Editar</span>')
                 ->id($row->id)
                 ->class('cursor-pointer')
-                ->route('user.edit',['user'=>$row->id])
+                ->route('user.edit', ['user' => $row->id])
         ];
     }
 

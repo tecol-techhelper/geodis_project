@@ -1,3 +1,5 @@
+@section('title','Página Principal')
+
 <x-app-layout>
             <div class="">
                 <x-breadcrums :items="[

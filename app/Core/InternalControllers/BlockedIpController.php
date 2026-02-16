@@ -30,17 +30,17 @@ class BlockedIpController extends Controller
     //Evaluate and block ip address if necessary
     public function evaluateAndBlockIp(string $ipAddress):void
     {
-        $recentTries = DB::table('failed_session')
+        $recentTries = DB::table('failed_logins')
         ->where('ip_address', $ipAddress)
-            ->where('created_at', '>=', now()->subMinutes(5))
+            ->where('attempted_at', '>=', now()->subMinutes(5))
             ->count();
 
-        $disticnUsers = DB::table('failed_session')
-        ->where('ip_address', $ipAddress)
-            ->distinct()
-            ->count('user_id');
+        // $disticnUsers = DB::table('failed_logins')
+        // ->where('ip_address', $ipAddress)
+        //     ->distinct()
+        //     ->count('user_id');
 
-        if ($recentTries >= 10 || $disticnUsers >= 5) {
+        if ($recentTries >= 10) {
             (new BlockedIpController())->blockIp($ipAddress);
         }
 

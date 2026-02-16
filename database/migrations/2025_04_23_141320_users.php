@@ -21,7 +21,7 @@ return new class extends Migration
             $table->string('password');
             $table->tinyInteger('is_active')->default(1);
             $table->string('user_icon')->nullable();
-            $table->foreignId('role_id')->constrained()->onDelete('cascade')->onUpdate('cascade');
+            $table->string('guard_name')->default('web');
             $table->rememberToken();
             $table->timestamps();
         });

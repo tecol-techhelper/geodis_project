@@ -37,8 +37,7 @@ class CreateUserForm extends Form
         $user->user_area = $this->user_area;
         $user->email = $this->email;
         $user->is_active = $this->is_active;
-        $user->role_id = $this->role_id;
-
+        
         if ($this->password) {
             $user->forceFill([
                 'password' => $this->password
@@ -51,6 +50,10 @@ class CreateUserForm extends Form
         }
 
         $user->save();
+
+        if($this->role_id){
+            $user->roles()->attach($this->role_id);
+        }
 
         return $user;
     }

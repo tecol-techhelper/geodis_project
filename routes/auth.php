@@ -5,7 +5,7 @@ use App\Livewire\EdifactViewer;
 use Illuminate\Support\Facades\Route;
 use Livewire\Volt\Volt;
 
-Route::middleware('guest')->group(function () {
+Route::middleware(['guest', 'blocked'])->group(function () {
 
     Volt::route('/', 'pages.auth.login')
         ->name('login');
@@ -20,12 +20,12 @@ Route::middleware('guest')->group(function () {
 
 
 
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
     Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
         ->name('user.edit');
 
     // Admin restrictions
-    Route::middleware(['role:admin'])->group(function () {
+    Route::middleware(['role:admin', 'blocked', 'is_active'])->group(function () {
 
         Volt::route('/userIndex/create', 'pages.users.create-user')
             ->name('user.create');
@@ -47,9 +47,12 @@ Route::middleware(['auth'])->group(function () {
         Volt::route('file_management', 'services.uploaded-file')->name('uploaded.file');
     });
 
-    Route::middleware(['role:admin,coord'])->group(function () {
-        Volt::route('/servicesIndex', 'services.edit-new-service')
-            ->name('service.index');
+    Route::middleware(['blocked'])->group(function () {
+        Volt::route('/services', 'services.index')
+            ->name('services.index');
+
+        Volt::route('/services/servicedetail/{service?}', 'services.manage')
+            ->name('service.manage');
     });
 });
 
