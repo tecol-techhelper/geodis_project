@@ -25,7 +25,29 @@ class ManageForm extends Form
     public ?string $driver = null;
     public $advance_payment = null;
 
-    public ?int $status_id = null;
+    /**
+     * status por Purchase Order (CNI)
+     * key = purchase_orders.id
+     * value = statuses.id | null
+     *
+     * @var array<int, int|null>
+     */
+    public array $purchase_order_statuses = [];
+
+    /**
+     * Snapshot original para detectar cambios reales
+     *
+     * @var array<int, int|null>
+     */
+    public array $original_purchase_order_statuses = [];
+
+    /**
+     * IDs de Purchase Orders (CNI) que cambiaron en esta edición
+     * (lo usas luego en el botón "Enviar" para generar IFTSTA SOLO por esos CNIs)
+     *
+     * @var array<int, int>
+     */
+    public array $dirty_purchase_order_ids = [];
 
     public array $omit = [
         'segment_tag',
@@ -40,61 +62,57 @@ class ManageForm extends Form
     {
         $user = Auth::user();
 
+        // Permitir edición solo a usuarios con rol admin o coord
         $this->canEdit =
-            ($user?->rol_key === 'admin')
-            || ($user && method_exists($user, 'hasRole') && $user->hasRole('admin'));
+            ($user?->rol_key === 'admin' || $user?->rol_key === 'coord')
+            || ($user && method_exists($user, 'hasRole') && ($user->hasRole('admin') || $user->hasRole('coord')));
 
         $this->service = Service::query()
             ->with([
                 // Service
-                'status',
-
                 'service_parties.party_type',
                 'service_contacts.contact_type',
                 'service_contacts.service_contact_details',
+                'service_dates' => fn($query) => $query->orderBy('service_date'),
                 'service_dates.date_type',
-                'service_equipments.equipment_type',                 // (tu relación se llama así)
+                'service_equipments.equipment_type',
                 'service_measurements.global_measure_type',
+                'support_files.file_type',
 
                 'location_details.location_code',
 
                 'transport_details.transport_stage',
                 'transport_details.transport_mode',
 
-                // Purchase Orders (hijos del service)
+                // Purchase Orders (CNIs)
                 'purchase_orders',
+                'purchase_orders.status',
 
-                // Delivery terms cuelgan de purchase_orders (tabla delivery_terms tiene purchase_order_id)
+                // Delivery terms
                 'purchase_orders.delivery_terms.delivery_term_catalog',
 
-                // Purchase order parties / contacts
+                // Parties / contacts
                 'purchase_orders.purchase_order_parties.party_type',
                 'purchase_orders.purchase_order_contacts.contact_type',
                 'purchase_orders.purchase_order_contacts.purchase_order_contact_details',
 
-                // Notes (OJO: para poder cargar note_type, el modelo PurchaseOrderNote debe tener note_type())
+                // Notes
                 'purchase_orders.purchase_order_notes.note_type',
 
                 // Measurements
                 'purchase_orders.purchase_order_measurements.global_measure_type',
 
-                // Requirements (en tu BD NO hay reference_type_id ni FK a reference_types)
+                // Requirements
                 'purchase_orders.purchase_order_requirements',
 
-                // Charges (en tu BD transport_charges cuelga de purchase_orders)
+                // Charges
                 'purchase_orders.transport_charges.price_qualifier',
 
                 // Items
                 'purchase_orders.purchase_order_items',
-
-                // Item notes (OJO: en BD el FK es note_types_id)
                 'purchase_orders.purchase_order_items.item_notes.note_type',
-
-                // Item measures
                 'purchase_orders.purchase_order_items.item_measures.measurement_attribute_code',
                 'purchase_orders.purchase_order_items.item_measures.measurement_purpose_code',
-
-                // Item dimensions / identifiers
                 'purchase_orders.purchase_order_items.item_dimensions.dimension_type',
                 'purchase_orders.purchase_order_items.item_container_identifiers.identifier_type',
                 'purchase_orders.purchase_order_items.item_product_identifiers.product_identifier_role',
@@ -119,7 +137,20 @@ class ManageForm extends Form
         $this->driver = $s->driver;
         $this->advance_payment = $s->advance_payment;
 
-        $this->status_id = $s->status_id;
+        // Estado por CNI (purchase_order)
+        $map = ($s->purchase_orders ?? collect())
+            ->mapWithKeys(function ($po) {
+                $poId = (int) $po->id;
+                $statusId = $po->status_id !== null ? (int) $po->status_id : null;
+                return [$poId => $statusId];
+            })
+            ->toArray();
+
+        $this->purchase_order_statuses = $map;
+        $this->original_purchase_order_statuses = $map;
+
+        // Reset de "dirty" cuando recargas
+        $this->dirty_purchase_order_ids = [];
     }
 
     public function rules(): array
@@ -127,21 +158,37 @@ class ManageForm extends Form
         return [
             'item' => ['nullable', 'string', 'max:16'],
             'observation' => ['nullable', 'string', 'max:2000'],
-            'ttcol_value' => ['nullable'],
-            'cargo_value' => ['nullable'],
+            'ttcol_value' => ['nullable', 'numeric', 'min:0'],
+            'cargo_value' => ['nullable', 'numeric', 'min:0'],
             'driver' => ['nullable', 'string', 'max:64'],
-            'advance_payment' => ['nullable'],
-            'status_id' => ['nullable', 'integer'],
+            'advance_payment' => ['nullable', 'numeric', 'min:0'],
+
+            // Permite "Sin estado" (null). Si eliges un valor, debe existir en statuses.
+            'purchase_order_statuses' => ['array'],
+            'purchase_order_statuses.*' => ['nullable', 'integer', 'exists:statuses,id'],
         ];
     }
 
-    public function update(): void
+    /**
+     * Si quieres marcar "dirty" desde la vista con wire:change, usa esto.
+     * Igual update() detecta cambios por sí solo, pero esto ayuda si quieres UI más reactiva.
+     */
+    public function markPurchaseOrderDirty(int $purchaseOrderId): void
     {
-        abort_unless($this->canEdit, 403);
+        if (!in_array($purchaseOrderId, $this->dirty_purchase_order_ids, true)) {
+            $this->dirty_purchase_order_ids[] = $purchaseOrderId;
+        }
+    }
+
+    public function update(): array
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
 
         $this->validate();
 
-        DB::transaction(function () {
+        $dirtyIds = [];
+
+        DB::transaction(function () use (&$dirtyIds) {
             $s = Service::query()->findOrFail($this->id);
 
             $s->fill([
@@ -151,19 +198,54 @@ class ManageForm extends Form
                 'cargo_value' => $this->cargo_value,
                 'driver' => $this->driver,
                 'advance_payment' => $this->advance_payment,
-                'status_id' => $this->status_id,
             ]);
 
             $s->save();
 
+            // Detectar cambios reales por CNI
+
+            foreach ($this->purchase_order_statuses as $purchaseOrderId => $newStatusId) {
+                $purchaseOrderId = (int) $purchaseOrderId;
+
+                // normaliza null/int
+                $newStatusId = $newStatusId !== null ? (int) $newStatusId : null;
+
+                $oldStatusId = $this->original_purchase_order_statuses[$purchaseOrderId] ?? null;
+                $oldStatusId = $oldStatusId !== null ? (int) $oldStatusId : null;
+
+                if ($newStatusId === $oldStatusId) {
+                    continue; // no cambió, no lo toques
+                }
+
+                $dirtyIds[] = $purchaseOrderId;
+
+                DB::table('purchase_orders')
+                    ->where('id', $purchaseOrderId)
+                    ->where('service_id', $s->id)
+                    ->update([
+                        'status_id' => $newStatusId,
+                        'updated_at' => now(),
+                    ]);
+            }
+
+            // Guarda “dirty” para que el botón Enviar sepa qué CNIs incluir en IFTSTA
+            $dirtyIds = array_values(array_unique($dirtyIds));
+            $this->dirty_purchase_order_ids = $dirtyIds;
+
+            // Recarga todo (y refresca snapshot)
             $this->mount($s);
+            $this->dirty_purchase_order_ids = $dirtyIds;
         });
+
+        return $dirtyIds;
     }
 
     public function visibleAttributes(Model $m): array
     {
         $attrs = $m->getAttributes();
-        foreach ($this->omit as $bad) unset($attrs[$bad]);
+        foreach ($this->omit as $bad) {
+            unset($attrs[$bad]);
+        }
         return $attrs;
     }
 
@@ -194,6 +276,7 @@ class ManageForm extends Form
 
         if (is_bool($value)) return $value ? 'Sí' : 'No';
         if ($value === null) return '-';
+
         return (string) $value;
     }
 

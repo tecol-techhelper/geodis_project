@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Log;
 class EdifactParser
 {
     private const DTM_QUALIFIER_MAP = [
-        '137' => 'recived_at',
+        '137' => 'received_at',
         '11'  => 'despatch_date',
         '132' => 'arrival_date',
         '2'   => 'delivery_date',
@@ -48,8 +48,8 @@ class EdifactParser
             'message_type'    => null,
             'file_name'       => $fileName,
             'purchase_order'  => null, // concatenated CNI numbers
-            'recived_at'      => null, // from DTM+137
-            'sended_at'       => null, // from UNB
+            'received_at'     => null, // from DTM+137
+            'sent_at'         => null, // se asigna solo en flujos de envio saliente
 
             // ---- BGM metadata (NO va a services)
             'bgm_document_code'   => null,
@@ -76,7 +76,7 @@ class EdifactParser
                     case 'UNB': {
                             $unb = self::parseUNB($parts, $seg);
                             $file['transmission_id'] = $unb['transmission_id'] ?? null;
-                            $file['sended_at']       = $unb['sended_at'] ?? null;
+                            // UNB trae fecha del intercambio del emisor; no debe poblar sent_at en procesamiento de entrada.
                             break;
                         }
 
@@ -118,8 +118,8 @@ class EdifactParser
 
                             // DTM+137 is MESSAGE context (not service context)
                             if (($dtm['qualifier'] ?? null) === '137') {
-                                if (!$file['recived_at']) {
-                                    $file['recived_at'] = $dtm['date'];
+                                if (!$file['received_at']) {
+                                    $file['received_at'] = $dtm['date'];
                                 }
 
                                 $messageDates[] = [
@@ -630,7 +630,7 @@ class EdifactParser
         return [
             'raw_segment'     => $raw,
             'transmission_id' => $parts[5] ?? null,
-            'sended_at'       => $dt ? substr($dt, 0, 10) : null,
+            'interchange_at'  => $dt ? substr($dt, 0, 10) : null,
         ];
     }
 

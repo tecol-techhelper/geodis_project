@@ -14,13 +14,13 @@ class Notification extends Model
         'title',
         'message',
         'purchase_order',
-        'is_read'
+        'is_read',
+        'service_id'
     ];
 
     protected $casts = [
         'id' => 'integer',
         'is_read' => 'boolean',
-        'recived_at' => 'date',
         'service_id' => 'integer'
     ];
 

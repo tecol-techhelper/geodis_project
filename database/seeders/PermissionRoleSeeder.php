@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use App\Models\Permission;
 use App\Models\Role;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class PermissionRoleSeeder extends Seeder
@@ -16,9 +15,19 @@ class PermissionRoleSeeder extends Seeder
     {
         $now = now();
 
-        $attach = function (Role $role, array $keys) use ($now) {
-            $permissions = Permission::whereIn('permission_key', $keys)->pluck('id')->mapWithKeys(fn($id) => [$id => ['created_at' => $now]]);
-            $role->permissions()->attach($permissions);
+        $attach = function (?Role $role, array $keys) use ($now) {
+            if (!$role || empty($keys)) {
+                return;
+            }
+
+            $permissions = Permission::whereIn('permission_key', $keys)
+                ->pluck('id');
+
+            $pivot = $permissions->mapWithKeys(fn (int $id) => [
+                $id => ['created_at' => $now, 'updated_at' => $now],
+            ]);
+
+            $role->permissions()->syncWithoutDetaching($pivot);
         };
 
         $attach(Role::where('rol_key', 'admin')->first(), Permission::pluck('permission_key')->toArray());

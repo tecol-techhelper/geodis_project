@@ -17,6 +17,7 @@ class SupportFile extends Model
         'file_size',
         'file_extension',
         'uploaded_at',
+        'service_id',
         'user_id',
         'uploaded_sftp',
         'sftp_error',

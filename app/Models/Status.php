@@ -27,9 +27,9 @@ class Status extends Model
         'deleted_at'
     ];
 
-    // Relation (as father) 1-to-1 with services table
-    public function services(): HasMany
+    // Relation (as father) 1-to-N with purchase_orders table
+    public function purchase_orders(): HasMany
     {
-        return $this->hasMany(Service::class, 'status_id');
+        return $this->hasMany(PurchaseOrder::class, 'status_id');
     }
 }

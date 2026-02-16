@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -15,19 +14,29 @@ class LocationCodeSeeder extends Seeder
     {
         $now = now();
 
-        DB::table('location_codes')->insert([
+        $rows = [
             [
                 'location_code' => 9,
-                'location_code_name' => 'Place/port of loading',
+                'location_code_name' => 'Lugar/puerto de carga',
                 'location_code_description' => 'Lugar o puerto donde la mercancía es cargada para iniciar el transporte.',
-                'created_at' => $now,
             ],
             [
                 'location_code' => 11,
-                'location_code_name' => 'Place/port of discharge',
+                'location_code_name' => 'Lugar/puerto de descarga',
                 'location_code_description' => 'Lugar o puerto donde la mercancía es descargada al finalizar el transporte.',
-                'created_at' => $now,
             ],
-        ]);
+        ];
+
+        $rows = array_map(function (array $row) use ($now) {
+            $row['created_at'] = $now;
+            $row['updated_at'] = $now;
+            return $row;
+        }, $rows);
+
+        DB::table('location_codes')->upsert(
+            $rows,
+            ['location_code'],
+            ['location_code_name', 'location_code_description', 'updated_at']
+        );
     }
 }

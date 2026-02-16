@@ -13,27 +13,27 @@ class DateTypeSeeder extends Seeder
 
         $rows = [
             [
-                'type_qualifier'   => 2,
+                'type_qualifier' => 2,
                 'type_description' => 'Fecha/hora de entrega solicitada.',
             ],
             [
-                'type_qualifier'   => 11,
+                'type_qualifier' => 11,
                 'type_description' => 'Fecha/hora de despacho o envío.',
             ],
             [
-                'type_qualifier'   => 63,
+                'type_qualifier' => 63,
                 'type_description' => 'Fecha/hora de entrega, límite máximo (la más tardía permitida).',
             ],
             [
-                'type_qualifier'   => 64,
+                'type_qualifier' => 64,
                 'type_description' => 'Fecha/hora de entrega, límite mínimo (la más temprana posible).',
             ],
             [
-                'type_qualifier'   => 81,
+                'type_qualifier' => 81,
                 'type_description' => 'Fecha/hora de envío solicitada (a partir de esta fecha, inclusive).',
             ],
             [
-                'type_qualifier'   => 84,
+                'type_qualifier' => 84,
                 'type_description' => 'Fecha/hora de envío solicitada (hasta esta fecha, inclusive).',
             ],
         ];
@@ -46,18 +46,18 @@ class DateTypeSeeder extends Seeder
                 ->value('id');
 
             if ($existingId) {
-                // UPDATE (sin updated_at)
                 DB::table('date_types')
                     ->where('id', $existingId)
                     ->update([
                         'type_description' => $row['type_description'],
+                        'updated_at' => $now,
                     ]);
             } else {
-                // INSERT (sin updated_at / deleted_at)
                 DB::table('date_types')->insert([
-                    'type_qualifier'   => $qualifier,
+                    'type_qualifier' => $qualifier,
                     'type_description' => $row['type_description'],
-                    'created_at'       => $now,
+                    'created_at' => $now,
+                    'updated_at' => $now,
                 ]);
             }
         }

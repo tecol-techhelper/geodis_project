@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -15,31 +14,39 @@ class ProductIdentifierRoleSeeder extends Seeder
     {
         $now = now();
 
-        DB::table('product_identifier_roles')->insert([
+        $rows = [
             [
                 'role_code' => 5,
-                'role_name' => 'Product identification',
+                'role_name' => 'Identificación del producto',
                 'role_description' => 'Identificación principal del producto.',
-                'created_at' => $now,
             ],
             [
                 'role_code' => 1,
-                'role_name' => 'Additional identification',
+                'role_name' => 'Identificación adicional',
                 'role_description' => 'Identificación adicional del producto.',
-                'created_at' => $now,
             ],
             [
                 'role_code' => 2,
-                'role_name' => 'Identification for potential substitution',
+                'role_name' => 'Identificación para posible sustitución',
                 'role_description' => 'Identificación usada para una posible sustitución del producto.',
-                'created_at' => $now,
             ],
             [
                 'role_code' => 3,
-                'role_name' => 'Substituted by',
+                'role_name' => 'Sustituido por',
                 'role_description' => 'Indica el identificador del producto por el cual fue sustituido.',
-                'created_at' => $now,
             ],
-        ]);
+        ];
+
+        $rows = array_map(function (array $row) use ($now) {
+            $row['created_at'] = $now;
+            $row['updated_at'] = $now;
+            return $row;
+        }, $rows);
+
+        DB::table('product_identifier_roles')->upsert(
+            $rows,
+            ['role_code'],
+            ['role_name', 'role_description', 'updated_at']
+        );
     }
 }

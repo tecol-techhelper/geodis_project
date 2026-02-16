@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -15,37 +14,44 @@ class TransportModeSeeder extends Seeder
     {
         $now = now();
 
-        DB::table('transport_modes')->insert([
+        $rows = [
             [
                 'transport_mode_code' => 1,
-                'transport_mode_name' => 'Maritime Transport',
+                'transport_mode_name' => 'Transporte marítimo',
                 'transport_mode_description' => 'Transporte de carga realizado por vía marítima.',
-                'created_at' => $now,
             ],
             [
                 'transport_mode_code' => 2,
-                'transport_mode_name' => 'Rail Transport',
+                'transport_mode_name' => 'Transporte ferroviario',
                 'transport_mode_description' => 'Transporte de carga realizado mediante red ferroviaria.',
-                'created_at' => $now,
             ],
             [
                 'transport_mode_code' => 3,
-                'transport_mode_name' => 'Road Transport',
+                'transport_mode_name' => 'Transporte terrestre',
                 'transport_mode_description' => 'Transporte de carga realizado por carretera.',
-                'created_at' => $now,
             ],
             [
                 'transport_mode_code' => 4,
-                'transport_mode_name' => 'Air Transport',
+                'transport_mode_name' => 'Transporte aéreo',
                 'transport_mode_description' => 'Transporte de carga realizado por vía aérea.',
-                'created_at' => $now,
             ],
             [
                 'transport_mode_code' => 6,
                 'transport_mode_name' => 'Multimodal',
                 'transport_mode_description' => 'Transporte que combina dos o más modos de transporte bajo un mismo servicio.',
-                'created_at' => $now,
             ],
-        ]);
+        ];
+
+        $rows = array_map(function (array $row) use ($now) {
+            $row['created_at'] = $now;
+            $row['updated_at'] = $now;
+            return $row;
+        }, $rows);
+
+        DB::table('transport_modes')->upsert(
+            $rows,
+            ['transport_mode_code'],
+            ['transport_mode_name', 'transport_mode_description', 'updated_at']
+        );
     }
 }

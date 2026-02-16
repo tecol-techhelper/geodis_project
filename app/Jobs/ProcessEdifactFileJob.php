@@ -73,7 +73,6 @@ class ProcessEdifactFileJob implements ShouldQueue
 
                 // ==========================================
                 // 5) SERVICE: crear solo si NO existe.
-                //    Si existe: NO tocar status_id.
                 // ==========================================
                 $existingService = DB::table('services')
                     ->where('consecutive', $serviceConsecutive)
@@ -84,16 +83,12 @@ class ProcessEdifactFileJob implements ShouldQueue
                 if ($existingService) {
                     $serviceId = (int)$existingService->id;
 
-                    // OJO: no se modifica status_id por regla de negocio
                     // Si quiere actualizar raw_segment/updated_at, puede, pero normalmente es mejor no tocarlo
                     // para evitar reescribir evidencias históricas.
                     DB::table('services')->where('id', $serviceId)->update([
                         'updated_at' => now(),
                     ]);
                 } else {
-                    // Estado inicial SOLO cuando el servicio no existe
-                    $statusId = $this->defaultStatusId(); // normalmente 1
-
                     $serviceId = DB::table('services')->insertGetId([
                         'segment_tag' => $service['segment_tag'] ?? 'BGM',
                         'raw_segment' => $service['raw_segment'],
@@ -103,7 +98,6 @@ class ProcessEdifactFileJob implements ShouldQueue
                         'consecutive' => $serviceConsecutive,
                         'observation' => null,
 
-                        'status_id'   => $statusId,
                         'created_at'  => now(),
                         'updated_at'  => now(),
                     ]);
@@ -119,8 +113,9 @@ class ProcessEdifactFileJob implements ShouldQueue
                     'message_type'    => $this->tipoMensaje,
                     'file_name'       => $this->fileName,
                     'purchase_order'  => $file['purchase_order'] ?? null,
-                    'recived_at'      => $file['recived_at'] ?? null,
-                    'sended_at'       => $file['sended_at'] ?? null,
+                    'received_at'     => $file['received_at'] ?? null,
+                    // sent_at corresponde al momento de envio saliente, no al procesamiento de entrada.
+                    'sent_at'         => null,
                     'file_url'        => $this->relativePath,
                     'file_path'       => $this->fullpath,
                     'service_id'      => $serviceId,
@@ -300,6 +295,7 @@ class ProcessEdifactFileJob implements ShouldQueue
                         'purchase_order_secuence' => $po['purchase_order_secuence'] ?? null,
                         'purchase_order_number'   => $poNumber,
                         'service_id'              => $serviceId,
+                        'status_id'               => $this->defaultStatusId(),
                         'created_at'              => now(),
                         'updated_at'              => now(),
                     ]);
@@ -597,7 +593,12 @@ class ProcessEdifactFileJob implements ShouldQueue
 
     private function defaultStatusId(): int
     {
-        return (int)(DB::table('statuses')->value('id') ?? 1);
+        $statusId = DB::table('statuses')->orderBy('id')->value('id');
+        if ($statusId === null) {
+            throw new \RuntimeException('No existe un estado inicial en la tabla statuses.');
+        }
+
+        return (int) $statusId;
     }
 
     // ==========================

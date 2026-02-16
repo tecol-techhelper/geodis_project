@@ -11,67 +11,69 @@ class NoteTypesSeeder extends Seeder
     {
         $now = now();
 
-        DB::table('note_types')->insert([
+        $rows = [
             [
                 'note_type_code' => 'LOI',
-                'note_type_name' => 'Loading instructions',
+                'note_type_name' => 'Instrucciones de cargue',
                 'note_type_description' => 'Instrucciones de cargue: indicaciones específicas para el proceso de carga.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'DIN',
-                'note_type_name' => 'Delivery instructions',
+                'note_type_name' => 'Instrucciones de entrega',
                 'note_type_description' => 'Instrucciones de entrega: indicaciones específicas para la entrega.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'ICN',
-                'note_type_name' => 'Information for consignee',
+                'note_type_name' => 'Información para el consignatario',
                 'note_type_description' => 'Información para el consignatario: datos relevantes para el destinatario.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'SIN',
-                'note_type_name' => 'Special instructions',
+                'note_type_name' => 'Instrucciones especiales',
                 'note_type_description' => 'Instrucciones especiales: indicaciones adicionales o excepciones para la operación.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'HAN',
-                'note_type_name' => 'Handling instructions',
+                'note_type_name' => 'Instrucciones de manipulación',
                 'note_type_description' => 'Instrucciones de manipulación: condiciones de manejo, estiba, cuidado o restricción.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'DEL',
-                'note_type_name' => 'Delivery information',
+                'note_type_name' => 'Información sobre la entrega',
                 'note_type_description' => 'Información sobre la entrega: datos generales asociados al proceso de entrega.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'AAA',
-                'note_type_name' => 'Goods description',
+                'note_type_name' => 'Descripción de la mercancía',
                 'note_type_description' => 'Descripción de la mercancía: texto libre describiendo los bienes.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'AAI',
-                'note_type_name' => 'General information',
+                'note_type_name' => 'Información general',
                 'note_type_description' => 'Información general: notas generales relacionadas con la operación o el servicio.',
-                'created_at' => $now,
             ],
             [
                 'note_type_code' => 'AUY',
-                'note_type_name' => 'Service characteristic',
-                'note_type_description' => 'Característica del servicio: atributo o tipo de servicio (p. ej., Service Type).',
-                'created_at' => $now,
+                'note_type_name' => 'Característica del servicio',
+                'note_type_description' => 'Característica del servicio: atributo o tipo de servicio (p. ej., Tipo de servicio).',
             ],
             [
                 'note_type_code' => 'COI',
-                'note_type_name' => 'Order information',
+                'note_type_name' => 'Información de la orden',
                 'note_type_description' => 'Información de la orden: datos asociados a la orden (p. ej., tipo de orden).',
-                'created_at' => $now,
             ],
-        ]);
+        ];
+
+        $rows = array_map(function (array $row) use ($now) {
+            $row['created_at'] = $now;
+            $row['updated_at'] = $now;
+            return $row;
+        }, $rows);
+
+        DB::table('note_types')->upsert(
+            $rows,
+            ['note_type_code'],
+            ['note_type_name', 'note_type_description', 'updated_at']
+        );
     }
 }

@@ -49,29 +49,16 @@ class PartyTypeSeeder extends Seeder
             ],
         ];
 
-        foreach ($rows as $row) {
+        $rows = array_map(function (array $row) use ($now) {
+            $row['created_at'] = $now;
+            $row['updated_at'] = $now;
+            return $row;
+        }, $rows);
 
-            $qualifier = strtoupper(trim($row['party_qualifier']));
-
-            $existingId = DB::table('party_types')
-                ->where('party_qualifier', $qualifier)
-                ->value('id');
-
-            if ($existingId) {
-                DB::table('party_types')
-                    ->where('id', $existingId)
-                    ->update([
-                        'party_type_name' => $row['party_type_name'],
-                        'party_type_description' => $row['party_type_description'],
-                    ]);
-            } else {
-                DB::table('party_types')->insert([
-                    'party_qualifier' => $qualifier,
-                    'party_type_name' => $row['party_type_name'],
-                    'party_type_description' => $row['party_type_description'],
-                    'created_at' => $now,
-                ]);
-            }
-        }
+        DB::table('party_types')->upsert(
+            $rows,
+            ['party_qualifier'],
+            ['party_type_name', 'party_type_description', 'updated_at']
+        );
     }
 }

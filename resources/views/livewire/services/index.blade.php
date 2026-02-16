@@ -25,5 +25,6 @@ new #[Layout('layouts.app')] class extends Component {};
             <span>Servicios</span>
         </h1>
         <livewire:services.service-table />
+        <livewire:services.service-inline-details />
     </div>
 </div>

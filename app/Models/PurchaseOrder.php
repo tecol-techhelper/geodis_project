@@ -16,13 +16,15 @@ class PurchaseOrder extends Model
         'raw_segment',
         'contract_carriage_condition_code',
         'po_requirements_code',
-        'service_id'
+        'service_id',
+        'status_id',
     ];
 
     protected $casts = [
         'id' => 'integer',
         'purchase_order_secuence' => 'integer',
-        'service_id' => 'integer'
+        'service_id' => 'integer',
+        'status_id' => 'integer',
     ];
 
     protected $hidden = [
@@ -95,5 +97,11 @@ class PurchaseOrder extends Model
     public function service(): BelongsTo
     {
         return $this->belongsTo(Service::class, 'service_id');
+    }
+
+    // 1-to-N with status
+    public function status(): BelongsTo
+    {
+        return $this->belongsTo(Status::class, 'status_id');
     }
 }

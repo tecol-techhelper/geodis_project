@@ -3,7 +3,6 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -32,8 +31,7 @@ class Service extends Model
         'payment_approval',
         'odp',
         'odp_value',
-        'raw_segment',
-        'status_id'
+        'raw_segment'
     ];
 
     protected $casts = [
@@ -47,7 +45,6 @@ class Service extends Model
         'payment_approval' => 'boolean',
         'odp' => 'integer',
         'odp_value' => 'decimal:2',
-        'status_id' => 'integer',
         'possitioning_issue' => 'integer',
         'remittance_invoice_number' => 'integer',
         'advance_payment' => 'decimal:2'
@@ -59,13 +56,6 @@ class Service extends Model
         'updated_at',
         'deleted_at'
     ];
-
-
-    // Relation (as son) 1-to-1 with statuses table
-    public function status(): BelongsTo
-    {
-        return $this->belongsTo(Status::class, 'status_id');
-    }
 
     // Relations (as father) 
 
