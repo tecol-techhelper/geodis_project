@@ -80,8 +80,9 @@ return [
             'root' => env('SFTP_ROOT_GEODIS'),
             'permPublic' => 0755,
             'directoryPerm' => 0755,
-            'visibility' => 'public',
+            // 'visibility' => 'public',
             'timeout' => 30,
+            'throw' => true
         ]
 
     ],
