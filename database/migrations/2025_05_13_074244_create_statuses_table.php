@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->string('segment_tag', 4)->default('STS');
             $table->string('status_name', 64);
-            $table->string('status_description', 191)->nullable();
+            $table->string('status_description', 255)->nullable();
             $table->string('status_be', 32);
             $table->softDeletes();
             $table->timestamps();
