@@ -15,9 +15,9 @@ return new class extends Migration
             $table->id();
             $table->string('first_name', 64)->nullable();
             $table->string('last_name', 64)->nullable();
-            $table->string('username',32)->unique();
+            $table->string('username', 32)->unique();
             $table->string('user_area', 32)->nullable();
-            $table->string('email', 256)->unique();
+            $table->string('email', 191)->unique();
             $table->string('password');
             $table->tinyInteger('is_active')->default(1);
             $table->string('user_icon')->nullable();

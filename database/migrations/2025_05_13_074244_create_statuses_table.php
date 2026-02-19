@@ -13,10 +13,10 @@ return new class extends Migration
     {
         Schema::create('statuses', function (Blueprint $table) {
             $table->id();
-            $table->string('segment_tag')->default('STS');
-            $table->string('status_name');
-            $table->string('status_description')->nullable();
-            $table->string('status_be');
+            $table->string('segment_tag', 4)->default('STS');
+            $table->string('status_name', 64);
+            $table->string('status_description', 191)->nullable();
+            $table->string('status_be', 32);
             $table->softDeletes();
             $table->timestamps();
         });
