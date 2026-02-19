@@ -17,7 +17,7 @@ return new class extends Migration
 
             $table->string('item', 16)->nullable();
             $table->string('consecutive', 64)->nullable();
-            $table->string('observation', 256)->nullable();
+            $table->string('observation', 191)->nullable();
             $table->decimal('ttcol_value', 16, 2)->nullable();
             $table->decimal('cargo_value', 16, 2)->nullable();
             $table->string('driver', 16)->nullable();
