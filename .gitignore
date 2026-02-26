@@ -32,3 +32,5 @@ yarn-error.log
 /storage/framework/views/*
 /bootstrap/cache/*.php
 /public/storage
+error_log
+public/error_log
