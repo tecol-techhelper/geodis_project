@@ -12,7 +12,7 @@ class GenerateIftstaPayloadService
     /**
      * Genera el payload IFTSTA para un Service.
      *
-     * Regla: STS se reporta por CNI (purchase_orders) y se inserta justo después del CNI.
+     * Regla: STS se reporta por CNI (purchase_orders) y se inserta justo despuÃ©s del CNI.
      *
      * @param  \App\Models\Service  $service  Service ya existente (idealmente con relaciones cargadas)
      * @param  array<int>|null      $purchaseOrderIds  Si se pasa, solo incluye esos CNI. Si null, usa "pendientes".
@@ -64,7 +64,7 @@ class GenerateIftstaPayloadService
             ];
         }
 
-        // Referencias de control (ajusta a tu regla interna si ya tienes un generador estándar)
+        // Referencias de control (ajusta a tu regla interna si ya tienes un generador estÃ¡ndar)
         $interchangeRef = $this->buildInterchangeRef();
         $messageRef     = $this->buildMessageRef($interchangeRef);
 
@@ -86,32 +86,32 @@ class GenerateIftstaPayloadService
 
         /**
          * HEADER del mensaje:
-         * Te dejo lo más seguro con lo que ya tienes:
+         * Te dejo lo mÃ¡s seguro con lo que ya tienes:
          * - BGM del service (services.raw_segment)
          * - DTM del service (service_dates.raw_segment)
          * - NAD del service (service_parties.raw_segment)
          *
-         * Si mañana GEODIS exige RFF a nivel header y no lo tienes como tabla,
-         * lo agregas aquí o lo generas desde donde corresponda.
+         * Si maÃ±ana GEODIS exige RFF a nivel header y no lo tienes como tabla,
+         * lo agregas aquÃ­ o lo generas desde donde corresponda.
          */
         $segments = array_merge($segments, $this->collectServiceHeaderSegments($service));
 
         /**
          * BLOQUE POR CNI (Purchase Order):
-         * CNI + STS + resto (RFF/DTM/LOC/TDT/… según raw_segment que tengas guardado)
+         * CNI + STS + resto (RFF/DTM/LOC/TDT/â€¦ segÃºn raw_segment que tengas guardado)
          */
         foreach ($pos as $po) {
             // 1) CNI (purchase_orders.raw_segment)
             $segments[] = $this->seg((string) $po->raw_segment);
 
             // 2) STS por CNI (tu nueva regla)
-            //    status_id es lo que GEODIS quiere ver (según tu definición).
+            //    status_id es lo que GEODIS quiere ver (segÃºn tu definiciÃ³n).
             $statusId = $po->status_id;
             if ($statusId !== null) {
                 $segments[] = $this->seg("STS+{$stsType}+{$statusId}");
             } else {
                 // Si no hay status, no invento uno. Solo omito STS.
-                // (Si GEODIS exige STS siempre, mañana lo defines).
+                // (Si GEODIS exige STS siempre, maÃ±ana lo defines).
             }
 
             // 3) Resto de segmentos del PO (por raw_segment / *_segment_raw)
@@ -136,9 +136,9 @@ class GenerateIftstaPayloadService
     }
 
     /**
-     * Selecciona qué Purchase Orders (CNI) van en el IFTSTA.
+     * Selecciona quÃ© Purchase Orders (CNI) van en el IFTSTA.
      * - Si vienen IDs: solo esos.
-     * - Si no vienen: usa "pendientes" (hoy básico: status_id != null).
+     * - Si no vienen: usa "pendientes" (hoy bÃ¡sico: status_id != null).
      */
     protected function selectPurchaseOrders(Service $service, ?array $purchaseOrderIds): Collection
     {
@@ -149,8 +149,8 @@ class GenerateIftstaPayloadService
             return $pos->whereIn('id', $ids)->values();
         }
 
-        // Pendientes (versión simple por ahora):
-        // Si mañana agregas last_iftsta_status_id / last_iftsta_sent_at, cambias esta condición.
+        // Pendientes (versiÃ³n simple por ahora):
+        // Si maÃ±ana agregas last_iftsta_status_id / last_iftsta_sent_at, cambias esta condiciÃ³n.
         return $pos->filter(fn($po) => $po->status_id !== null)->values();
     }
 
@@ -166,7 +166,7 @@ class GenerateIftstaPayloadService
             $out[] = $this->seg((string) $service->raw_segment);
         }
 
-        // DTM de fecha/hora del mensaje (obligatorio justo despuÃ©s de BGM)
+        // DTM de fecha/hora del mensaje (obligatorio justo despuÃƒÂ©s de BGM)
         // Formato requerido: DTM+137:{yyyymmddhhmm}:203'
         $out[] = $this->seg('DTM+137:' . now()->format('YmdHi') . ':203');
 
@@ -287,7 +287,7 @@ class GenerateIftstaPayloadService
     protected function finalizeWithTrailers(array $segments, string $messageRef, string $interchangeRef): array
     {
         // Contar desde UNH hasta (incluyendo) UNT.
-        // Buscamos el índice del UNH
+        // Buscamos el Ã­ndice del UNH
         $unhIndex = null;
         foreach ($segments as $i => $seg) {
             if (Str::startsWith($seg, 'UNH+')) {
@@ -296,13 +296,13 @@ class GenerateIftstaPayloadService
             }
         }
 
-        // Si no hay UNH, algo está roto
+        // Si no hay UNH, algo estÃ¡ roto
         if ($unhIndex === null) {
             return $segments;
         }
 
-        // UNT se añade al final, pero el conteo incluye UNT,
-        // así que calculamos (cantidad desde UNH hasta final + 1 por el UNT)
+        // UNT se aÃ±ade al final, pero el conteo incluye UNT,
+        // asÃ­ que calculamos (cantidad desde UNH hasta final + 1 por el UNT)
         $countFromUnhToEnd = count($segments) - $unhIndex;
         $untCount = $countFromUnhToEnd + 1;
 
@@ -324,7 +324,7 @@ class GenerateIftstaPayloadService
 
     protected function buildInterchangeRef(): string
     {
-        // Ej: 100008071 (como tu screenshot). Si ya tienes numeración oficial, reemplaza esto.
+        // Ej: 100008071 (como tu screenshot). Si ya tienes numeraciÃ³n oficial, reemplaza esto.
         return (string) random_int(100000000, 999999999);
     }
 
@@ -339,4 +339,3 @@ class GenerateIftstaPayloadService
         return Carbon::now()->format($format);
     }
 }
-
