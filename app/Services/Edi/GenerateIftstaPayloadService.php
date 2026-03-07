@@ -36,6 +36,7 @@ class GenerateIftstaPayloadService
             'purchase_orders.delivery_terms',
             'purchase_orders.purchase_order_parties',
             'purchase_orders.purchase_order_contacts',
+            'purchase_orders.purchase_order_contacts.purchase_order_contact_details',
             'purchase_orders.purchase_order_notes',
             'purchase_orders.purchase_order_measurements',
             'purchase_orders.purchase_order_requirements',
@@ -66,12 +67,12 @@ class GenerateIftstaPayloadService
 
         // Referencias de control (ajusta a tu regla interna si ya tienes un generador estÃ¡ndar)
         $interchangeRef = $this->buildInterchangeRef();
-        $messageRef     = $this->buildMessageRef($interchangeRef);
+        $messageRef     = 1;
 
         // Configurables (ponlos en config/ si quieres)
-        $senderId   = config('geodis.edifact.sender_id', 'CARRIER_NAME');
-        $receiverId = config('geodis.edifact.receiver_id', 'GEOSCO');
-        $stsType    = config('geodis.edifact.iftsta_sts_type', '1'); // el primer componente del STS+X+Y
+        $senderId   = config('edi.unb.sender_id', config('geodis.edifact.sender_id', 'TRANSTECOL'));
+        $receiverId = config('edi.unb.receiver_id', config('geodis.edifact.receiver_id', 'GEOSCOT'));
+        $stsType    = config('edi.iftsta.sts_type', config('geodis.edifact.iftsta_sts_type', '1')); // el primer componente del STS+X+Y
 
         $segments = [];
 
@@ -213,20 +214,30 @@ class GenerateIftstaPayloadService
             }
         }
 
-        // Delivery terms
-        foreach (($po->delivery_terms ?? collect()) as $term) {
-            if (!empty($term->raw_segment)) {
-                $out[] = $this->seg((string) $term->raw_segment);
+        // Delivery terms (TOD)
+        if (!$this->shouldOmitSegment('TOD')) {
+            foreach (($po->delivery_terms ?? collect()) as $term) {
+                if (!empty($term->raw_segment)) {
+                    $out[] = $this->seg((string) $term->raw_segment);
+                }
             }
         }
 
-        // Parties / Contacts / Notes / Measurements / Requirements
+        // Requirements (TSR) antes de Parties (NAD)
+        foreach (($po->purchase_order_requirements ?? collect()) as $r) {
+            if (!empty($r->raw_segment)) $out[] = $this->seg((string) $r->raw_segment);
+        }
+
+        // Parties / Contacts / Notes / Measurements
         foreach (($po->purchase_order_parties ?? collect()) as $p) {
             if (!empty($p->raw_segment)) $out[] = $this->seg((string) $p->raw_segment);
         }
 
         foreach (($po->purchase_order_contacts ?? collect()) as $c) {
             if (!empty($c->raw_segment)) $out[] = $this->seg((string) $c->raw_segment);
+            foreach (($c->purchase_order_contact_details ?? collect()) as $cd) {
+                if (!empty($cd->raw_segment)) $out[] = $this->seg((string) $cd->raw_segment);
+            }
         }
 
         foreach (($po->purchase_order_notes ?? collect()) as $n) {
@@ -237,14 +248,16 @@ class GenerateIftstaPayloadService
             if (!empty($m->raw_segment)) $out[] = $this->seg((string) $m->raw_segment);
         }
 
-        foreach (($po->purchase_order_requirements ?? collect()) as $r) {
-            if (!empty($r->raw_segment)) $out[] = $this->seg((string) $r->raw_segment);
-        }
-
-        // Transport charges (PRI / TCC raws)
-        foreach (($po->transport_charges ?? collect()) as $ch) {
-            if (!empty($ch->pri_segment_raw)) $out[] = $this->seg((string) $ch->pri_segment_raw);
-            if (!empty($ch->tcc_segment_raw)) $out[] = $this->seg((string) $ch->tcc_segment_raw);
+        // Transport charges (PRI / TCC)
+        if (!$this->shouldOmitSegment('TCC') && !$this->shouldOmitSegment('PRI')) {
+            foreach (($po->transport_charges ?? collect()) as $ch) {
+                if (!empty($ch->pri_segment_raw) && !$this->shouldOmitSegment('PRI')) {
+                    $out[] = $this->seg((string) $ch->pri_segment_raw);
+                }
+                if (!empty($ch->tcc_segment_raw) && !$this->shouldOmitSegment('TCC')) {
+                    $out[] = $this->seg((string) $ch->tcc_segment_raw);
+                }
+            }
         }
 
         // Items + sus hijos
@@ -322,17 +335,26 @@ class GenerateIftstaPayloadService
         return $s . "'";
     }
 
+    protected function shouldOmitSegment(string $tag): bool
+    {
+        $omit = config('edi.omit_segments', []);
+        if (!is_array($omit)) {
+            return false;
+        }
+        return in_array(strtoupper($tag), array_map('strtoupper', $omit), true);
+    }
+
     protected function buildInterchangeRef(): string
     {
         // Ej: 100008071 (como tu screenshot). Si ya tienes numeraciÃ³n oficial, reemplaza esto.
         return (string) random_int(100000000, 999999999);
     }
 
-    protected function buildMessageRef(string $interchangeRef): string
-    {
-        // Puedes igualarlo al interchange o derivarlo
-        return $interchangeRef;
-    }
+    // protected function buildMessageRef(string $interchangeRef): string
+    // {
+    //     // Puedes igualarlo al interchange o derivarlo
+    //     return $interchangeRef;
+    // }
 
     protected function formatDate(string $format): string
     {

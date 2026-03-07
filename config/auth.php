@@ -112,4 +112,15 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Remember Me Duration
+    |--------------------------------------------------------------------------
+    |
+    | Minutes to keep the "remember me" cookie valid. Default: 7 days.
+    |
+    */
+
+    'remember_duration' => env('AUTH_REMEMBER_DURATION', 60 * 24 * 7),
+
 ];

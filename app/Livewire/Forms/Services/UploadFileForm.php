@@ -2,7 +2,6 @@
 
 namespace App\Livewire\Forms\Services;
 
-use App\Core\InternalControllers\AuditController;
 use App\Models\FileType;
 use App\Models\Service;
 use App\Models\SupportFile;
@@ -22,7 +21,7 @@ class UploadFileForm extends Form
 
     #[Validate([
         'files' => 'array|nullable',
-        'files.*' => 'file|max:10240',
+        'files.*' => 'file|max:10240|mimes:jpg,jpeg,png,webp,mp4,mov,avi,wmv,pdf,doc,docx,xls,xlsx',
     ])]
     public array $files = [];
 
@@ -76,7 +75,11 @@ class UploadFileForm extends Form
 
         try {
             foreach ($incomingFiles as $file) {
-                $extension = $file->getClientOriginalExtension();
+                $extension = strtolower((string) $file->getClientOriginalExtension());
+                if (!$this->isAllowedExtension($extension)) {
+                    $this->addError('form.files', "Extensión no permitida: .{$extension}");
+                    continue;
+                }
                 $freeText = trim((string) $this->free_text);
                 $safeFreeText = $freeText !== '' ? preg_replace('/[^A-Za-z0-9_-]/', '_', $freeText) : 'SIN_TEXTO';
 
@@ -155,6 +158,10 @@ class UploadFileForm extends Form
             return false;
         }
 
+        if (!$this->ensureUploadIsNotRateLimited()) {
+            return false;
+        }
+
         if (!$this->service_id) {
             $this->addError('form.files', 'No se encontro el servicio asociado para guardar los soportes.');
             return false;
@@ -185,7 +192,19 @@ class UploadFileForm extends Form
 
         foreach ($this->tempFiles as $temp) {
             $localPath = Storage::disk('local')->path($temp['temp_path']);
-            $extension = pathinfo($temp['fileName'], PATHINFO_EXTENSION);
+            if (!$this->isTempPathSafe($temp['temp_path'])) {
+                Log::warning('UploadFileForm@saveFiles:unsafe_temp_path', [
+                    'service_id' => $this->service_id,
+                    'temp_path' => $temp['temp_path'],
+                ]);
+                $this->addError('form.files', 'Ruta temporal inválida.');
+                continue;
+            }
+            $extension = strtolower((string) pathinfo($temp['fileName'], PATHINFO_EXTENSION));
+            if (!$this->isAllowedExtension($extension)) {
+                $this->addError('form.files', "Extensión no permitida: .{$extension}");
+                continue;
+            }
             $remoteFileName = $temp['fileName'];
             $remotePath = "{$remoteDir}/{$remoteFileName}";
 
@@ -198,14 +217,24 @@ class UploadFileForm extends Form
                 $sharePointResponse = $sharePointUploader->upload($localPath, $remotePath);
                 $sharePointUrl = $sharePointResponse['webUrl'] ?? null;
             } catch (\Throwable $e) {
-                $this->addError('form.files', "Error en SharePoint: {$e->getMessage()}");
+                Log::warning('UploadFileForm@saveFiles:sharepoint_error', [
+                    'service_id' => $this->service_id,
+                    'file' => $remoteFileName,
+                    'message' => $e->getMessage(),
+                ]);
+                $this->addError('form.files', 'Error al cargar el archivo en SharePoint.');
                 continue;
             }
 
             [$uploaded, $sftpError] = $this->uploadToSftp($remoteDir, $remoteFileName, $remotePath, $localPath);
 
             if (!$uploaded) {
-                $this->addError('form.files', "No se confirmo la subida del archivo {$remoteFileName} en el SFTP. {$sftpError}");
+                Log::warning('UploadFileForm@saveFiles:sftp_error', [
+                    'service_id' => $this->service_id,
+                    'file' => $remoteFileName,
+                    'message' => $sftpError,
+                ]);
+                $this->addError('form.files', "No se confirmo la subida del archivo {$remoteFileName} en el SFTP.");
                 continue;
             }
 
@@ -225,14 +254,6 @@ class UploadFileForm extends Form
                     'uploaded_sftp'  => 1,
                     'sftp_error'     => null,
                 ]);
-
-                (new AuditController())->log(
-                    model: $supportFile,
-                    userId: Auth::id(),
-                    username: Auth::user()?->username,
-                    userRole: Auth::user()?->roles->first()?->rol_key,
-                    action: 'CREATED'
-                );
 
                 Storage::disk('local')->delete($temp['temp_path']);
                 $successfulCount++;
@@ -308,5 +329,38 @@ class UploadFileForm extends Form
         }
 
         return [false, $lastError];
+    }
+
+    private function isAllowedExtension(string $extension): bool
+    {
+        $allowed = ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'avi', 'wmv', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
+        return in_array($extension, $allowed, true);
+    }
+
+    private function isTempPathSafe(string $tempPath): bool
+    {
+        $baseDir = Storage::disk('local')->path('temp_support_files');
+        $fullPath = Storage::disk('local')->path($tempPath);
+
+        $baseReal = realpath($baseDir);
+        $fullReal = realpath($fullPath);
+
+        if (!$baseReal || !$fullReal) {
+            return false;
+        }
+
+        return str_starts_with($fullReal, $baseReal . DIRECTORY_SEPARATOR);
+    }
+
+    private function ensureUploadIsNotRateLimited(): bool
+    {
+        $key = 'support-files:' . (Auth::id() ?? 'guest') . '|' . request()->ip();
+        if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 30)) {
+            $seconds = \Illuminate\Support\Facades\RateLimiter::availableIn($key);
+            $this->addError('form.files', "Demasiadas cargas. Intenta de nuevo en {$seconds} segundos.");
+            return false;
+        }
+        \Illuminate\Support\Facades\RateLimiter::hit($key, 60);
+        return true;
     }
 }

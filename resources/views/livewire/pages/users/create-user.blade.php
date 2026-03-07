@@ -1,7 +1,6 @@
 <?php
 
 use App\Models\User;
-use App\Core\InternalControllers\AuditController;
 use Illuminate\Support\Facades\Log;
 use Livewire\WithFileUploads;
 use App\Livewire\Forms\CreateUserForm;
@@ -23,7 +22,6 @@ new #[Layout('layouts.app')] class extends Component {
 
         Log::info('Usuario guardado: ' . $user->id);
 
-        (new AuditController())->log($user, Auth::id(), Auth::user()->username, Auth::user()->roles->first()?->rol_key, 'CREATED');
         redirect()->route('user.index');
     }
 }; ?>

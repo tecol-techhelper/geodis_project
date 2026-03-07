@@ -23,15 +23,12 @@ new #[Layout('layouts.guest')] class extends Component {
 
         // dd($status);
 
-        if ($status != Password::RESET_LINK_SENT) {
-            $this->addError('email', 'Este correo no se encuentra registrado');
-
-            return;
+        // Para evitar enumeración de correos, siempre responde igual
+        if ($status === Password::RESET_LINK_SENT) {
+            $this->reset('email');
         }
 
-        $this->reset('email');
-
-        session()->flash('status', __($status));
+        session()->flash('status', 'Si el correo existe, recibirás un enlace de restablecimiento.');
     }
 }; ?>
 @section('title','Cambio de Contraseña')

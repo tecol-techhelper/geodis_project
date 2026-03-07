@@ -34,6 +34,7 @@ class LoginForm extends Form
     public function authenticate(): void
     {
         $this->ensureIpIsNotBlocked();
+        $this->ensureIsNotRateLimited();
 
         $userName  = User::where('username', $this->username)->first();
 
@@ -42,15 +43,17 @@ class LoginForm extends Form
             $ipAddress = request()->ip();
             (new FailedSessionController())->logFailedSession($this->username, $ipAddress, request()->userAgent(), 'Usuario no encontrado');
             (new BlockedIpController)->evaluateAndBlockIp($ipAddress);
+            RateLimiter::hit($this->throttleKey());
             throw ValidationException::withMessages([
-                'form.username' => 'Usuario no encontrado'
+                'form.username' => 'Credenciales inválidas'
             ]);
         }
 
         // For validating if user is active
         if ($userName->is_active !== 1) {
+            RateLimiter::hit($this->throttleKey());
             throw ValidationException::withMessages([
-                'form.username' => 'Usuarios inhabilitado. Comunicarse con el administrador'
+                'form.username' => 'Credenciales inválidas'
             ]);
         }
 
@@ -58,7 +61,7 @@ class LoginForm extends Form
             RateLimiter::hit($this->throttleKey());
             (new FailedSessionController())->logFailedSession($this->username, request()->ip(), request()->userAgent(), 'Credenciales incorrectas');
             throw ValidationException::withMessages([
-                'form.username' => trans('auth.failed'),
+                'form.username' => 'Credenciales inválidas',
             ]);
         }
 
@@ -87,9 +90,25 @@ class LoginForm extends Form
 
         if ($blocked) {
             throw ValidationException::withMessages([
-                'username' => 'Ty IP ha sido bloqueada por seguridad. Contacta con el administrador'
+                'form.username' => 'Tu IP ha sido bloqueada por seguridad. Contacta con el administrador'
             ]);
         }
+    }
+
+    /**
+     * Ensure the authentication request is not rate limited.
+     */
+    protected function ensureIsNotRateLimited(): void
+    {
+        if (! RateLimiter::tooManyAttempts($this->throttleKey(), 5)) {
+            return;
+        }
+
+        $seconds = RateLimiter::availableIn($this->throttleKey());
+
+        throw ValidationException::withMessages([
+            'form.username' => "Demasiados intentos. Intenta de nuevo en {$seconds} segundos.",
+        ]);
     }
     /**
      * Get the authentication rate limiting throttle key.
