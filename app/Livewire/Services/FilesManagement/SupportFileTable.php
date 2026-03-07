@@ -55,7 +55,11 @@ final class SupportFileTable extends PowerGridComponent
             ->add('username')
             ->add('file_type_id', fn($supportfile) => e($supportfile->file_type->file_type_full_name))
             ->add('file_url', function (SupportFile $file) {
-                return "<a href=\"{$file->file_url}\" class='flex items-center text-blue-600 underline hover:text-blue-800 justify-center' target='_blank'><svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='lucide lucide-eye-icon lucide-eye'><path d='M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0'/><circle cx='12' cy='12' r='3'/></svg></a>";
+                $url = $this->sanitizeUrl($file->file_url);
+                if ($url === null) {
+                    return '';
+                }
+                return "<a href=\"{$url}\" class='flex items-center text-blue-600 underline hover:text-blue-800 justify-center' target='_blank' rel='noopener noreferrer'><svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' class='lucide lucide-eye-icon lucide-eye'><path d='M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0'/><circle cx='12' cy='12' r='3'/></svg></a>";
             });
     }
 
@@ -83,6 +87,25 @@ final class SupportFileTable extends PowerGridComponent
             Filter::inputText('username'),
             Filter::datepicker('uploaded_at'),
         ];
+    }
+
+    private function sanitizeUrl(?string $url): ?string
+    {
+        if (!$url) {
+            return null;
+        }
+
+        $url = trim($url);
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            return null;
+        }
+
+        $scheme = parse_url($url, PHP_URL_SCHEME);
+        if (!in_array(strtolower((string) $scheme), ['https', 'http'], true)) {
+            return null;
+        }
+
+        return e($url);
     }
 
     #[\Livewire\Attributes\On('edit')]

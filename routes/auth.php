@@ -8,12 +8,15 @@ use Livewire\Volt\Volt;
 Route::middleware(['guest', 'blocked'])->group(function () {
 
     Volt::route('/', 'pages.auth.login')
+        ->middleware('throttle:10,1')
         ->name('login');
 
     Volt::route('forgot-password', 'pages.auth.forgot-password')
+        ->middleware('throttle:5,1')
         ->name('password.request');
 
     Volt::route('reset-password/{token}', 'pages.auth.reset-password')
+        ->middleware('throttle:5,1')
         ->name('password.reset');
 });
 
@@ -45,6 +48,9 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
         Volt::route('uploadFile', 'services.upload-file-modal')->name('upload.file');
 
         Volt::route('file_management', 'services.uploaded-file')->name('uploaded.file');
+
+        Volt::route('auditoria', 'pages.audits.index')
+            ->name('audits.index');
     });
 
     Route::middleware(['blocked'])->group(function () {

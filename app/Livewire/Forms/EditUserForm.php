@@ -2,7 +2,6 @@
 
 namespace App\Livewire\Forms;
 
-use App\Core\InternalControllers\AuditController;
 use App\Enums\Rol;
 use App\Enums\UserStatus;
 use App\Models\User;
@@ -76,14 +75,6 @@ class EditUserForm extends Form
             $user->user_icon = $path;
         }
         
-        (new AuditController())->log(
-            model: $user,
-            userId: Auth::id(),
-            username: Auth::user()->username,
-            userRole: Auth::user()->roles->first()?->rol_key,
-            action: 'UPDATED'
-        );
-
         $user->save();
 
         if(Auth::user()->hasRole('admin') && $this->role_id){

@@ -57,7 +57,7 @@
                 <a href="{{ route('user.index') }}"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Usuarios
                 </a>
-                <a href="#"
+                <a href="{{ route('audits.index') }}"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Auditoria
                 </a>
             </div>

@@ -3,7 +3,6 @@
 use App\Models\User;
 use Livewire\WithFileUploads;
 use Illuminate\Support\Facades\Log;
-use App\Core\InternalControllers\AuditController;
 use App\Livewire\Forms\EditUserForm;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Support\Facades\Auth;
