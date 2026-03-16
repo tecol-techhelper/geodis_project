@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('statuses', function (Blueprint $table) {
             $table->id();
             $table->string('segment_tag', 4)->default('STS');
+            $table->integer('edifact_code');
             $table->string('status_name', 64);
             $table->string('status_description', 255)->nullable();
             $table->string('status_be', 32);

@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('services', function (Blueprint $table) {
             $table->id();
-            $table->string('segment_tag', 3)->default('BGM');
+            $table->string('segment_tag', 7)->default('RFF+SRN');
 
             $table->string('item', 16)->nullable();
             $table->string('consecutive', 64)->nullable();
