@@ -33,6 +33,7 @@ class GenerateIftstaPayloadService
 
             'purchase_orders',
             'purchase_orders.order_references',
+            'purchase_orders.order_references.reference_type',
             'purchase_orders.delivery_terms',
             'purchase_orders.purchase_order_parties',
             'purchase_orders.purchase_order_contacts',
@@ -105,18 +106,27 @@ class GenerateIftstaPayloadService
             // 1) CNI (purchase_orders.raw_segment)
             $segments[] = $this->seg((string) $po->raw_segment);
 
-            // 2) STS por CNI (tu nueva regla)
-            //    status_id es lo que GEODIS quiere ver (segÃºn tu definiciÃ³n).
+            // 2) CNT dentro de CNI antes de STS
+            if (!$this->shouldOmitSegment('CNT')) {
+                foreach (($po->purchase_order_measurements ?? collect()) as $m) {
+                    if (!empty($m->raw_segment)) {
+                        $segments[] = $this->seg((string) $m->raw_segment);
+                    }
+                }
+            }
+
+            // 3) STS por CNI (tu nueva regla)
+            //    status_id es lo que GEODIS quiere ver (seg?n tu definici?n).
             $statusId = $po->status_id;
             if ($statusId !== null) {
                 $segments[] = $this->seg("STS+{$stsType}+{$statusId}");
             } else {
                 // Si no hay status, no invento uno. Solo omito STS.
-                // (Si GEODIS exige STS siempre, maÃ±ana lo defines).
+                // (Si GEODIS exige STS siempre, ma?ana lo defines).
             }
 
-            // 3) Resto de segmentos del PO (por raw_segment / *_segment_raw)
-            $segments = array_merge($segments, $this->collectPurchaseOrderSegments($po));
+            // 4) Resto de segmentos del PO (por raw_segment / *_segment_raw)
+            $segments = array_merge($segments, $this->collectPurchaseOrderSegments($service, $po));
         }
 
         // UNT / UNZ (conteos)
@@ -162,9 +172,16 @@ class GenerateIftstaPayloadService
     {
         $out = [];
 
-        // BGM (services.raw_segment)
-        if (!empty($service->raw_segment)) {
-            $out[] = $this->seg((string) $service->raw_segment);
+        // BGM (prefer legacy raw_segment if it is actually BGM)
+        $bgmSegment = null;
+        if (!empty($service->raw_segment) && str_starts_with((string) $service->raw_segment, 'BGM+')) {
+            $bgmSegment = (string) $service->raw_segment;
+        } elseif (!empty($service->consecutive)) {
+            $bgmSegment = 'BGM+335+' . $service->consecutive . '+9';
+        }
+
+        if (!empty($bgmSegment)) {
+            $out[] = $this->seg($bgmSegment);
         }
 
         // DTM de fecha/hora del mensaje (obligatorio justo despuÃƒÂ©s de BGM)
@@ -183,9 +200,10 @@ class GenerateIftstaPayloadService
 
         // Hijos service-level adicionales (solo si tienen datos/segmento)
         $this->appendRawSegments($out, $service->location_details ?? collect());
-        $this->appendRawSegments($out, $service->transport_details ?? collect());
-        $this->appendRawSegments($out, $service->service_equipments ?? collect());
-        $this->appendRawSegments($out, $service->service_measurements ?? collect());
+        if (!$this->shouldOmitSegment('EQD')) {
+            $this->appendRawSegments($out, $service->service_equipments ?? collect());
+        }
+        // CNT fuera de CNI: excluidos por requerimiento
 
         return $out;
     }
@@ -193,6 +211,10 @@ class GenerateIftstaPayloadService
     protected function appendRawSegments(array &$out, Collection $models): void
     {
         foreach ($models as $model) {
+            $tag = $model?->segment_tag ? strtoupper((string) $model->segment_tag) : null;
+            if ($tag && $this->shouldOmitSegment($tag)) {
+                continue;
+            }
             if (!empty($model?->raw_segment)) {
                 $out[] = $this->seg((string) $model->raw_segment);
             }
@@ -203,16 +225,9 @@ class GenerateIftstaPayloadService
      * Segmentos por Purchase Order, usando raw_segment / *_segment_raw.
      * Respeta lo que tengas guardado, sin adivinar contenido.
      */
-    protected function collectPurchaseOrderSegments($po): array
+    protected function collectPurchaseOrderSegments(Service $service, $po): array
     {
         $out = [];
-
-        // Order references (RFF)
-        foreach (($po->order_references ?? collect()) as $rff) {
-            if (!empty($rff->raw_segment)) {
-                $out[] = $this->seg((string) $rff->raw_segment);
-            }
-        }
 
         // Delivery terms (TOD)
         if (!$this->shouldOmitSegment('TOD')) {
@@ -224,29 +239,27 @@ class GenerateIftstaPayloadService
         }
 
         // Requirements (TSR) antes de Parties (NAD)
-        foreach (($po->purchase_order_requirements ?? collect()) as $r) {
-            if (!empty($r->raw_segment)) $out[] = $this->seg((string) $r->raw_segment);
-        }
-
-        // Parties / Contacts / Notes / Measurements
-        foreach (($po->purchase_order_parties ?? collect()) as $p) {
-            if (!empty($p->raw_segment)) $out[] = $this->seg((string) $p->raw_segment);
-        }
-
-        foreach (($po->purchase_order_contacts ?? collect()) as $c) {
-            if (!empty($c->raw_segment)) $out[] = $this->seg((string) $c->raw_segment);
-            foreach (($c->purchase_order_contact_details ?? collect()) as $cd) {
-                if (!empty($cd->raw_segment)) $out[] = $this->seg((string) $cd->raw_segment);
+        if (!$this->shouldOmitSegment('TSR')) {
+            foreach (($po->purchase_order_requirements ?? collect()) as $r) {
+                if (!empty($r->raw_segment)) $out[] = $this->seg((string) $r->raw_segment);
             }
         }
 
-        foreach (($po->purchase_order_notes ?? collect()) as $n) {
-            if (!empty($n->raw_segment)) $out[] = $this->seg((string) $n->raw_segment);
+        // Notes (FTX) antes de Parties (NAD)
+        if (!$this->shouldOmitSegment('FTX')) {
+            foreach (($po->purchase_order_notes ?? collect()) as $n) {
+                if (!empty($n->raw_segment)) $out[] = $this->seg((string) $n->raw_segment);
+            }
         }
 
-        foreach (($po->purchase_order_measurements ?? collect()) as $m) {
-            if (!empty($m->raw_segment)) $out[] = $this->seg((string) $m->raw_segment);
+        // Parties (NAD) despues de FTX
+        if (!$this->shouldOmitSegment('NAD')) {
+            foreach (($po->purchase_order_parties ?? collect()) as $p) {
+                if (!empty($p->raw_segment)) $out[] = $this->seg((string) $p->raw_segment);
+            }
         }
+
+        // CTA/COM dentro de CNI: excluidos por requerimiento
 
         // Transport charges (PRI / TCC)
         if (!$this->shouldOmitSegment('TCC') && !$this->shouldOmitSegment('PRI')) {
@@ -260,34 +273,68 @@ class GenerateIftstaPayloadService
             }
         }
 
+        // TDT dentro de CNI antes de RFF
+        if (!$this->shouldOmitSegment('TDT')) {
+            $this->appendRawSegments($out, $service->transport_details ?? collect());
+        }
+
+        // Order references (RFF) justo antes de items (GID)
+        if (!$this->shouldOmitSegment('RFF')) {
+            foreach (($po->order_references ?? collect()) as $rff) {
+                $refType = $rff->reference_type?->reference_type_code ?? null;
+                if ($refType !== 'SRN') {
+                    continue;
+                }
+                if (!empty($rff->raw_segment)) {
+                    $out[] = $this->seg((string) $rff->raw_segment);
+                    continue;
+                }
+                if (!empty($rff->order_reference_value)) {
+                    $out[] = $this->seg('RFF+SRN:' . $rff->order_reference_value);
+                }
+            }
+        }
+
         // Items + sus hijos
         foreach (($po->purchase_order_items ?? collect()) as $item) {
-            if (!empty($item->raw_segment)) {
+            if (!empty($item->raw_segment) && !$this->shouldOmitSegment('GID')) {
                 $out[] = $this->seg((string) $item->raw_segment);
             }
 
-            foreach (($item->item_notes ?? collect()) as $n) {
-                if (!empty($n->raw_segment)) $out[] = $this->seg((string) $n->raw_segment);
+            if (!$this->shouldOmitSegment('FTX')) {
+                foreach (($item->item_notes ?? collect()) as $n) {
+                    if (!empty($n->raw_segment)) $out[] = $this->seg((string) $n->raw_segment);
+                }
             }
 
-            foreach (($item->item_measures ?? collect()) as $m) {
-                if (!empty($m->raw_segment)) $out[] = $this->seg((string) $m->raw_segment);
+            if (!$this->shouldOmitSegment('MEA')) {
+                foreach (($item->item_measures ?? collect()) as $m) {
+                    if (!empty($m->raw_segment)) $out[] = $this->seg((string) $m->raw_segment);
+                }
             }
 
-            foreach (($item->item_dimensions ?? collect()) as $d) {
-                if (!empty($d->raw_segment)) $out[] = $this->seg((string) $d->raw_segment);
+            if (!$this->shouldOmitSegment('DIM')) {
+                foreach (($item->item_dimensions ?? collect()) as $d) {
+                    if (!empty($d->raw_segment)) $out[] = $this->seg((string) $d->raw_segment);
+                }
             }
 
-            foreach (($item->item_container_identifiers ?? collect()) as $ci) {
-                if (!empty($ci->raw_segment)) $out[] = $this->seg((string) $ci->raw_segment);
+            if (!$this->shouldOmitSegment('PCI')) {
+                foreach (($item->item_container_identifiers ?? collect()) as $ci) {
+                    if (!empty($ci->raw_segment)) $out[] = $this->seg((string) $ci->raw_segment);
+                }
             }
 
-            foreach (($item->item_product_identifiers ?? collect()) as $pi) {
-                if (!empty($pi->raw_segment)) $out[] = $this->seg((string) $pi->raw_segment);
+            if (!$this->shouldOmitSegment('PIA')) {
+                foreach (($item->item_product_identifiers ?? collect()) as $pi) {
+                    if (!empty($pi->raw_segment)) $out[] = $this->seg((string) $pi->raw_segment);
+                }
             }
 
-            foreach (($item->item_unit_identifiers ?? collect()) as $ui) {
-                if (!empty($ui->raw_segment)) $out[] = $this->seg((string) $ui->raw_segment);
+            if (!$this->shouldOmitSegment('GIN')) {
+                foreach (($item->item_unit_identifiers ?? collect()) as $ui) {
+                    if (!empty($ui->raw_segment)) $out[] = $this->seg((string) $ui->raw_segment);
+                }
             }
         }
 

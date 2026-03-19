@@ -59,6 +59,8 @@ class EdifactParser
 
         // Track PO numbers to build edifact_files.purchase_order
         $poNumbers = [];
+        $srnValues = [];
+        $srnRawSegments = [];
 
         foreach ($segments as $seg) {
             $parts = explode('+', $seg);
@@ -236,6 +238,8 @@ class EdifactParser
                                 'raw_segment'             => $cni['raw_segment'],
                                 'purchase_order_secuence' => $cni['sequence'] !== null ? (int)$cni['sequence'] : null,
                                 'purchase_order_number'   => $cni['consignment_reference_number'],
+                                'has_cni_segment'         => true,
+                                'srn_reference'           => null,
 
                                 'items'            => [],
                                 'references'       => [],
@@ -274,6 +278,8 @@ class EdifactParser
                                     'raw_segment'             => null,
                                     'purchase_order_secuence' => null,
                                     'purchase_order_number'   => null,
+                                    'has_cni_segment'         => false,
+                                    'srn_reference'           => null,
                                     'items'            => [],
                                     'references'       => [],
                                     'contacts'         => [],
@@ -322,6 +328,12 @@ class EdifactParser
                                 'order_reference_value' => $rff['value'],
                                 'reference_type_code'   => $rff['qualifier'],
                             ];
+
+                            if (($rff['qualifier'] ?? null) === 'SRN') {
+                                $srnValue = $rff['value'];
+                                $purchaseOrders[$currentPOIndex]['srn_reference'] = $srnValue;
+                                $srnValues[] = $srnValue;
+                            }
                             break;
                         }
 
@@ -599,10 +611,17 @@ class EdifactParser
             $file['purchase_order'] = implode(' ', array_values(array_unique($poNumbers)));
         }
 
+        $srnValidation = self::validateServiceIdentifierFromPurchaseOrders($purchaseOrders);
+
         return [
             'file' => $file,
 
             'service' => $service,
+            'service_identifier' => $srnValidation['service_identifier'],
+            'service_identifier_raw_segment' => $srnValidation['service_identifier_raw_segment'],
+            'service_identifier_source' => $srnValidation['source'],
+            'validation_errors' => $srnValidation['errors'],
+            'validation_context' => $srnValidation['context'],
             'message_dates' => $messageDates,
 
             'service_dates' => $serviceDates,
@@ -615,6 +634,109 @@ class EdifactParser
             'transport_details' => $transportDetails,
 
             'purchase_orders' => $purchaseOrders,
+            'srn_values' => $srnValidation['srn_values'],
+        ];
+    }
+
+    private static function validateServiceIdentifierFromPurchaseOrders(array $purchaseOrders): array
+    {
+        $errors = [];
+        $srnValues = [];
+        $cniCount = 0;
+
+        foreach ($purchaseOrders as $index => $po) {
+            if (($po['has_cni_segment'] ?? false) !== true) {
+                continue;
+            }
+
+            $cniCount++;
+            $references = $po['references'] ?? [];
+            $srnRefs = [];
+
+            foreach ($references as $reference) {
+                if (($reference['reference_type_code'] ?? null) !== 'SRN') {
+                    continue;
+                }
+
+                $value = $reference['order_reference_value'] ?? null;
+                $value = is_string($value) ? trim($value) : $value;
+                $srnRefs[] = $value;
+                $srnRawSegments[] = $reference['raw_segment'] ?? null;
+            }
+
+            if (count($srnRefs) === 0) {
+                $errors[] = [
+                    'code' => 'SRN_MISSING_IN_CNI',
+                    'message' => 'No se encontro RFF+SRN en uno de los bloques CNI.',
+                    'cni_index' => $index + 1,
+                    'cni_sequence' => $po['purchase_order_secuence'] ?? null,
+                    'purchase_order_number' => $po['purchase_order_number'] ?? null,
+                ];
+                continue;
+            }
+
+            if (count($srnRefs) > 1) {
+                $errors[] = [
+                    'code' => 'SRN_MULTIPLE_IN_CNI',
+                    'message' => 'Se encontro mas de un RFF+SRN dentro del mismo bloque CNI.',
+                    'cni_index' => $index + 1,
+                    'cni_sequence' => $po['purchase_order_secuence'] ?? null,
+                    'purchase_order_number' => $po['purchase_order_number'] ?? null,
+                    'values' => $srnRefs,
+                ];
+                continue;
+            }
+
+            $srn = $srnRefs[0];
+
+            if ($srn === null || $srn === '') {
+                $errors[] = [
+                    'code' => 'SRN_EMPTY_IN_CNI',
+                    'message' => 'El valor de RFF+SRN esta vacio en uno de los bloques CNI.',
+                    'cni_index' => $index + 1,
+                    'cni_sequence' => $po['purchase_order_secuence'] ?? null,
+                    'purchase_order_number' => $po['purchase_order_number'] ?? null,
+                ];
+                continue;
+            }
+
+            $srnValues[] = $srn;
+        }
+
+        if ($cniCount > 0 && count($srnValues) !== $cniCount) {
+            $errors[] = [
+                'code' => 'SRN_COUNT_MISMATCH',
+                'message' => 'La cantidad de RFF+SRN validos no coincide con la cantidad de bloques CNI.',
+                'cni_count' => $cniCount,
+                'srn_count' => count($srnValues),
+            ];
+        }
+
+        $unique = array_values(array_unique($srnValues));
+        $uniqueRaw = array_values(array_unique(array_filter($srnRawSegments, fn($v) => $v !== null && $v !== '')));
+        if (count($unique) > 1) {
+            $errors[] = [
+                'code' => 'SRN_VALUES_MISMATCH',
+                'message' => 'Los valores RFF+SRN no coinciden entre los diferentes bloques CNI.',
+                'values' => $unique,
+            ];
+        }
+
+        return [
+            'service_identifier' => count($errors) === 0 && count($unique) === 1 ? $unique[0] : null,
+            'source' => count($errors) === 0 && count($unique) === 1 ? 'RFF+SRN' : null,
+            'srn_values' => $srnValues,
+            'srn_raw_segments' => $srnRawSegments,
+            'service_identifier_raw_segment' => count($errors) === 0 && count($unique) === 1
+                ? ($uniqueRaw[0] ?? null)
+                : null,
+            'errors' => $errors,
+            'context' => [
+                'cni_count' => $cniCount,
+                'srn_values' => $srnValues,
+                'unique_srn_values' => $unique,
+                'unique_srn_raw_segments' => $uniqueRaw,
+            ],
         ];
     }
 
@@ -750,6 +872,7 @@ class EdifactParser
         $e = explode(':', $parts[1]);
         $qual = $e[0] ?? null;
         $val = $e[1] ?? null;
+        $val2 = $e[2] ?? null;
 
         if (!$qual) return null;
 
@@ -757,6 +880,7 @@ class EdifactParser
             'raw_segment' => $raw,
             'qualifier' => $qual,
             'value' => $val,
+            'value_2' => $val2,
         ];
     }
 

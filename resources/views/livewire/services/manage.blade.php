@@ -53,18 +53,11 @@ new #[Layout('layouts.app')] class extends Component {
                         'direction' => EdifactFile::DIRECTION_OUT,
                         'status' => EdifactFile::STATUS_PENDING,
                         'file_name' => $fileName,
-                        'purchase_order' => $service->purchase_orders()
-                            ->whereIn('id', $dirtyPurchaseOrderIds)
-                            ->pluck('purchase_order_number')
-                            ->filter()
-                            ->join(' '),
+                        'purchase_order' => $service->purchase_orders()->whereIn('id', $dirtyPurchaseOrderIds)->pluck('purchase_order_number')->filter()->join(' '),
                         'service_id' => $service->id,
                     ]);
 
-                    UploadEdifactToSftpJob::dispatchSync(
-                        edifactFileId: (int) $edifactFile->id,
-                        payload: $payload
-                    );
+                    UploadEdifactToSftpJob::dispatchSync(edifactFileId: (int) $edifactFile->id, payload: $payload);
 
                     Log::info('IFTSTA generado y job de envio despachado', [
                         'service_id' => $service->id,
@@ -111,7 +104,8 @@ new #[Layout('layouts.app')] class extends Component {
     private function buildIftstaFileName(Service $service, string $interchangeRef): string
     {
         $timestamp = now()->format('YmdHis');
-        return "ECOPETROL_TRANSTECOL_IFTSTA_{$timestamp}.edi";
+        $consecutive = $service->consecutive ?? 'NA';
+        return "ECOPETROL_TRANSTECOL_IFTSTA_{$timestamp}_{$consecutive}.edi";
     }
 
     public function back(): void
@@ -389,15 +383,18 @@ new #[Layout('layouts.app')] class extends Component {
 
 
                         <div class="mb-4">
-                            <label for="po_status_{{ $po->id }}" class="block text-sm font-medium text-gray-700 mb-1">
+                            <label for="po_status_{{ $po->id }}"
+                                class="block text-sm font-medium text-gray-700 mb-1">
                                 Estado de la Orden
                             </label>
                             <select id="po_status_{{ $po->id }}"
                                 wire:model.defer="form.purchase_order_statuses.{{ $po->id }}"
-                                class="w-full md:w-96 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+                                class="w-full md:w-96 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal"
+                                style="white-space: normal;"
                                 @disabled(!$form->canEdit)>
                                 @foreach ($statuses as $st)
-                                    <option value="{{ $st->id }}">{{ $statusLabel($st) }}</option>
+                                    <option value="{{ $st->id }}" style="white-space: normal;">
+                                        {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
                                 @endforeach
                             </select>
                             @error('form.purchase_order_statuses.' . $po->id)

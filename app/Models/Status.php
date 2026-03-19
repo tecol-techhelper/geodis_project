@@ -11,6 +11,7 @@ class Status extends Model
     use SoftDeletes;
 
     protected $fillable = [
+        'edifact_code',
         'segment_tag',
         'status_name',
         'status_description',
@@ -18,7 +19,8 @@ class Status extends Model
     ];
 
     protected $casts = [
-        'id' => 'integer'
+        'id' => 'integer',
+        'edifact_code' => 'integer'
     ];
 
     protected $hidden = [

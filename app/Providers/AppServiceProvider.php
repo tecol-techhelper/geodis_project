@@ -5,8 +5,10 @@ namespace App\Providers;
 use App\Core\InternalControllers\AuditController;
 use Illuminate\Auth\SessionGuard;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\ServiceProvider;
 
@@ -25,6 +27,20 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        $slowThresholdMs = (int) env('SLOW_QUERY_MS', 200);
+        DB::listen(function ($query) use ($slowThresholdMs): void {
+            if ($query->time < $slowThresholdMs) {
+                return;
+            }
+
+            Log::warning('Slow query detected', [
+                'time_ms' => $query->time,
+                'sql' => $query->sql,
+                'bindings' => $query->bindings,
+                'connection' => $query->connectionName,
+            ]);
+        });
+
         Auth::resolved(function ($auth): void {
             $guard = $auth->guard();
             if ($guard instanceof SessionGuard) {

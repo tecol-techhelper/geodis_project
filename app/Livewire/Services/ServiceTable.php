@@ -151,7 +151,7 @@ final class ServiceTable extends PowerGridComponent
                 $net   = $this->fmtMeasure($row->weight_net_value,   $row->weight_net_unit,   'Neto', true);
 
                 $parts = array_values(array_filter([$gross, $net], fn($v) => $v !== null));
-                return !empty($parts) ? implode(' | ', $parts) : '-';
+                return !empty($parts) ? implode(' | ', $parts) : '';
             })
 
             ->add('volume', function ($row) {
@@ -159,10 +159,10 @@ final class ServiceTable extends PowerGridComponent
                 $net   = $this->fmtMeasure($row->volume_net_value,   $row->volume_net_unit,   'Neto', true);
 
                 $parts = array_values(array_filter([$gross, $net], fn($v) => $v !== null));
-                return !empty($parts) ? implode(' | ', $parts) : '-';
+                return !empty($parts) ? implode(' | ', $parts) : '';
             })
 
-            ->add('pieces', fn($row) => $row->pieces_value !== null ? (string)$row->pieces_value : '-')
+            ->add('pieces', fn($row) => $row->pieces_value !== null ? (string)$row->pieces_value : '')
 
             ->add('origin_full', fn($row) => $this->fmtParty(
                 $row->origin_party_name,
@@ -256,7 +256,7 @@ final class ServiceTable extends PowerGridComponent
 
     private function fmtDate($date): string
     {
-        if ($date === null || trim((string)$date) === '') return '-';
+        if ($date === null || trim((string)$date) === '') return '';
         return substr((string)$date, 0, 10);
     }
 
@@ -266,7 +266,7 @@ final class ServiceTable extends PowerGridComponent
         $hasValue = $value !== null;
 
         if (!$hasUnit && !$hasValue) {
-            return $nullable ? null : '-';
+            return $nullable ? null : '';
         }
 
         $u = $hasUnit ? trim((string)$unit) : 'UNK';
@@ -279,10 +279,10 @@ final class ServiceTable extends PowerGridComponent
     {
         $parts = [];
 
-        $name   = trim((string)($name ?? ''));
-        $street = trim((string)($street ?? ''));
-        $city   = trim((string)($city ?? ''));
-        $region = trim((string)($region ?? ''));
+        $name   = $this->cleanValue($name);
+        $street = $this->cleanValue($street);
+        $city   = $this->cleanValue($city);
+        $region = $this->cleanValue($region);
 
         if ($name !== '') $parts[] = $name;
         if ($street !== '') $parts[] = $street;
@@ -290,6 +290,17 @@ final class ServiceTable extends PowerGridComponent
         $loc = trim(implode(', ', array_values(array_filter([$city, $region], fn($v) => $v !== ''))));
         if ($loc !== '') $parts[] = $loc;
 
-        return !empty($parts) ? implode(' - ', $parts) : '-';
+        return !empty($parts) ? implode(' - ', $parts) : '';
+    }
+
+    private function cleanValue($value): string
+    {
+        $v = trim((string)($value ?? ''));
+        if ($v === '') return '';
+        $upper = strtoupper($v);
+        if (in_array($upper, ['UNKNOWN', 'UNKNOW', 'N/A', 'NA', 'NULL'], true)) {
+            return '';
+        }
+        return $v;
     }
 }

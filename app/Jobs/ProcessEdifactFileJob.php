@@ -50,10 +50,49 @@ class ProcessEdifactFileJob implements ShouldQueue
             return;
         }
 
-        // Consecutivo lógico del servicio (BGM document_number)
-        $serviceConsecutive = $service['document_number'] ?? null;
+        // Consecutivo logico del servicio: ahora viene de RFF+SRN repetido por cada CNI.
+        $serviceConsecutive = $parsed['service_identifier'] ?? null;
+        $serviceRawSegment = $parsed['service_identifier_raw_segment'] ?? null;
+        $validationErrors = $parsed['validation_errors'] ?? [];
+        $validationContext = $parsed['validation_context'] ?? [];
+
+        if (!empty($validationErrors)) {
+            $errorMessage = 'Validacion SRN fallida | ' . json_encode([
+                'errors' => $validationErrors,
+                'context' => $validationContext,
+            ], JSON_UNESCAPED_UNICODE);
+
+            $fallbackReference = null;
+
+            $this->recordEdiFailure(
+                $file,
+                $fallbackReference,
+                'SRN_VALIDATION_FAILED',
+                $errorMessage,
+                'RFF',
+                $content,
+                $service
+            );
+
+            Log::error("IFCSUM SRN validation failed: {$errorMessage} ({$this->fileName})");
+            return;
+        }
+
         if ($serviceConsecutive === null || trim((string)$serviceConsecutive) === '') {
-            Log::error("Archivo sin BGM/document_number (consecutive) válido: {$this->fileName}");
+            $fallbackReference = null;
+
+            $errorMessage = 'No fue posible resolver el service_id desde RFF+SRN.';
+            $this->recordEdiFailure(
+                $file,
+                $fallbackReference,
+                'SERVICE_IDENTIFIER_NOT_FOUND',
+                $errorMessage,
+                'RFF',
+                $content,
+                $service
+            );
+
+            Log::error("Archivo sin RFF+SRN valido para resolver service_id: {$this->fileName}");
             return;
         }
 
@@ -69,7 +108,7 @@ class ProcessEdifactFileJob implements ShouldQueue
         }
 
         try {
-            DB::transaction(function () use ($parsed, $file, $service, $serviceConsecutive) {
+            DB::transaction(function () use ($parsed, $file, $service, $serviceConsecutive, $serviceRawSegment) {
 
                 // ==========================================
                 // 5) SERVICE: crear solo si NO existe.
@@ -90,8 +129,8 @@ class ProcessEdifactFileJob implements ShouldQueue
                     ]);
                 } else {
                     $serviceId = DB::table('services')->insertGetId([
-                        'segment_tag' => $service['segment_tag'] ?? 'BGM',
-                        'raw_segment' => $service['raw_segment'],
+                        'segment_tag' => 'RFF+SRN',
+                        'raw_segment' => $serviceRawSegment ?? ('RFF+SRN:' . $serviceConsecutive . "'"),
 
                         // regla: en services solo guardas el consecutivo
                         'item'        => null,
@@ -902,6 +941,34 @@ class ProcessEdifactFileJob implements ShouldQueue
             'identifier_type_description' => "AUTO generado",
             'created_at'                  => now(),
             'updated_at'                  => now(),
+        ]);
+    }
+
+
+    private function recordEdiFailure(
+        array $file,
+        ?string $serviceConsecutive,
+        string $errorType,
+        string $errorMessage,
+        ?string $segmentError,
+        string $rawContent,
+        ?array $service
+    ): void {
+        DB::table('edi_failed_files')->insert([
+            'file_name'         => $this->fileName,
+            'service_reference' => $serviceConsecutive,
+            'sender_id'         => $file['sender_id'] ?? null,
+            'receiver_id'       => $file['receiver_id'] ?? null,
+            'segment_error'     => $segmentError,
+            'error_type'        => $errorType,
+            'error_message'     => $errorMessage,
+            'error_line'        => null,
+            'raw_content'       => $rawContent,
+            'processed_at'      => now()->toDateString(),
+            'notes'             => null,
+            'service_id'        => null,
+            'created_at'        => now(),
+            'updated_at'        => now(),
         ]);
     }
 }
