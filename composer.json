@@ -7,14 +7,15 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
+        "firebase/php-jwt": "^7.0",
         "laravel/framework": "^11.31",
         "laravel/tinker": "^2.9",
         "league/flysystem-sftp-v3": "^3.29",
-        "livewire/livewire": "^3.4",
+        "livewire/livewire": "^3.6.4",
         "livewire/volt": "^1.7.0",
         "php-flasher/flasher-laravel": "^2.1",
         "power-components/livewire-powergrid": "^6.3",
-        "thenetworg/oauth2-azure": "^2.2"
+        "thenetworg/oauth2-azure": "^2.2.3"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
