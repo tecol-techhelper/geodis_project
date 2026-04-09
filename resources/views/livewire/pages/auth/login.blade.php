@@ -18,7 +18,7 @@ new #[Layout('layouts.guest')] class extends Component
 
         $this->form->authenticate();
 
-        $this->redirectIntended(default: route('dashboard', absolute: false), navigate: true);
+        $this->redirectIntended(default: route('services.index', absolute: false), navigate: true);
     }
 }; ?>
 

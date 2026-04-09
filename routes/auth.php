@@ -59,6 +59,9 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
 
         Volt::route('/services/servicedetail/{service?}', 'services.manage')
             ->name('service.manage');
+
+        Route::get('/edifact-files/{edifactFile}/download', \App\Http\Controllers\EdifactFileDownloadController::class)
+            ->name('edifactfiles.download');
     });
 });
 

@@ -32,8 +32,10 @@ class GenerateIftstaPayloadService
             'service_measurements',
 
             'purchase_orders',
+            'purchase_orders.status',
             'purchase_orders.order_references',
             'purchase_orders.order_references.reference_type',
+            'purchase_orders.resources',
             'purchase_orders.delivery_terms',
             'purchase_orders.purchase_order_parties',
             'purchase_orders.purchase_order_contacts',
@@ -116,13 +118,38 @@ class GenerateIftstaPayloadService
             }
 
             // 3) STS por CNI (tu nueva regla)
-            //    status_id es lo que GEODIS quiere ver (seg?n tu definici?n).
-            $statusId = $po->status_id;
-            if ($statusId !== null) {
-                $segments[] = $this->seg("STS+{$stsType}+{$statusId}");
+            //    Se reporta el edifact_code del status asociado.
+            $edifactCode = $po->status?->edifact_code;
+            if ($edifactCode !== null && $edifactCode !== '') {
+                $segments[] = $this->seg("STS+{$stsType}+{$edifactCode}");
             } else {
-                // Si no hay status, no invento uno. Solo omito STS.
-                // (Si GEODIS exige STS siempre, ma?ana lo defines).
+                // Si no hay status/edifact_code, no invento uno. Solo omito STS.
+            }
+
+
+
+            // 3.1) RFF (solo SRN del servicio) justo despues de STS
+            if (!$this->shouldOmitSegment('RFF')) {
+                foreach (($po->order_references ?? collect()) as $rff) {
+                    $refType = $rff->reference_type?->reference_type_code ?? null;
+                    if ($refType !== 'SRN') {
+                        continue;
+                    }
+                    if (!empty($rff->raw_segment)) {
+                        $segments[] = $this->seg((string) $rff->raw_segment);
+                        continue;
+                    }
+                    if (!empty($rff->order_reference_value)) {
+                        $segments[] = $this->seg('RFF+SRN:' . $rff->order_reference_value);
+                    }
+                }
+
+                // RFF+FS con el resource_id (justo despues del consecutivo)
+                $resourceId = $po->resources?->first()?->resource_id ?? null;
+                $resourceId = trim((string) $resourceId);
+                if ($resourceId !== '') {
+                    $segments[] = $this->seg('RFF+FS:' . $resourceId);
+                }
             }
 
             // 4) Resto de segmentos del PO (por raw_segment / *_segment_raw)
@@ -276,23 +303,6 @@ class GenerateIftstaPayloadService
         // TDT dentro de CNI antes de RFF
         if (!$this->shouldOmitSegment('TDT')) {
             $this->appendRawSegments($out, $service->transport_details ?? collect());
-        }
-
-        // Order references (RFF) justo antes de items (GID)
-        if (!$this->shouldOmitSegment('RFF')) {
-            foreach (($po->order_references ?? collect()) as $rff) {
-                $refType = $rff->reference_type?->reference_type_code ?? null;
-                if ($refType !== 'SRN') {
-                    continue;
-                }
-                if (!empty($rff->raw_segment)) {
-                    $out[] = $this->seg((string) $rff->raw_segment);
-                    continue;
-                }
-                if (!empty($rff->order_reference_value)) {
-                    $out[] = $this->seg('RFF+SRN:' . $rff->order_reference_value);
-                }
-            }
         }
 
         // Items + sus hijos

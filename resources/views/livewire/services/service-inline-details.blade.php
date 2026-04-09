@@ -4,29 +4,29 @@
             Seleccione una fila en `Ver Resumen` para ver información adicional.
         </div>
     @else
-        <div class="rounded-lg border border-gray-200 bg-white shadow-sm p-4 space-y-4">
+    <div class="rounded-lg border border-gray-200 bg-white shadow-sm p-3 space-y-3">
             <h3 class="text-base font-semibold text-gray-900">
                 Resumen Servicio #{{ $service->consecutive ?? $service->id }}
             </h3>
 
             <div>
-                <h4 class="text-sm font-semibold text-gray-800 mb-2">Órdenes de compra</h4>
+            <h4 class="text-sm font-semibold text-gray-800 mb-1">Órdenes de compra</h4>
                 @if ($service->purchase_orders->isEmpty())
                     <p class="text-sm text-gray-600">No hay órdenes de compra asociadas.</p>
                 @else
-                    <div class="overflow-x-auto border rounded-lg">
-                        <table class="min-w-full text-sm">
+                    <div class="overflow-x-auto border rounded-md">
+                        <table class="min-w-full text-sm table-fixed">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th class="px-3 py-2 text-left">Orden</th>
-                                    <th class="px-3 py-2 text-left">Estado</th>
-                                    <th class="px-3 py-2 text-left">Items</th>
+                                    <th class="px-3 py-2 text-left w-40">Orden</th>
+                                    <th class="px-3 py-2 text-left w-[55%]">Estado</th>
+                                    <th class="px-3 py-2 text-left w-24">Items</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-200">
                                 @foreach ($service->purchase_orders as $po)
                                     <tr>
-                                        <td class="px-3 py-2">{{ $po->purchase_order_number ?? '-' }}</td>
+                                        <td class="px-3 py-2 whitespace-nowrap">{{ $po->purchase_order_number ?? '-' }}</td>
                                         <td class="px-3 py-2">
                                             {{ $po->status?->status_name ?? $po->status?->status_be ?? 'Sin estado' }}
                                         </td>
@@ -40,7 +40,7 @@
             </div>
 
             <div>
-                <h4 class="text-sm font-semibold text-gray-800 mb-2">Contactos del servicio</h4>
+            <h4 class="text-sm font-semibold text-gray-800 mb-1">Contactos del servicio</h4>
                 @if ($service->service_contacts->isEmpty())
                     <p class="text-sm text-gray-600">No hay contactos registrados.</p>
                 @else
@@ -52,7 +52,7 @@
                             'TL' => 'Telex',
                         ];
                     @endphp
-                    <ul class="space-y-2">
+                    <ul class="space-y-1">
                         @foreach ($service->service_contacts as $contact)
                             <li class="text-sm border border-gray-200 rounded-md p-2">
                                 <div>

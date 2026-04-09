@@ -3,6 +3,8 @@
 use App\Models\Service;
 use App\Models\Status;
 use App\Models\EdifactFile;
+use App\Models\Resource;
+use App\Models\StatusPurpose;
 use App\Jobs\UploadEdifactToSftpJob;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
@@ -16,14 +18,30 @@ new #[Layout('layouts.app')] class extends Component {
 
     /** @var \Illuminate\Support\Collection<int, \App\Models\Status> */
     public $statuses;
+    /** @var \Illuminate\Support\Collection<int, \App\Models\Resource> */
+    public $resources;
+    /** @var array<string,int> */
+    public array $statusPurposeMap = [];
 
     public function mount(Service $service): void
     {
         $this->form->mount($service);
 
         $this->statuses = Status::query()
-            ->select(['id', 'status_name', 'status_be', 'status_description'])
+            ->select(['id', 'status_name', 'status_be', 'status_description', 'status_purpose_id'])
             ->orderBy('id')
+            ->get();
+
+        $this->statusPurposeMap = StatusPurpose::query()
+            ->select(['id', 'purpose_code'])
+            ->get()
+            ->mapWithKeys(fn ($p) => [strtoupper(trim((string) $p->purpose_code)) => (int) $p->id])
+            ->all();
+
+        $this->resources = Resource::query()
+            ->select(['id', 'resource_id', 'resource_name', 'resource_operation'])
+            ->orderBy('resource_operation')
+            ->orderBy('resource_name')
             ->get();
     }
 
@@ -365,11 +383,90 @@ new #[Layout('layouts.app')] class extends Component {
 
                 @foreach ($form->service->purchase_orders as $index => $po)
                     <div class="mb-6 p-4 border-2 border-indigo-200 rounded-xl bg-indigo-50/30">
-                        <h3 class="text-lg font-semibold text-gray-900 mb-3">
-                            Orden #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
-                        </h3>
+                        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-3">
+                            <h3 class="text-lg font-semibold text-gray-900">
+                                Orden #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
+                            </h3>
 
-                        {{-- DATOS DE LA ORDEN --}}
+                            <div class="w-full lg:w-96">
+                                <label for="po_status_{{ $po->id }}"
+                                    class="block text-sm font-medium text-gray-700 mb-1">
+                                    Estado de la Orden
+                                </label>
+                                @php
+                                    $acds = $po->order_references?->filter(function ($ref) {
+                                        $code = strtoupper(trim((string) ($ref->reference_type?->reference_type_code ?? '')));
+                                        return $code === 'ACD';
+                                    });
+                                    $acdValue = strtoupper(trim((string) ($acds?->first()->order_reference_value ?? '')));
+
+                                    $logId = $statusPurposeMap['LOG'] ?? null;
+                                    $tebsId = $statusPurposeMap['TEBS'] ?? null;
+                                    $genId = $statusPurposeMap['GEN'] ?? null;
+
+                                    $purposeIds = [];
+                                    if (in_array($acdValue, ['POST-CARRIAGE', 'DOM-CONSOL'], true)) {
+                                        if ($logId) $purposeIds[] = $logId;
+                                    } elseif ($acdValue === 'ROAD') {
+                                        if ($tebsId) $purposeIds[] = $tebsId;
+                                    }
+
+                                    if ($genId) $purposeIds[] = $genId; // Asignación siempre
+
+                                    $filteredStatuses = $purposeIds
+                                        ? $statuses->filter(fn ($st) => in_array($st->status_purpose_id, $purposeIds, true))
+                                        : $statuses;
+                                @endphp
+                                <select id="po_status_{{ $po->id }}"
+                                    wire:model.defer="form.purchase_order_statuses.{{ $po->id }}"
+                                    class="w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
+                                    data-placeholder="Seleccione un estado"
+                                    style="white-space: normal;"
+                                    @disabled(!$form->canEdit)>
+                                    @foreach ($filteredStatuses as $st)
+                                        <option value="{{ $st->id }}" style="white-space: normal;">
+                                            {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
+                                    @endforeach
+                                </select>
+                                @error('form.purchase_order_statuses.' . $po->id)
+                                    <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
+                                @enderror
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <h4 class="text-md font-semibold text-gray-800 mb-2">Recurso Utilizado</h4>
+                            <label for="po_resource_{{ $po->id }}" class="sr-only">
+                                Recurso Utilizado
+                            </label>
+                            @php
+                                $resourceGroups = $resources?->groupBy('resource_operation') ?? collect();
+                            @endphp
+                            <select id="po_resource_{{ $po->id }}"
+                                wire:model.defer="form.purchase_order_resources.{{ $po->id }}"
+                                class="w-full md:w-96 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
+                                data-placeholder="Seleccione un recurso"
+                                style="white-space: normal;"
+                                @disabled(!$form->canEdit)>
+                                <option value="">Seleccione un recurso</option>
+                                @foreach ($resourceGroups as $operation => $items)
+                                    <optgroup label="{{ $operation }}">
+                                        @foreach ($items as $res)
+                                            <option value="{{ $res->id }}" style="white-space: normal;"
+                                                @selected(($form->purchase_order_resources[$po->id] ?? null) == $res->id)>
+                                                {{ $res->resource_name }}
+                                            </option>
+                                        @endforeach
+                                    </optgroup>
+                                @endforeach
+                            </select>
+                            @error('form.purchase_order_resources.' . $po->id)
+                                <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
+                            @enderror
+                        </div>
+
+                        {{-- DATOS DE LA ORDEN (oculto) --}}
+                        {{--
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
                             <div class="text-sm">
                                 <span class="font-medium text-gray-700">Número de orden:</span>
@@ -380,27 +477,10 @@ new #[Layout('layouts.app')] class extends Component {
                                 <span class="text-gray-900">{{ $po->purchase_order_secuence ?? '-' }}</span>
                             </div>
                         </div>
+                        --}}
 
 
-                        <div class="mb-4">
-                            <label for="po_status_{{ $po->id }}"
-                                class="block text-sm font-medium text-gray-700 mb-1">
-                                Estado de la Orden
-                            </label>
-                            <select id="po_status_{{ $po->id }}"
-                                wire:model.defer="form.purchase_order_statuses.{{ $po->id }}"
-                                class="w-full md:w-96 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal"
-                                style="white-space: normal;"
-                                @disabled(!$form->canEdit)>
-                                @foreach ($statuses as $st)
-                                    <option value="{{ $st->id }}" style="white-space: normal;">
-                                        {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
-                                @endforeach
-                            </select>
-                            @error('form.purchase_order_statuses.' . $po->id)
-                                <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
+                        
 
                         {{-- PO PARTIES --}}
                         @if ($po->purchase_order_parties?->isNotEmpty())
@@ -498,11 +578,33 @@ new #[Layout('layouts.app')] class extends Component {
                         @endif
 
                         {{-- PO NOTES (ESPECIFICACIONES) --}}
-                        @if ($po->purchase_order_notes?->isNotEmpty())
+                        @php
+                            $poNotes = $po->purchase_order_notes?->filter(function ($note) {
+                                $raw = trim((string) ($note->raw_segment ?? ''));
+                                $text = trim((string) ($note->note_text ?? ''));
+                                $junkRaw = "FTX+ABA+++ :;:;;:;'";
+
+                                if ($raw === $junkRaw) {
+                                    return false;
+                                }
+
+                                if ($text === '') {
+                                    return false;
+                                }
+
+                                // Si solo trae separadores (ej ":;:;;:;"), no mostrar
+                                if (preg_match('/^[\\s:;]+$/', $text)) {
+                                    return false;
+                                }
+
+                                return true;
+                            });
+                        @endphp
+                        @if ($poNotes?->isNotEmpty())
                             <div class="mt-4">
                                 <h4 class="text-md font-semibold text-gray-800 mb-2">Especificaciones de la Orden</h4>
                                 <div class="space-y-2">
-                                    @foreach ($po->purchase_order_notes as $note)
+                                    @foreach ($poNotes as $note)
                                         <div class="p-3 border border-gray-200 rounded-lg bg-white">
                                             <div class="text-sm text-gray-900">{{ $note->note_text ?? '-' }}</div>
                                         </div>
