@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PurchaseOrder extends Model
@@ -89,6 +90,13 @@ class PurchaseOrder extends Model
     public function purchase_order_contacts(): HasMany
     {
         return $this->hasMany(PurchaseOrderContact::class, 'purchase_order_id');
+    }
+
+    // N-to-N resources
+    public function resources(): BelongsToMany
+    {
+        return $this->belongsToMany(Resource::class, 'purchase_order_resource', 'purchase_order_id', 'resource_id')
+            ->withTimestamps();
     }
 
     // Relations (as son)

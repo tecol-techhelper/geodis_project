@@ -1,4 +1,4 @@
-@import './../../vendor/power-components/livewire-powergrid/dist/tailwind.css';
+@import "./../../vendor/power-components/livewire-powergrid/dist/tailwind.css";
 @import "flatpickr/dist/flatpickr.min.css";
 
 @tailwind base;
@@ -7,3 +7,129 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Tom Select: separar visualmente selección vs búsqueda */
+.ts-wrapper .ts-control {
+    background-color: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.75rem;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    position: relative;
+    padding-right: 2.25rem;
+}
+
+.ts-wrapper.focus .ts-control {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 1px #6366f1;
+}
+
+.ts-dropdown {
+    border: 1px solid #cbd5e1;
+    border-radius: 0.75rem;
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
+    overflow: hidden;
+    margin-top: 0;
+    padding: 0;
+}
+
+.ts-dropdown .dropdown-input {
+    padding: 8px 10px;
+    border-bottom: 1px solid #e2e8f0;
+    background-color: #f1f5f9;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ts-dropdown .dropdown-input input {
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.5rem;
+    padding: 6px 8px;
+    background-color: #ffffff;
+    box-sizing: border-box;
+}
+
+/* Icono de lupa en el buscador del dropdown */
+.ts-dropdown .dropdown-input::before {
+    content: '';
+    width: 16px;
+    height: 16px;
+    display: inline-block;
+    background-color: #64748b;
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+    mask-size: contain;
+    -webkit-mask-size: contain;
+    mask-repeat: no-repeat;
+    -webkit-mask-repeat: no-repeat;
+    flex: 0 0 auto;
+}
+
+/* Alinear borde inferior del dropdown con el control */
+.ts-wrapper .ts-dropdown {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+    top: calc(100% + 0.1px) !important;
+    margin-top: 0 !important;
+}
+
+.ts-wrapper .ts-control {
+    margin-bottom: 0;
+}
+
+.ts-dropdown .ts-dropdown-content {
+    margin: 0;
+    padding: 0;
+}
+
+.ts-dropdown .optgroup-header {
+    font-weight: 700;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #0f172a;
+    background-color: #e2e8f0;
+    padding: 6px 10px;
+    border-top: 1px solid #cbd5e1;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+.ts-dropdown .optgroup:first-child .optgroup-header {
+    border-top: 0;
+}
+
+.ts-wrapper.focus .ts-dropdown {
+    border-color: #6366f1;
+}
+
+/* Cuando el dropdown está abierto, quitar redondeo inferior del control */
+.ts-wrapper.dropdown-active .ts-control {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+/* Flecha dropdown */
+.ts-wrapper .ts-control::after {
+    content: '';
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-right: 2px solid #64748b;
+    border-bottom: 2px solid #64748b;
+    transform: translateY(-60%) rotate(45deg);
+    transition: transform 0.15s ease, border-color 0.15s ease;
+    pointer-events: none;
+}
+
+.ts-wrapper.dropdown-active .ts-control::after {
+    transform: translateY(-40%) rotate(-135deg);
+    border-color: #4f46e5;
+}

@@ -12,6 +12,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 class ProcessEdifactFileJob implements ShouldQueue
 {
@@ -35,6 +36,18 @@ class ProcessEdifactFileJob implements ShouldQueue
 
         // 1) Parse único
         $parsed = EdifactParser::parseForDatabase($content, $this->fileName);
+
+        // 1.1) Guardar JSON parseado para auditoría (private/edifact/inbox/IFCSUM/parsed_edi)
+        try {
+            $disk = Storage::disk('local'); // root: storage/app/private
+            $parsedDir = 'edifact/inbox/IFCSUM/parsed_edi';
+            $disk->makeDirectory($parsedDir);
+
+            $jsonName = pathinfo($this->fileName, PATHINFO_FILENAME) . '.json';
+            $disk->put($parsedDir . '/' . $jsonName, json_encode($parsed, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        } catch (\Throwable $e) {
+            Log::warning("No se pudo guardar JSON parseado ({$this->fileName}): {$e->getMessage()}");
+        }
 
         // 2) Validaciones mínimas (fatales)
         $file = $parsed['file'] ?? [];
@@ -328,21 +341,47 @@ class ProcessEdifactFileJob implements ShouldQueue
 
                     $allPONumbers[] = $poNumber;
 
-                    $purchaseOrderId = DB::table('purchase_orders')->insertGetId([
-                        'segment_tag'             => $po['segment_tag'] ?? 'CNI',
-                        'raw_segment'             => $po['raw_segment'] ?? null,
-                        'purchase_order_secuence' => $po['purchase_order_secuence'] ?? null,
-                        'purchase_order_number'   => $poNumber,
-                        'service_id'              => $serviceId,
-                        'status_id'               => $this->defaultStatusId(),
-                        'created_at'              => now(),
-                        'updated_at'              => now(),
-                    ]);
+                    $existingPurchaseOrder = DB::table('purchase_orders')
+                        ->where('service_id', $serviceId)
+                        ->where('purchase_order_number', $poNumber)
+                        ->first();
+
+                    if ($existingPurchaseOrder) {
+                        $purchaseOrderId = (int) $existingPurchaseOrder->id;
+
+                        DB::table('purchase_orders')
+                            ->where('id', $purchaseOrderId)
+                            ->update([
+                                'segment_tag'             => $po['segment_tag'] ?? 'CNI',
+                                'raw_segment'             => $po['raw_segment'] ?? null,
+                                'purchase_order_secuence' => $po['purchase_order_secuence'] ?? null,
+                                'updated_at'              => now(),
+                            ]);
+
+                        // Si ya existía, limpiamos hijos para reinsertar según el IFCSUM actual
+                        $this->clearPurchaseOrderChildren($purchaseOrderId);
+                    } else {
+                        $purchaseOrderId = DB::table('purchase_orders')->insertGetId([
+                            'segment_tag'             => $po['segment_tag'] ?? 'CNI',
+                            'raw_segment'             => $po['raw_segment'] ?? null,
+                            'purchase_order_secuence' => $po['purchase_order_secuence'] ?? null,
+                            'purchase_order_number'   => $poNumber,
+                            'service_id'              => $serviceId,
+                            'status_id'               => $this->assignmentStatusId(),
+                            'created_at'              => now(),
+                            'updated_at'              => now(),
+                        ]);
+                    }
 
                     // Notificación: NO debe tumbar el job
                     try {
+                        $serviceLabel = $serviceConsecutive ?? $serviceId ?? '';
+                        $notificationTitle = trim($serviceLabel) !== ''
+                            ? "Notificación de Servicio # {$serviceLabel}"
+                            : 'Notificación de Servicio';
+
                         Notification::create([
-                            'title'          => 'Notificación de servicio',
+                            'title'          => $notificationTitle,
                             'message'        => "Se procesó la orden {$poNumber} desde {$this->fileName}.",
                             'purchase_order' => $poNumber,
                             'service_id'     => $serviceId,
@@ -639,6 +678,22 @@ class ProcessEdifactFileJob implements ShouldQueue
 
         return (int) $statusId;
     }
+
+    private function assignmentStatusId(): int
+    {
+        $statusId = DB::table('statuses')
+            ->where('status_be', 'ASIG')
+            ->where('edifact_code', 0)
+            ->orderBy('id')
+            ->value('id');
+
+        if ($statusId === null) {
+            return $this->defaultStatusId();
+        }
+
+        return (int) $statusId;
+    }
+
 
     // ==========================
     // Lookups (code -> id)
@@ -942,6 +997,44 @@ class ProcessEdifactFileJob implements ShouldQueue
             'created_at'                  => now(),
             'updated_at'                  => now(),
         ]);
+    }
+
+    private function clearPurchaseOrderChildren(int $purchaseOrderId): void
+    {
+        // Items y sus hijos
+        $itemIds = DB::table('purchase_order_items')
+            ->where('purchase_order_id', $purchaseOrderId)
+            ->pluck('id')
+            ->all();
+
+        if (!empty($itemIds)) {
+            DB::table('item_product_identifiers')->whereIn('purchase_order_item_id', $itemIds)->delete();
+            DB::table('item_container_identifiers')->whereIn('purchase_order_item_id', $itemIds)->delete();
+            DB::table('item_unit_identifiers')->whereIn('purchase_order_item_id', $itemIds)->delete();
+            DB::table('item_measures')->whereIn('purchase_order_item_id', $itemIds)->delete();
+            DB::table('item_dimensions')->whereIn('purchase_order_item_id', $itemIds)->delete();
+            DB::table('item_notes')->whereIn('purchase_order_item_id', $itemIds)->delete();
+            DB::table('purchase_order_items')->whereIn('id', $itemIds)->delete();
+        }
+
+        // Contactos y detalles
+        $contactIds = DB::table('purchase_order_contacts')
+            ->where('purchase_order_id', $purchaseOrderId)
+            ->pluck('id')
+            ->all();
+        if (!empty($contactIds)) {
+            DB::table('purchase_order_contact_details')->whereIn('purchase_order_contact_id', $contactIds)->delete();
+            DB::table('purchase_order_contacts')->whereIn('id', $contactIds)->delete();
+        }
+
+        // Resto de tablas hijas por purchase_order_id
+        DB::table('order_references')->where('purchase_order_id', $purchaseOrderId)->delete();
+        DB::table('purchase_order_parties')->where('purchase_order_id', $purchaseOrderId)->delete();
+        DB::table('purchase_order_notes')->where('purchase_order_id', $purchaseOrderId)->delete();
+        DB::table('purchase_order_measurements')->where('purchase_order_id', $purchaseOrderId)->delete();
+        DB::table('purchase_order_requirements')->where('purchase_order_id', $purchaseOrderId)->delete();
+        DB::table('transport_charges')->where('purchase_order_id', $purchaseOrderId)->delete();
+        DB::table('delivery_terms')->where('purchase_order_id', $purchaseOrderId)->delete();
     }
 
 

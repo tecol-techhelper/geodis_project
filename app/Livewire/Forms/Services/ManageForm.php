@@ -42,6 +42,22 @@ class ManageForm extends Form
     public array $original_purchase_order_statuses = [];
 
     /**
+     * Recurso por CNI (purchase_order)
+     * key = purchase_orders.id
+     * value = resources.id | null
+     *
+     * @var array<int, int|null>
+     */
+    public array $purchase_order_resources = [];
+
+    /**
+     * Snapshot original de recursos
+     *
+     * @var array<int, int|null>
+     */
+    public array $original_purchase_order_resources = [];
+
+    /**
      * IDs de Purchase Orders (CNI) que cambiaron en esta edición
      * (lo usas luego en el botón "Enviar" para generar IFTSTA SOLO por esos CNIs)
      *
@@ -87,6 +103,8 @@ class ManageForm extends Form
                 // Purchase Orders (CNIs)
                 'purchase_orders',
                 'purchase_orders.status',
+                'purchase_orders.resources',
+                'purchase_orders.order_references.reference_type',
 
                 // Delivery terms
                 'purchase_orders.delivery_terms.delivery_term_catalog',
@@ -149,6 +167,19 @@ class ManageForm extends Form
         $this->purchase_order_statuses = $map;
         $this->original_purchase_order_statuses = $map;
 
+        // Recurso por CNI (solo uno en UI)
+        $resMap = ($s->purchase_orders ?? collect())
+            ->mapWithKeys(function ($po) {
+                $poId = (int) $po->id;
+                $resourceId = $po->resources?->first()?->id;
+                $resourceId = $resourceId !== null ? (int) $resourceId : null;
+                return [$poId => $resourceId];
+            })
+            ->toArray();
+
+        $this->purchase_order_resources = $resMap;
+        $this->original_purchase_order_resources = $resMap;
+
         // Reset de "dirty" cuando recargas
         $this->dirty_purchase_order_ids = [];
     }
@@ -166,6 +197,9 @@ class ManageForm extends Form
             // Permite "Sin estado" (null). Si eliges un valor, debe existir en statuses.
             'purchase_order_statuses' => ['array'],
             'purchase_order_statuses.*' => ['nullable', 'integer', 'exists:statuses,id'],
+
+            'purchase_order_resources' => ['array'],
+            'purchase_order_resources.*' => ['nullable', 'integer', 'exists:resources,id'],
         ];
     }
 
@@ -226,6 +260,30 @@ class ManageForm extends Form
                         'status_id' => $newStatusId,
                         'updated_at' => now(),
                     ]);
+            }
+
+            // Detectar cambios reales de recurso por CNI
+            foreach ($this->purchase_order_resources as $purchaseOrderId => $newResourceId) {
+                $purchaseOrderId = (int) $purchaseOrderId;
+                $newResourceId = $newResourceId !== null ? (int) $newResourceId : null;
+
+                $oldResourceId = $this->original_purchase_order_resources[$purchaseOrderId] ?? null;
+                $oldResourceId = $oldResourceId !== null ? (int) $oldResourceId : null;
+
+                if ($newResourceId === $oldResourceId) {
+                    continue;
+                }
+
+                $dirtyIds[] = $purchaseOrderId;
+
+                $poModel = $s->purchase_orders?->firstWhere('id', $purchaseOrderId);
+                if ($poModel) {
+                    if ($newResourceId === null) {
+                        $poModel->resources()->detach();
+                    } else {
+                        $poModel->resources()->sync([$newResourceId]);
+                    }
+                }
             }
 
             // Guarda “dirty” para que el botón Enviar sepa qué CNIs incluir en IFTSTA
