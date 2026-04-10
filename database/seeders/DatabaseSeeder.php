@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
             UserSeeder::class,
             FileTypeSeeder::class,
             ContactTypeSeeder::class,
+            StatusPurposeSeeder::class,
             StatusSeeder::class,
             GlobalMeasureTypeSeeder::class,
             DateTypeSeeder::class,
@@ -38,7 +39,8 @@ class DatabaseSeeder extends Seeder
             ProductIdentifierRoleSeeder::class,
             ProductIdentifierTypeSeeder::class,
             DeliveryTermCatalogSeeder::class,
-            PartyTypeSeeder::class
+            PartyTypeSeeder::class,
+            ResourceSeeder::class,
         ]);
     }
 }

@@ -33,9 +33,9 @@ new #[Layout('layouts.app')] class extends Component {
             ->get();
 
         $this->statusPurposeMap = StatusPurpose::query()
-            ->select(['id', 'purpose_code'])
+            ->select(['id', 'purpose_subcode'])
             ->get()
-            ->mapWithKeys(fn ($p) => [strtoupper(trim((string) $p->purpose_code)) => (int) $p->id])
+            ->mapWithKeys(fn ($p) => [strtoupper(trim((string) $p->purpose_subcode)) => (int) $p->id])
             ->all();
 
         $this->resources = Resource::query()
@@ -131,6 +131,7 @@ new #[Layout('layouts.app')] class extends Component {
         $this->redirect(route('services.index'));
     }
 
+
     // Diccionario para unit_identifier_type
     public function getUnitIdentifierLabel($type): string
     {
@@ -161,15 +162,33 @@ new #[Layout('layouts.app')] class extends Component {
 ?>
 @section('title', 'Servicio')
 <div class="space-y-6 pb-8" x-data x-on:support-files-saved.window="setTimeout(() => window.location.reload(), 3200)">
-    <x-breadcrums :items="[
-        ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
-        ['label' => 'Servicios', 'url' => route('services.index'), 'icon' => 'package'],
-        ['label' => 'Servicio # ' . ($form->consecutive ?? 'N/A'), 'icon' => 'package-search'],
-    ]" />
+    <div wire:ignore>
+        <x-breadcrums :items="[
+            ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
+            ['label' => 'Servicios', 'url' => route('services.index'), 'icon' => 'package'],
+            ['label' => 'Servicio # ' . ($form->consecutive ?? 'N/A'), 'icon' => 'package-search'],
+        ]" />
+    </div>
 
     @php
         $statusLabel = function ($st) {
             return $st->status_name ?? ($st->status_be ?? ($st->status_description ?? 'Estado #' . $st->id));
+        };
+        $isBlank = function ($value) {
+            if ($value === null) return true;
+            $text = trim((string) $value);
+            if ($text === '') return true;
+            $upper = strtoupper($text);
+            return in_array($upper, ['-', 'UNKNOWN', 'UNKNOW', 'N/A', 'NA', 'NULL'], true);
+        };
+        $hasData = function ($obj, array $fields) use ($isBlank) {
+            foreach ($fields as $field) {
+                $value = is_callable($field) ? $field($obj) : data_get($obj, $field);
+                if (!$isBlank($value)) {
+                    return true;
+                }
+            }
+            return false;
         };
     @endphp
 
@@ -187,7 +206,55 @@ new #[Layout('layouts.app')] class extends Component {
                     </p>
                 @endif
             </div>
+            @php
+                $currentStatusId = $form->service_status_id !== null ? (int) $form->service_status_id : null;
+                $bulkPurposeIds = [];
+                foreach ($form->service?->purchase_orders ?? [] as $po) {
+                    $acds = $po->order_references?->filter(function ($ref) {
+                        $code = strtoupper(trim((string) ($ref->reference_type?->reference_type_code ?? '')));
+                        return $code === 'ACD';
+                    });
+                    $acdValue = strtoupper(trim((string) ($acds?->first()->order_reference_value ?? '')));
+                    $acdValue = str_replace([' ', '_'], '-', $acdValue);
 
+                    if ($acdValue !== '') {
+                        $subId = $statusPurposeMap[$acdValue] ?? null;
+                        if ($subId) $bulkPurposeIds[] = $subId;
+                    }
+                }
+
+                $bulkPurposeIds = array_values(array_unique($bulkPurposeIds));
+                $bulkStatuses = $bulkPurposeIds
+                    ? $statuses->filter(fn ($st) => $st->status_be === 'ASIG' || in_array($st->status_purpose_id, $bulkPurposeIds, true))
+                    : $statuses->filter(fn ($st) => $st->status_be === 'ASIG');
+
+                if ($currentStatusId !== null) {
+                    $currentStatus = $statuses->firstWhere('id', $currentStatusId);
+                    if ($currentStatus) {
+                        $bulkStatuses = $bulkStatuses->concat([$currentStatus])->unique('id');
+                    }
+                }
+            @endphp
+
+            <div class="w-full lg:w-96" wire:ignore>
+                <label for="bulk_status" class="block text-sm font-medium text-gray-700 mb-1">
+                    Estado de la Orden
+                </label>
+                <select id="bulk_status"
+                    wire:model.defer="form.service_status_id"
+                    class="w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
+                    data-placeholder=""
+                    data-current-value="{{ $form->service_status_id ?? '' }}"
+                    data-livewire-model="form.service_status_id"
+                    style="white-space: normal;"
+                    @disabled(!$form->canEdit)>
+                    @foreach ($bulkStatuses as $st)
+                        <option value="{{ $st->id }}" style="white-space: normal;"
+                            @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
+                            {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
+                    @endforeach
+                </select>
+            </div>
         </div>
 
         {{-- BOTONES DE ACCIÓN --}}
@@ -239,7 +306,18 @@ new #[Layout('layouts.app')] class extends Component {
         </div>
 
         {{-- SERVICE PARTIES --}}
-        @if ($form->service?->service_parties?->isNotEmpty())
+        @php
+            $serviceParties = $form->service?->service_parties?->filter(function ($party) use ($isBlank) {
+                // Mostrar solo si hay datos reales (no solo el cualificador)
+                return !(
+                    $isBlank($party->party_name ?? null)
+                    && $isBlank($party->party_street ?? null)
+                    && $isBlank($party->party_city ?? null)
+                    && $isBlank($party->party_region ?? null)
+                );
+            });
+        @endphp
+        @if ($serviceParties?->isNotEmpty())
             <div>
                 <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -271,7 +349,7 @@ new #[Layout('layouts.app')] class extends Component {
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            @foreach ($form->service->service_parties as $party)
+                            @foreach ($serviceParties as $party)
                                 <tr class="hover:bg-gray-50 transition-colors">
                                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                                         {{ $party->party_type ? $form->catalogLabel($party->party_type) : '-' }}
@@ -289,7 +367,21 @@ new #[Layout('layouts.app')] class extends Component {
         @endif
 
         {{-- SERVICE CONTACTS --}}
-        @if ($form->service?->service_contacts?->isNotEmpty())
+        @php
+            $serviceContacts = $form->service?->service_contacts?->filter(function ($contact) use ($isBlank) {
+                $details = $contact->service_contact_details?->filter(function ($detail) use ($isBlank) {
+                    return !(
+                        $isBlank($detail->channel_contact ?? null)
+                        && $isBlank($detail->contact_information ?? null)
+                    );
+                });
+                return !(
+                    $isBlank($contact->contact_name ?? null)
+                    && ($details?->isEmpty() ?? true)
+                );
+            });
+        @endphp
+        @if ($serviceContacts?->isNotEmpty())
             <div>
                 <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -315,16 +407,24 @@ new #[Layout('layouts.app')] class extends Component {
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            @foreach ($form->service->service_contacts as $contact)
+                            @foreach ($serviceContacts as $contact)
                                 <tr class="hover:bg-gray-50 transition-colors">
                                     <td class="px-4 py-3 whitespace-nowrap text-sm">
                                         {{ $contact->contact_type ? $form->catalogLabel($contact->contact_type) : '-' }}
                                     </td>
                                     <td class="px-4 py-3 text-sm">{{ $contact->contact_name ?? '-' }}</td>
                                     <td class="px-4 py-3 text-sm">
-                                        @if ($contact->service_contact_details?->isNotEmpty())
+                                        @php
+                                            $contactDetails = $contact->service_contact_details?->filter(function ($detail) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($detail->channel_contact ?? null)
+                                                    && $isBlank($detail->contact_information ?? null)
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($contactDetails?->isNotEmpty())
                                             <div class="space-y-1">
-                                                @foreach ($contact->service_contact_details as $detail)
+                                                @foreach ($contactDetails as $detail)
                                                     <div class="text-xs">
                                                         <span
                                                             class="font-medium">{{ $this->getContactChannelLabel($detail->channel_contact) }}:</span>
@@ -345,7 +445,10 @@ new #[Layout('layouts.app')] class extends Component {
         @endif
 
         {{-- SERVICE DATES --}}
-        @if ($form->service?->service_dates?->isNotEmpty())
+        @php
+            $serviceDates = $form->service?->service_dates?->filter(fn ($date) => !$isBlank($date->service_date ?? null));
+        @endphp
+        @if ($serviceDates?->isNotEmpty())
             <div>
                 <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -356,7 +459,7 @@ new #[Layout('layouts.app')] class extends Component {
                 </h2>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    @foreach ($form->service->service_dates as $date)
+                    @foreach ($serviceDates as $date)
                         <div class="p-4 border border-gray-200 rounded-lg bg-gray-50">
                             <div class="text-sm font-medium text-gray-700 mb-1">
                                 {{ $date->date_type ? $form->catalogLabel($date->date_type) : 'Fecha' }}
@@ -388,49 +491,9 @@ new #[Layout('layouts.app')] class extends Component {
                                 Orden #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
                             </h3>
 
-                            <div class="w-full lg:w-96">
-                                <label for="po_status_{{ $po->id }}"
-                                    class="block text-sm font-medium text-gray-700 mb-1">
-                                    Estado de la Orden
-                                </label>
-                                @php
-                                    $acds = $po->order_references?->filter(function ($ref) {
-                                        $code = strtoupper(trim((string) ($ref->reference_type?->reference_type_code ?? '')));
-                                        return $code === 'ACD';
-                                    });
-                                    $acdValue = strtoupper(trim((string) ($acds?->first()->order_reference_value ?? '')));
-
-                                    $logId = $statusPurposeMap['LOG'] ?? null;
-                                    $tebsId = $statusPurposeMap['TEBS'] ?? null;
-                                    $genId = $statusPurposeMap['GEN'] ?? null;
-
-                                    $purposeIds = [];
-                                    if (in_array($acdValue, ['POST-CARRIAGE', 'DOM-CONSOL'], true)) {
-                                        if ($logId) $purposeIds[] = $logId;
-                                    } elseif ($acdValue === 'ROAD') {
-                                        if ($tebsId) $purposeIds[] = $tebsId;
-                                    }
-
-                                    if ($genId) $purposeIds[] = $genId; // Asignación siempre
-
-                                    $filteredStatuses = $purposeIds
-                                        ? $statuses->filter(fn ($st) => in_array($st->status_purpose_id, $purposeIds, true))
-                                        : $statuses;
-                                @endphp
-                                <select id="po_status_{{ $po->id }}"
-                                    wire:model.defer="form.purchase_order_statuses.{{ $po->id }}"
-                                    class="w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
-                                    data-placeholder="Seleccione un estado"
-                                    style="white-space: normal;"
-                                    @disabled(!$form->canEdit)>
-                                    @foreach ($filteredStatuses as $st)
-                                        <option value="{{ $st->id }}" style="white-space: normal;">
-                                            {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
-                                    @endforeach
-                                </select>
-                                @error('form.purchase_order_statuses.' . $po->id)
-                                    <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
-                                @enderror
+                            <div class="text-sm text-gray-700">
+                                <span class="font-medium">Estado:</span>
+                                {{ $form->service?->status ? $statusLabel($form->service->status) . ' - ' . ($form->service->status->status_description ?? '') : '-' }}
                             </div>
                         </div>
 
@@ -483,7 +546,18 @@ new #[Layout('layouts.app')] class extends Component {
                         
 
                         {{-- PO PARTIES --}}
-                        @if ($po->purchase_order_parties?->isNotEmpty())
+                        @php
+                            $poParties = $po->purchase_order_parties?->filter(function ($party) use ($isBlank) {
+                                // Mostrar solo si hay datos reales (no solo el cualificador)
+                                return !(
+                                    $isBlank($party->party_name ?? null)
+                                    && $isBlank($party->party_street ?? null)
+                                    && $isBlank($party->party_city ?? null)
+                                    && $isBlank($party->party_region ?? null)
+                                );
+                            });
+                        @endphp
+                        @if ($poParties?->isNotEmpty())
                             <div class="mt-4">
                                 <h4 class="text-md font-semibold text-gray-800 mb-2">Partes de la Orden</h4>
                                 <div class="overflow-x-auto border rounded-lg shadow-sm">
@@ -508,7 +582,7 @@ new #[Layout('layouts.app')] class extends Component {
                                             </tr>
                                         </thead>
                                         <tbody class="bg-white divide-y divide-gray-200">
-                                            @foreach ($po->purchase_order_parties as $party)
+                                            @foreach ($poParties as $party)
                                                 <tr class="hover:bg-gray-50 transition-colors">
                                                     <td class="px-3 py-2 text-sm">
                                                         {{ $party->party_type?->party_type_name ?? '-' }}
@@ -528,7 +602,21 @@ new #[Layout('layouts.app')] class extends Component {
                         @endif
 
                         {{-- PO CONTACTS --}}
-                        @if ($po->purchase_order_contacts?->isNotEmpty())
+                        @php
+                            $poContacts = $po->purchase_order_contacts?->filter(function ($contact) use ($isBlank) {
+                                $details = $contact->purchase_order_contact_details?->filter(function ($detail) use ($isBlank) {
+                                    return !(
+                                        $isBlank($detail->channel_contact ?? null)
+                                        && $isBlank($detail->contact_information ?? null)
+                                    );
+                                });
+                                return !(
+                                    $isBlank($contact->contact_name ?? null)
+                                    && ($details?->isEmpty() ?? true)
+                                );
+                            });
+                        @endphp
+                        @if ($poContacts?->isNotEmpty())
                             <div class="mt-4">
                                 <h4 class="text-md font-semibold text-gray-800 mb-2">Contactos de la Orden</h4>
                                 <div class="overflow-x-auto border rounded-lg shadow-sm">
@@ -547,7 +635,7 @@ new #[Layout('layouts.app')] class extends Component {
                                             </tr>
                                         </thead>
                                         <tbody class="bg-white divide-y divide-gray-200">
-                                            @foreach ($po->purchase_order_contacts as $contact)
+                                            @foreach ($poContacts as $contact)
                                                 <tr class="hover:bg-gray-50 transition-colors">
                                                     <td class="px-3 py-2 text-sm">
                                                         {{ $contact->contact_type ? $form->catalogLabel($contact->contact_type) : '-' }}
@@ -555,9 +643,17 @@ new #[Layout('layouts.app')] class extends Component {
                                                     <td class="px-3 py-2 text-sm">{{ $contact->contact_name ?? '-' }}
                                                     </td>
                                                     <td class="px-3 py-2 text-sm">
-                                                        @if ($contact->purchase_order_contact_details?->isNotEmpty())
+                                                        @php
+                                                            $poContactDetails = $contact->purchase_order_contact_details?->filter(function ($detail) use ($isBlank) {
+                                                                return !(
+                                                                    $isBlank($detail->channel_contact ?? null)
+                                                                    && $isBlank($detail->contact_information ?? null)
+                                                                );
+                                                            });
+                                                        @endphp
+                                                        @if ($poContactDetails?->isNotEmpty())
                                                             <div class="space-y-1">
-                                                                @foreach ($contact->purchase_order_contact_details as $detail)
+                                                                @foreach ($poContactDetails as $detail)
                                                                     <div class="text-xs">
                                                                         <span
                                                                             class="font-medium">{{ $this->getContactChannelLabel($detail->channel_contact) }}:</span>
@@ -614,7 +710,15 @@ new #[Layout('layouts.app')] class extends Component {
                         @endif
 
                         {{-- PO MEASUREMENTS --}}
-                        @if ($po->purchase_order_measurements?->isNotEmpty())
+                        @php
+                            $poMeasurements = $po->purchase_order_measurements?->filter(function ($measurement) use ($isBlank) {
+                                return !(
+                                    $isBlank($measurement->measure_value ?? ($measurement->measurement_value ?? null))
+                                    && $isBlank($measurement->measure_unit ?? ($measurement->measurement_unit ?? null))
+                                );
+                            });
+                        @endphp
+                        @if ($poMeasurements?->isNotEmpty())
                             <div class="mt-4">
                                 <h4 class="text-md font-semibold text-gray-800 mb-2">Mediciones de la Orden</h4>
                                 <div class="overflow-x-auto border rounded-lg shadow-sm">
@@ -630,7 +734,7 @@ new #[Layout('layouts.app')] class extends Component {
                                             </tr>
                                         </thead>
                                         <tbody class="bg-white divide-y divide-gray-200">
-                                            @foreach ($po->purchase_order_measurements as $measurement)
+                                            @foreach ($poMeasurements as $measurement)
                                                 <tr class="hover:bg-gray-50 transition-colors">
                                                     <td class="px-3 py-2 text-sm">
                                                         {{ $measurement->global_measure_type ? $form->catalogLabel($measurement->global_measure_type) : '-' }}
@@ -648,97 +752,140 @@ new #[Layout('layouts.app')] class extends Component {
                         @endif
 
                         {{-- PO REQUIREMENTS --}}
-                        @if ($po->purchase_order_requirements?->isNotEmpty())
-                            <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Requerimientos de la Orden</h4>
-                                <div class="space-y-2">
-                                    @foreach ($po->purchase_order_requirements as $requirement)
-                                        <div class="p-3 border border-gray-200 rounded-lg bg-white">
-                                            @if ($requirement->requirement_type)
-                                                <div class="text-xs font-medium text-gray-500 mb-1">
-                                                    Tipo: {{ $requirement->requirement_type }}
-                                                </div>
-                                            @endif
-                                            <div class="text-sm text-gray-900">
-                                                {{ $requirement->requirement_value ?? '-' }}
-                                            </div>
-                                        </div>
-                                    @endforeach
-                                </div>
-                            </div>
-                        @endif
+@php
+    $poRequirements = $po->purchase_order_requirements?->filter(function ($requirement) use ($isBlank) {
+        return !(
+            $isBlank($requirement->requirement_type ?? null)
+            && $isBlank($requirement->requirement_value ?? null)
+        );
+    });
+@endphp
+@if ($poRequirements?->isNotEmpty())
+    <div class="mt-4">
+        <h4 class="text-md font-semibold text-gray-800 mb-2">Requerimientos de la Orden</h4>
+        <div class="space-y-2">
+            @foreach ($poRequirements as $requirement)
+                <div class="p-3 border border-gray-200 rounded-lg bg-white">
+                    @if ($requirement->requirement_type)
+                        <div class="text-xs font-medium text-gray-500 mb-1">
+                            Tipo: {{ $requirement->requirement_type }}
+                        </div>
+                    @endif
+                    <div class="text-sm text-gray-900">
+                        {{ $requirement->requirement_value ?? '-' }}
+                    </div>
+                </div>
+            @endforeach
+        </div>
+    </div>
+@endif
 
-                        {{-- DELIVERY TERMS --}}
-                        @if ($po->delivery_terms?->isNotEmpty())
-                            <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Términos de Entrega</h4>
-                                <div class="space-y-2">
-                                    @foreach ($po->delivery_terms as $term)
-                                        <div class="p-3 border border-gray-200 rounded-lg bg-white">
-                                            <div class="text-sm">
-                                                <span class="font-medium text-gray-700">
-                                                    {{ $term->delivery_term_catalog ? $form->catalogLabel($term->delivery_term_catalog) : 'Término' }}:
-                                                </span>
-                                                <span
-                                                    class="text-gray-900">{{ $term->delivery_location ?? '-' }}</span>
-                                            </div>
-                                        </div>
-                                    @endforeach
-                                </div>
-                            </div>
-                        @endif
+{{-- DELIVERY TERMS --}}
+@php
+    $poDeliveryTerms = $po->delivery_terms?->filter(function ($term) use ($isBlank) {
+        return !(
+            $isBlank($term->delivery_location ?? null)
+        );
+    });
+@endphp
+@if ($poDeliveryTerms?->isNotEmpty())
+    <div class="mt-4">
+        <h4 class="text-md font-semibold text-gray-800 mb-2">Términos de Entrega</h4>
+        <div class="space-y-2">
+            @foreach ($poDeliveryTerms as $term)
+                <div class="p-3 border border-gray-200 rounded-lg bg-white">
+                    <div class="text-sm">
+                        <span class="font-medium text-gray-700">
+                            {{ $term->delivery_term_catalog ? $form->catalogLabel($term->delivery_term_catalog) : 'Término' }}:
+                        </span>
+                        <span class="text-gray-900">{{ $term->delivery_location ?? '-' }}</span>
+                    </div>
+                </div>
+            @endforeach
+        </div>
+    </div>
+@endif
 
-                        {{-- TRANSPORT CHARGES --}}
-                        @if ($po->transport_charges?->isNotEmpty())
-                            <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Cargos de Transporte</h4>
-                                <div class="overflow-x-auto border rounded-lg shadow-sm">
-                                    <table class="min-w-full divide-y divide-gray-200">
-                                        <thead class="bg-gray-50">
-                                            <tr>
-                                                <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                                    Tipo de Cargo</th>
-                                                <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                                    Precio Declarado</th>
-                                                <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                                    Precio Unitario</th>
-                                                <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                                                    Base</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody class="bg-white divide-y divide-gray-200">
-                                            @foreach ($po->transport_charges as $charge)
-                                                <tr class="hover:bg-gray-50 transition-colors">
-                                                    <td class="px-3 py-2 text-sm">
-                                                        {{ $charge->price_qualifier ? $form->catalogLabel($charge->price_qualifier) : '-' }}
-                                                    </td>
-                                                    <td class="px-3 py-2 text-sm">
-                                                        {{ $charge->price_amount !== null ? number_format((float) $charge->price_amount, 2, ',', '.') : '-' }}
-                                                        {{ $charge->currency_code ? ' ' . $charge->currency_code : '' }}
-                                                    </td>
-                                                    <td class="px-3 py-2 text-sm">
-                                                        {{ $charge->unit_price_basis !== null ? number_format((float) $charge->unit_price_basis, 2, ',', '.') : '-' }}
-                                                    </td>
-                                                    <td class="px-3 py-2 text-sm">
-                                                        {{ $charge->measure_unit_code ?? '-' }}</td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        @endif
+{{-- TRANSPORT CHARGES --}}
+@php
+    $poTransportCharges = $po->transport_charges?->filter(function ($charge) use ($isBlank) {
+        return !(
+            $isBlank($charge->charge_code ?? null)
+            && $isBlank($charge->rate_class_code ?? null)
+            && $isBlank($charge->price_amount ?? null)
+            && $isBlank($charge->unit_price_basis ?? null)
+            && $isBlank($charge->measure_unit_code ?? null)
+            && $isBlank($charge->currency_code ?? null)
+        );
+    });
+@endphp
+@if ($poTransportCharges?->isNotEmpty())
+    <div class="mt-4">
+        <h4 class="text-md font-semibold text-gray-800 mb-2">Cargos de Transporte</h4>
+        <div class="overflow-x-auto border rounded-lg shadow-sm">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                            Tipo de Cargo</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                            Precio Declarado</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                            Precio Unitario</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                            Base</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    @foreach ($poTransportCharges as $charge)
+                        <tr class="hover:bg-gray-50 transition-colors">
+                            <td class="px-3 py-2 text-sm">
+                                {{ $charge->price_qualifier ? $form->catalogLabel($charge->price_qualifier) : '-' }}
+                            </td>
+                            <td class="px-3 py-2 text-sm">
+                                {{ $charge->price_amount !== null ? number_format((float) $charge->price_amount, 2, ',', '.') : '-' }}
+                                {{ $charge->currency_code ? ' ' . $charge->currency_code : '' }}
+                            </td>
+                            <td class="px-3 py-2 text-sm">
+                                {{ $charge->unit_price_basis !== null ? number_format((float) $charge->unit_price_basis, 2, ',', '.') : '-' }}
+                            </td>
+                            <td class="px-3 py-2 text-sm">
+                                {{ $charge->measure_unit_code ?? '-' }}</td>
+                        </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+    </div>
+@endif
+{{-- PO ITEMS --}}
+                        @php
+                            $poItems = $po->purchase_order_items?->filter(function ($item) use ($isBlank) {
+                                $hasMain = !(
+                                    $isBlank($item->item_description ?? null)
+                                    && $isBlank($item->quantity ?? null)
+                                    && $isBlank($item->gross_weight ?? null)
+                                    && $isBlank($item->net_weight ?? null)
+                                    && $isBlank($item->volume ?? null)
+                                    && $isBlank($item->package_count ?? null)
+                                    && $isBlank($item->package_type ?? null)
+                                );
 
-                        {{-- PO ITEMS --}}
-                        @if ($po->purchase_order_items?->isNotEmpty())
+                                $hasNotes = ($item->item_notes?->filter(fn ($n) => !$isBlank($n->note_text ?? null))->isNotEmpty()) ?? false;
+                                $hasMeasures = ($item->item_measures?->filter(fn ($m) => !$isBlank($m->measurement_value ?? ($m->measure_value ?? null)))->isNotEmpty()) ?? false;
+                                $hasDims = ($item->item_dimensions?->filter(fn ($d) => !$isBlank($d->length ?? null) || !$isBlank($d->width ?? null) || !$isBlank($d->height ?? null))->isNotEmpty()) ?? false;
+                                $hasContainers = ($item->item_container_identifiers?->filter(fn ($c) => !$isBlank($c->package_identifier_value ?? null))->isNotEmpty()) ?? false;
+                                $hasProducts = ($item->item_product_identifiers?->filter(fn ($p) => !$isBlank($p->identifier_value ?? ($p->product_identifier_value ?? null)))->isNotEmpty()) ?? false;
+                                $hasUnits = ($item->item_unit_identifiers?->filter(fn ($u) => !$isBlank($u->unit_identifier_value ?? null))->isNotEmpty()) ?? false;
+
+                                return $hasMain || $hasNotes || $hasMeasures || $hasDims || $hasContainers || $hasProducts || $hasUnits;
+                            });
+                        @endphp
+                        @if ($poItems?->isNotEmpty())
                             <div class="mt-4">
                                 <h4 class="text-md font-semibold text-gray-800 mb-2">Items de la Orden</h4>
 
-                                @foreach ($po->purchase_order_items as $itemIndex => $item)
+                                @foreach ($poItems as $itemIndex => $item)
                                     <div class="mb-4 p-4 border-2 border-purple-200 rounded-lg bg-purple-50/20">
                                         <h5 class="text-sm font-bold text-gray-900 mb-3">
                                             Item #{{ $item->line_item_number ?? $itemIndex + 1 }}
@@ -805,11 +952,18 @@ new #[Layout('layouts.app')] class extends Component {
                                         </div>
 
                                         {{-- Item Notes (DESCRIPCIÓN) --}}
-                                        @if ($item->item_notes?->isNotEmpty())
+                                        @php
+                                            $itemNotes = $item->item_notes?->filter(function ($itemNote) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($itemNote->note_text ?? null)
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($itemNotes?->isNotEmpty())
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Descripción</div>
                                                 <div class="space-y-1">
-                                                    @foreach ($item->item_notes as $itemNote)
+                                                    @foreach ($itemNotes as $itemNote)
                                                         <div
                                                             class="p-2 bg-white border border-gray-200 rounded text-xs">
                                                             <span
@@ -821,7 +975,15 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
 
                                         {{-- Item Measures (MEDIDAS) --}}
-                                        @if ($item->item_measures?->isNotEmpty())
+                                        @php
+                                            $itemMeasures = $item->item_measures?->filter(function ($measure) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($measure->measurement_value ?? ($measure->measure_value ?? null))
+                                                    && $isBlank($measure->measure_unit_code ?? ($measure->measurement_unit ?? ($measure->measure_unit ?? null)))
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($itemMeasures?->isNotEmpty())
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Medidas</div>
                                                 <div class="overflow-x-auto border rounded-lg">
@@ -833,7 +995,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                             </tr>
                                                         </thead>
                                                         <tbody class="bg-white divide-y divide-gray-200">
-                                                            @foreach ($item->item_measures as $measure)
+                                                            @foreach ($itemMeasures as $measure)
                                                                 <tr>
                                                                     <td class="px-2 py-1">
                                                                         {{ $measure->measurement_attribute_code ? $form->catalogLabel($measure->measurement_attribute_code) : '-' }}
@@ -871,7 +1033,17 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
 
                                         {{-- Item Dimensions (DIMENSIONES) --}}
-                                        @if ($item->item_dimensions?->isNotEmpty())
+                                        @php
+                                            $itemDimensions = $item->item_dimensions?->filter(function ($dimension) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($dimension->length ?? null)
+                                                    && $isBlank($dimension->width ?? null)
+                                                    && $isBlank($dimension->height ?? null)
+                                                    && $isBlank($dimension->dimension_unit ?? null)
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($itemDimensions?->isNotEmpty())
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Dimensiones</div>
                                                 <div class="overflow-x-auto border rounded-lg">
@@ -886,7 +1058,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                             </tr>
                                                         </thead>
                                                         <tbody class="bg-white divide-y divide-gray-200">
-                                                            @foreach ($item->item_dimensions as $dimension)
+                                                            @foreach ($itemDimensions as $dimension)
                                                                 <tr>
                                                                     <td class="px-2 py-1">
                                                                         {{ $dimension->dimension_type ? $form->catalogLabel($dimension->dimension_type) : '-' }}
@@ -908,12 +1080,19 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
 
                                         {{-- Item Container Identifiers --}}
-                                        @if ($item->item_container_identifiers?->isNotEmpty())
+                                        @php
+                                            $itemContainers = $item->item_container_identifiers?->filter(function ($container) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($container->package_identifier_value ?? null)
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($itemContainers?->isNotEmpty())
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Identificadores
                                                     de Contenedor</div>
                                                 <div class="space-y-1">
-                                                    @foreach ($item->item_container_identifiers as $container)
+                                                    @foreach ($itemContainers as $container)
                                                         <div
                                                             class="p-2 bg-white border border-gray-200 rounded text-xs">
                                                             <span class="font-medium text-gray-600">
@@ -928,7 +1107,14 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
 
                                         {{-- Item Product Identifiers --}}
-                                        @if ($item->item_product_identifiers?->isNotEmpty())
+                                        @php
+                                            $itemProducts = $item->item_product_identifiers?->filter(function ($productId) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($productId->identifier_value ?? ($productId->product_identifier_value ?? null))
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($itemProducts?->isNotEmpty())
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Identificadores
                                                     de Producto</div>
@@ -942,7 +1128,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                             </tr>
                                                         </thead>
                                                         <tbody class="bg-white divide-y divide-gray-200">
-                                                            @foreach ($item->item_product_identifiers as $productId)
+                                                            @foreach ($itemProducts as $productId)
                                                                 <tr>
                                                                     <td class="px-2 py-1">
                                                                         {{ $productId->product_identifier_role ? $form->catalogLabel($productId->product_identifier_role) : '-' }}
@@ -962,12 +1148,19 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
 
                                         {{-- Item Unit Identifiers --}}
-                                        @if ($item->item_unit_identifiers?->isNotEmpty())
+                                        @php
+                                            $itemUnitIds = $item->item_unit_identifiers?->filter(function ($unitId) use ($isBlank) {
+                                                return !(
+                                                    $isBlank($unitId->unit_identifier_value ?? null)
+                                                );
+                                            });
+                                        @endphp
+                                        @if ($itemUnitIds?->isNotEmpty())
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Identificadores
                                                     de Unidad</div>
                                                 <div class="space-y-1">
-                                                    @foreach ($item->item_unit_identifiers as $unitId)
+                                                    @foreach ($itemUnitIds as $unitId)
                                                         <div
                                                             class="p-2 bg-white border border-gray-200 rounded text-xs">
                                                             <span class="font-medium text-gray-600">
@@ -990,7 +1183,14 @@ new #[Layout('layouts.app')] class extends Component {
         @endif
 
         {{-- LOCATION DETAILS --}}
-        @if ($form->service?->location_details?->isNotEmpty())
+        @php
+            $locationDetails = $form->service?->location_details?->filter(function ($location) use ($isBlank) {
+                return !(
+                    $isBlank($location->location_details ?? null)
+                );
+            });
+        @endphp
+        @if ($locationDetails?->isNotEmpty())
             <div>
                 <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1003,7 +1203,7 @@ new #[Layout('layouts.app')] class extends Component {
                 </h2>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    @foreach ($form->service->location_details as $location)
+                    @foreach ($locationDetails as $location)
                         <div class="p-4 border border-gray-200 rounded-lg bg-gray-50">
                             <div class="text-sm font-medium text-gray-700 mb-2">
                                 {{ $location->location_code ? $form->catalogLabel($location->location_code) : 'Ubicación' }}
@@ -1018,7 +1218,19 @@ new #[Layout('layouts.app')] class extends Component {
         @endif
 
         {{-- TRANSPORT DETAILS --}}
-        @if ($form->service?->transport_details?->isNotEmpty())
+        @php
+            $transportDetails = $form->service?->transport_details?->filter(function ($transport) use ($isBlank) {
+                $stage = $transport->transport_stage?->transport_stage_name ?? null;
+                $mode = $transport->transport_mode?->transport_mode_name ?? null;
+                $vehicle = $transport->vehicle_details ?? ($transport->vehicule_details ?? null);
+                return !(
+                    $isBlank($stage)
+                    && $isBlank($mode)
+                    && $isBlank($vehicle)
+                );
+            });
+        @endphp
+        @if ($transportDetails?->isNotEmpty())
             <div>
                 <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1044,7 +1256,7 @@ new #[Layout('layouts.app')] class extends Component {
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
-                            @foreach ($form->service->transport_details as $transport)
+                            @foreach ($transportDetails as $transport)
                                 <tr class="hover:bg-gray-50 transition-colors">
                                     <td class="px-4 py-3 text-sm">
                                         {{ $transport->transport_stage ? $form->catalogLabel($transport->transport_stage) : '-' }}
@@ -1064,7 +1276,15 @@ new #[Layout('layouts.app')] class extends Component {
         @endif
 
         {{-- EQUIPMENTS --}}
-        @if ($form->service?->service_equipments?->isNotEmpty())
+        @php
+            $serviceEquipments = $form->service?->service_equipments?->filter(function ($equipment) use ($isBlank) {
+                return !(
+                    $isBlank($equipment->equipment_identification ?? null)
+                    && $isBlank($equipment->equipment_size_type ?? null)
+                );
+            });
+        @endphp
+        @if ($serviceEquipments?->isNotEmpty())
             <div>
                 <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1075,7 +1295,7 @@ new #[Layout('layouts.app')] class extends Component {
                 </h2>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    @foreach ($form->service->service_equipments as $equipment)
+                    @foreach ($serviceEquipments as $equipment)
                         <div class="p-4 border border-gray-200 rounded-lg bg-gray-50">
                             <div class="text-sm font-medium text-gray-700 mb-1">
                                 {{ $equipment->equipment_type ? $form->catalogLabel($equipment->equipment_type) : 'Equipo' }}
@@ -1143,3 +1363,15 @@ new #[Layout('layouts.app')] class extends Component {
 
     </form>
 </div>
+
+
+
+
+
+
+
+
+
+
+
+

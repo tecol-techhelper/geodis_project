@@ -24,7 +24,12 @@ return new class extends Migration
             $table->longText('raw_content')->nullable();
             $table->date('processed_at');
             $table->text('notes')->nullable()->comment('Para registro de solución o descarte del archivo');
-            $table->foreignId('service_id')->constrained('services')->cascadeOnUpdate();
+            // Puede fallar la validación SRN antes de resolver el service_id.
+            $table->foreignId('service_id')
+                ->nullable()
+                ->constrained('services')
+                ->nullOnDelete()
+                ->cascadeOnUpdate();
             $table->softDeletes();
             $table->timestamps();
         });

@@ -19,7 +19,7 @@ class PartyTypeSeeder extends Seeder
             ],
             [
                 'party_qualifier' => 'DP',
-                'party_type_name' => 'Parte de entrega',
+                'party_type_name' => 'Punto de entrega',
                 'party_type_description' => 'Parte responsable de la recepción en el punto de entrega cuando es diferente del consignatario.',
             ],
             [
@@ -34,7 +34,7 @@ class PartyTypeSeeder extends Seeder
             ],
             [
                 'party_qualifier' => 'PW',
-                'party_type_name' => 'Parte de despacho',
+                'party_type_name' => 'Punto de despacho',
                 'party_type_description' => 'Parte responsable del despacho o envío de la mercancía cuando es diferente del consignador.',
             ],
             [

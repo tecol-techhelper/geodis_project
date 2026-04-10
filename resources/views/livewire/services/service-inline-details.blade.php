@@ -28,7 +28,7 @@
                                     <tr>
                                         <td class="px-3 py-2 whitespace-nowrap">{{ $po->purchase_order_number ?? '-' }}</td>
                                         <td class="px-3 py-2">
-                                            {{ $po->status?->status_name ?? $po->status?->status_be ?? 'Sin estado' }}
+                                            {{ $service->status?->status_name ?? $service->status?->status_be ?? 'Sin estado' }}
                                         </td>
                                         <td class="px-3 py-2">{{ $po->purchase_order_items->count() }}</td>
                                     </tr>
