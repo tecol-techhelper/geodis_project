@@ -22,6 +22,7 @@ class GenerateIftstaPayloadService
     {
         // Cargar TODO lo necesario (si ya viene cargado, Eloquent no repite query)
         $service->loadMissing([
+            'status',
             'service_dates',
             'service_parties',
             'service_contacts',
@@ -32,7 +33,6 @@ class GenerateIftstaPayloadService
             'service_measurements',
 
             'purchase_orders',
-            'purchase_orders.status',
             'purchase_orders.order_references',
             'purchase_orders.order_references.reference_type',
             'purchase_orders.resources',
@@ -119,7 +119,7 @@ class GenerateIftstaPayloadService
 
             // 3) STS por CNI (tu nueva regla)
             //    Se reporta el edifact_code del status asociado.
-            $edifactCode = $po->status?->edifact_code;
+            $edifactCode = $service->status?->edifact_code;
             if ($edifactCode !== null && $edifactCode !== '') {
                 $segments[] = $this->seg("STS+{$stsType}+{$edifactCode}");
             } else {
@@ -150,6 +150,13 @@ class GenerateIftstaPayloadService
                 if ($resourceId !== '') {
                     $segments[] = $this->seg('RFF+FS:' . $resourceId);
                 }
+            }
+
+            // DTM+7 con fecha/hora del reporte de estado (formato yyyymmddhhmm) - despues de SRN y FS
+            if ($edifactCode !== null && $edifactCode !== '' && !$this->shouldOmitSegment('DTM')) {
+                $statusReportedAt = $service->updated_at ?? now();
+                $statusDateTime = $statusReportedAt->format('YmdHi');
+                $segments[] = $this->seg("DTM+7+{$statusDateTime}:203");
             }
 
             // 4) Resto de segmentos del PO (por raw_segment / *_segment_raw)
@@ -189,7 +196,7 @@ class GenerateIftstaPayloadService
 
         // Pendientes (versiÃ³n simple por ahora):
         // Si maÃ±ana agregas last_iftsta_status_id / last_iftsta_sent_at, cambias esta condiciÃ³n.
-        return $pos->filter(fn($po) => $po->status_id !== null)->values();
+        return $service->status_id !== null ? $pos->values() : collect();
     }
 
     /**

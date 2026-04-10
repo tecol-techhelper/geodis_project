@@ -149,6 +149,7 @@ class ProcessEdifactFileJob implements ShouldQueue
                         'item'        => null,
                         'consecutive' => $serviceConsecutive,
                         'observation' => null,
+                        'status_id'   => $this->assignmentStatusId(),
 
                         'created_at'  => now(),
                         'updated_at'  => now(),
@@ -367,7 +368,6 @@ class ProcessEdifactFileJob implements ShouldQueue
                             'purchase_order_secuence' => $po['purchase_order_secuence'] ?? null,
                             'purchase_order_number'   => $poNumber,
                             'service_id'              => $serviceId,
-                            'status_id'               => $this->assignmentStatusId(),
                             'created_at'              => now(),
                             'updated_at'              => now(),
                         ]);

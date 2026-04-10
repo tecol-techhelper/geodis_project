@@ -18,14 +18,12 @@ class PurchaseOrder extends Model
         'contract_carriage_condition_code',
         'po_requirements_code',
         'service_id',
-        'status_id',
     ];
 
     protected $casts = [
         'id' => 'integer',
         'purchase_order_secuence' => 'integer',
         'service_id' => 'integer',
-        'status_id' => 'integer',
     ];
 
     protected $hidden = [
@@ -107,9 +105,5 @@ class PurchaseOrder extends Model
         return $this->belongsTo(Service::class, 'service_id');
     }
 
-    // 1-to-N with status
-    public function status(): BelongsTo
-    {
-        return $this->belongsTo(Status::class, 'status_id');
-    }
+    // status ahora vive en services
 }

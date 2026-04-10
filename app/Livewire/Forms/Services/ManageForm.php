@@ -26,20 +26,14 @@ class ManageForm extends Form
     public $advance_payment = null;
 
     /**
-     * status por Purchase Order (CNI)
-     * key = purchase_orders.id
-     * value = statuses.id | null
-     *
-     * @var array<int, int|null>
+     * status del Service
      */
-    public array $purchase_order_statuses = [];
+    public ?int $service_status_id = null;
 
     /**
      * Snapshot original para detectar cambios reales
-     *
-     * @var array<int, int|null>
      */
-    public array $original_purchase_order_statuses = [];
+    public ?int $original_service_status_id = null;
 
     /**
      * Recurso por CNI (purchase_order)
@@ -86,6 +80,7 @@ class ManageForm extends Form
         $this->service = Service::query()
             ->with([
                 // Service
+                'status',
                 'service_parties.party_type',
                 'service_contacts.contact_type',
                 'service_contacts.service_contact_details',
@@ -102,7 +97,6 @@ class ManageForm extends Form
 
                 // Purchase Orders (CNIs)
                 'purchase_orders',
-                'purchase_orders.status',
                 'purchase_orders.resources',
                 'purchase_orders.order_references.reference_type',
 
@@ -155,17 +149,9 @@ class ManageForm extends Form
         $this->driver = $s->driver;
         $this->advance_payment = $s->advance_payment;
 
-        // Estado por CNI (purchase_order)
-        $map = ($s->purchase_orders ?? collect())
-            ->mapWithKeys(function ($po) {
-                $poId = (int) $po->id;
-                $statusId = $po->status_id !== null ? (int) $po->status_id : null;
-                return [$poId => $statusId];
-            })
-            ->toArray();
-
-        $this->purchase_order_statuses = $map;
-        $this->original_purchase_order_statuses = $map;
+        // Estado del servicio
+        $this->service_status_id = $s->status_id !== null ? (int) $s->status_id : null;
+        $this->original_service_status_id = $this->service_status_id;
 
         // Recurso por CNI (solo uno en UI)
         $resMap = ($s->purchase_orders ?? collect())
@@ -195,8 +181,7 @@ class ManageForm extends Form
             'advance_payment' => ['nullable', 'numeric', 'min:0'],
 
             // Permite "Sin estado" (null). Si eliges un valor, debe existir en statuses.
-            'purchase_order_statuses' => ['array'],
-            'purchase_order_statuses.*' => ['nullable', 'integer', 'exists:statuses,id'],
+            'service_status_id' => ['nullable', 'integer', 'exists:statuses,id'],
 
             'purchase_order_resources' => ['array'],
             'purchase_order_resources.*' => ['nullable', 'integer', 'exists:resources,id'],
@@ -236,30 +221,19 @@ class ManageForm extends Form
 
             $s->save();
 
-            // Detectar cambios reales por CNI
+            // Cambio de estado a nivel de servicio
+            $newStatusId = $this->service_status_id !== null ? (int) $this->service_status_id : null;
+            $oldStatusId = $this->original_service_status_id !== null ? (int) $this->original_service_status_id : null;
 
-            foreach ($this->purchase_order_statuses as $purchaseOrderId => $newStatusId) {
-                $purchaseOrderId = (int) $purchaseOrderId;
+            if ($newStatusId !== $oldStatusId) {
+                $s->status_id = $newStatusId;
+                $s->save();
 
-                // normaliza null/int
-                $newStatusId = $newStatusId !== null ? (int) $newStatusId : null;
-
-                $oldStatusId = $this->original_purchase_order_statuses[$purchaseOrderId] ?? null;
-                $oldStatusId = $oldStatusId !== null ? (int) $oldStatusId : null;
-
-                if ($newStatusId === $oldStatusId) {
-                    continue; // no cambió, no lo toques
-                }
-
-                $dirtyIds[] = $purchaseOrderId;
-
-                DB::table('purchase_orders')
-                    ->where('id', $purchaseOrderId)
-                    ->where('service_id', $s->id)
-                    ->update([
-                        'status_id' => $newStatusId,
-                        'updated_at' => now(),
-                    ]);
+                // Si cambia el estado del servicio, marcar todos los CNI para IFTSTA
+                $dirtyIds = array_merge(
+                    $dirtyIds,
+                    $s->purchase_orders?->pluck('id')->map(fn ($id) => (int) $id)->all() ?? []
+                );
             }
 
             // Detectar cambios reales de recurso por CNI
@@ -350,3 +324,4 @@ class ManageForm extends Form
         return $this->service?->purchase_orders?->flatMap(fn($po) => $po->purchase_order_items ?? collect()) ?? collect();
     }
 }
+

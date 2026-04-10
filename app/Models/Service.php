@@ -31,7 +31,8 @@ class Service extends Model
         'payment_approval',
         'odp',
         'odp_value',
-        'raw_segment'
+        'raw_segment',
+        'status_id',
     ];
 
     protected $casts = [
@@ -129,5 +130,11 @@ class Service extends Model
     public function service_equipments(): HasMany
     {
         return $this->hasMany(ServiceEquipment::class, 'service_id');
+    }
+
+    // 1-to-N with status
+    public function status()
+    {
+        return $this->belongsTo(Status::class, 'status_id');
     }
 }

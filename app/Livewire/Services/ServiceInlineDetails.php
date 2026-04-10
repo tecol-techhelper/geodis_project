@@ -15,7 +15,7 @@ class ServiceInlineDetails extends Component
     {
         $this->service = Service::query()
             ->with([
-                'purchase_orders.status',
+                'status',
                 'purchase_orders.purchase_order_items',
                 'service_contacts.contact_type',
                 'service_contacts.service_contact_details',
@@ -28,4 +28,3 @@ class ServiceInlineDetails extends Component
         return view('livewire.services.service-inline-details');
     }
 }
-

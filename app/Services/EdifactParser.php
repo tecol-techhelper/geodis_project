@@ -612,6 +612,17 @@ class EdifactParser
         }
 
         $srnValidation = self::validateServiceIdentifierFromPurchaseOrders($purchaseOrders);
+        $acdValidation = self::validateAcdFromPurchaseOrders($purchaseOrders);
+
+        $validationErrors = array_merge(
+            $srnValidation['errors'],
+            $acdValidation['errors']
+        );
+
+        $validationContext = array_merge(
+            $srnValidation['context'],
+            $acdValidation['context']
+        );
 
         return [
             'file' => $file,
@@ -620,8 +631,8 @@ class EdifactParser
             'service_identifier' => $srnValidation['service_identifier'],
             'service_identifier_raw_segment' => $srnValidation['service_identifier_raw_segment'],
             'service_identifier_source' => $srnValidation['source'],
-            'validation_errors' => $srnValidation['errors'],
-            'validation_context' => $srnValidation['context'],
+            'validation_errors' => $validationErrors,
+            'validation_context' => $validationContext,
             'message_dates' => $messageDates,
 
             'service_dates' => $serviceDates,
@@ -635,6 +646,7 @@ class EdifactParser
 
             'purchase_orders' => $purchaseOrders,
             'srn_values' => $srnValidation['srn_values'],
+            'acd_values' => $acdValidation['acd_values'],
         ];
     }
 
@@ -642,6 +654,7 @@ class EdifactParser
     {
         $errors = [];
         $srnValues = [];
+        $srnRawSegments = [];
         $cniCount = 0;
 
         foreach ($purchaseOrders as $index => $po) {
@@ -736,6 +749,99 @@ class EdifactParser
                 'srn_values' => $srnValues,
                 'unique_srn_values' => $unique,
                 'unique_srn_raw_segments' => $uniqueRaw,
+            ],
+        ];
+    }
+
+    private static function validateAcdFromPurchaseOrders(array $purchaseOrders): array
+    {
+        $errors = [];
+        $acdValues = [];
+        $cniCount = 0;
+
+        foreach ($purchaseOrders as $index => $po) {
+            if (($po['has_cni_segment'] ?? false) !== true) {
+                continue;
+            }
+
+            $cniCount++;
+            $references = $po['references'] ?? [];
+            $acdRefs = [];
+
+            foreach ($references as $reference) {
+                if (($reference['reference_type_code'] ?? null) !== 'ACD') {
+                    continue;
+                }
+
+                $value = $reference['order_reference_value'] ?? null;
+                $value = is_string($value) ? trim($value) : $value;
+                $acdRefs[] = $value;
+            }
+
+            if (count($acdRefs) === 0) {
+                $errors[] = [
+                    'code' => 'ACD_MISSING_IN_CNI',
+                    'message' => 'No se encontro RFF+ACD en uno de los bloques CNI.',
+                    'cni_index' => $index + 1,
+                    'cni_sequence' => $po['purchase_order_secuence'] ?? null,
+                    'purchase_order_number' => $po['purchase_order_number'] ?? null,
+                ];
+                continue;
+            }
+
+            if (count($acdRefs) > 1) {
+                $errors[] = [
+                    'code' => 'ACD_MULTIPLE_IN_CNI',
+                    'message' => 'Se encontro mas de un RFF+ACD dentro del mismo bloque CNI.',
+                    'cni_index' => $index + 1,
+                    'cni_sequence' => $po['purchase_order_secuence'] ?? null,
+                    'purchase_order_number' => $po['purchase_order_number'] ?? null,
+                    'values' => $acdRefs,
+                ];
+                continue;
+            }
+
+            $acd = $acdRefs[0];
+
+            if ($acd === null || $acd === '') {
+                $errors[] = [
+                    'code' => 'ACD_EMPTY_IN_CNI',
+                    'message' => 'El valor de RFF+ACD esta vacio en uno de los bloques CNI.',
+                    'cni_index' => $index + 1,
+                    'cni_sequence' => $po['purchase_order_secuence'] ?? null,
+                    'purchase_order_number' => $po['purchase_order_number'] ?? null,
+                ];
+                continue;
+            }
+
+            $acdValues[] = $acd;
+        }
+
+        if ($cniCount > 0 && count($acdValues) !== $cniCount) {
+            $errors[] = [
+                'code' => 'ACD_COUNT_MISMATCH',
+                'message' => 'La cantidad de RFF+ACD validos no coincide con la cantidad de bloques CNI.',
+                'cni_count' => $cniCount,
+                'acd_count' => count($acdValues),
+            ];
+        }
+
+        $unique = array_values(array_unique($acdValues));
+        if (count($unique) > 1) {
+            $errors[] = [
+                'code' => 'ACD_VALUES_MISMATCH',
+                'message' => 'Los valores RFF+ACD no coinciden entre los diferentes bloques CNI.',
+                'values' => $unique,
+            ];
+        }
+
+        return [
+            'acd_values' => $acdValues,
+            'errors' => $errors,
+            'context' => [
+                'acd_values' => $acdValues,
+                'unique_acd_values' => $unique,
+                'acd_cni_count' => $cniCount,
             ],
         ];
     }
