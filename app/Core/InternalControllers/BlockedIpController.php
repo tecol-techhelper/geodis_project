@@ -5,12 +5,17 @@ namespace App\Core\InternalControllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class BlockedIpController extends Controller
 {
     // Checking if an ip address is blocked
     public function isBlocked(string $ipAddress): bool
     {
+        if (!Schema::hasTable('blocked_ips')) {
+            return false;
+        }
+
         return DB::table('blocked_ips')
             ->where('ip_address', $ipAddress)
             ->where('ip_status', 'blocked')
@@ -19,6 +24,10 @@ class BlockedIpController extends Controller
 
     // Saving the blocked ip address to the database
     public function blockIp(string $ipAddress, ?string $userAgent=null):void{
+        if (!Schema::hasTable('blocked_ips')) {
+            return;
+        }
+
         DB::table('blocked_ips')->insert([
             'ip_address' => $ipAddress ?? request()->ip(),
             'user_agent' => $userAgent ?? request()->userAgent(),
@@ -30,6 +39,10 @@ class BlockedIpController extends Controller
     //Evaluate and block ip address if necessary
     public function evaluateAndBlockIp(string $ipAddress):void
     {
+        if (!Schema::hasTable('failed_logins')) {
+            return;
+        }
+
         $recentTries = DB::table('failed_logins')
         ->where('ip_address', $ipAddress)
             ->where('attempted_at', '>=', now()->subMinutes(5))

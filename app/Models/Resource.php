@@ -25,4 +25,11 @@ class Resource extends Model
         return $this->belongsToMany(PurchaseOrder::class, 'purchase_order_resource', 'resource_id', 'purchase_order_id')
             ->withTimestamps();
     }
+
+    public function services(): BelongsToMany
+    {
+        return $this->belongsToMany(Service::class, 'service_resource', 'resource_id', 'service_id')
+            ->withPivot('id', 'last_reported_at', 'status_name')
+            ->withTimestamps();
+    }
 }

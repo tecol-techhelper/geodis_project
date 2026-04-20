@@ -113,6 +113,19 @@ if (window.Livewire && typeof window.Livewire.hook === 'function') {
     });
 }
 
+// Reset dropdown de recurso luego de enviar
+document.addEventListener('service-resource-reset', () => {
+    const select = document.getElementById('service_resource');
+    if (!select) return;
+    if (select.tomselect) {
+        select.tomselect.clear(true);
+        select.tomselect.close();
+    } else {
+        select.value = '';
+    }
+    select.dataset.currentValue = '';
+});
+
 // Fallback: observe DOM changes to replace UNKNOWN values after any re-render
 if (typeof MutationObserver !== 'undefined') {
     let scheduled = false;

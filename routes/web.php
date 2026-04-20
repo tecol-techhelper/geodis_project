@@ -32,9 +32,11 @@ require __DIR__.'/auth.php';
 //     return $response->json();
 // });
 
-Route::get('/subir-archivo', function (SharePointUploader $uploader) {
-    $archivoLocal = 'documentos/prueba.pdf'; // Ubicado en storage/app/documentos
-    $nombreFinal = 'archivo-subido.pdf';
+if (app()->environment('local')) {
+    Route::get('/subir-archivo', function (SharePointUploader $uploader) {
+        $archivoLocal = 'documentos/prueba.pdf'; // Ubicado en storage/app/documentos
+        $nombreFinal = 'archivo-subido.pdf';
 
-    return $uploader->upload($archivoLocal, $nombreFinal);
-});
+        return $uploader->upload($archivoLocal, $nombreFinal);
+    });
+}

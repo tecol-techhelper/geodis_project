@@ -15,6 +15,7 @@ use App\Livewire\Forms\Services\ManageForm;
 
 new #[Layout('layouts.app')] class extends Component {
     public ManageForm $form;
+    public ?string $status_reported_at = null;
 
     /** @var \Illuminate\Support\Collection<int, \App\Models\Status> */
     public $statuses;
@@ -22,20 +23,34 @@ new #[Layout('layouts.app')] class extends Component {
     public $resources;
     /** @var array<string,int> */
     public array $statusPurposeMap = [];
+    /** @var array<string,array{name:string,subcode:string}> */
+    public array $statusPurposeLookup = [];
 
     public function mount(Service $service): void
     {
         $this->form->mount($service);
+        $this->status_reported_at = null;
 
         $this->statuses = Status::query()
             ->select(['id', 'status_name', 'status_be', 'status_description', 'status_purpose_id'])
             ->orderBy('id')
             ->get();
 
-        $this->statusPurposeMap = StatusPurpose::query()
-            ->select(['id', 'purpose_subcode'])
-            ->get()
-            ->mapWithKeys(fn ($p) => [strtoupper(trim((string) $p->purpose_subcode)) => (int) $p->id])
+        $purposes = StatusPurpose::query()
+            ->select(['id', 'purpose_subcode', 'purpose_name'])
+            ->get();
+
+        $this->statusPurposeMap = $purposes->mapWithKeys(fn($p) => [strtoupper(trim((string) $p->purpose_subcode)) => (int) $p->id])->all();
+
+        $this->statusPurposeLookup = $purposes
+            ->mapWithKeys(
+                fn($p) => [
+                    strtoupper(trim((string) $p->purpose_subcode)) => [
+                        'name' => $p->purpose_name,
+                        'subcode' => $p->purpose_subcode,
+                    ],
+                ],
+            )
             ->all();
 
         $this->resources = Resource::query()
@@ -50,15 +65,56 @@ new #[Layout('layouts.app')] class extends Component {
         $dirtyPurchaseOrderIds = $this->form->update();
 
         try {
-            $service = Service::query()->findOrFail((int) $this->form->id);
+            $service = Service::query()
+                ->with('status:id,status_name,edifact_code')
+                ->findOrFail((int) $this->form->id);
 
             if (count($dirtyPurchaseOrderIds) > 0) {
+                $this->validate([
+                    'status_reported_at' => ['required', 'date'],
+                ]);
+
                 /** @var GenerateIftstaPayloadService $iftsta */
                 $iftsta = app(GenerateIftstaPayloadService::class);
-                $result = $iftsta->generate($service, $dirtyPurchaseOrderIds);
 
-                $payload = (string) ($result['payload'] ?? '');
-                if ($payload !== '') {
+                $resources = $service->resources ?? collect();
+                $hasResources = $resources->isNotEmpty();
+                $unreportedResources = $resources
+                    ->filter(function ($res) {
+                        return $res->pivot?->last_reported_at === null;
+                    })
+                    ->values();
+
+                if ($hasResources && $unreportedResources->isEmpty()) {
+                    Log::info('No hay recursos nuevos por reportar en IFTSTA', [
+                        'service_id' => $service->id,
+                        'purchase_orders' => $dirtyPurchaseOrderIds,
+                    ]);
+                    $resourceIdList = [];
+                } elseif ($hasResources) {
+                    $resourceIdList = $unreportedResources->all();
+                } else {
+                    $resourceIdList = [null];
+                }
+
+                $statusReportedAt = $this->status_reported_at ? \Carbon\Carbon::parse($this->status_reported_at) : null;
+                $reportedStatusName = $service->status?->status_name;
+
+                foreach ($resourceIdList as $resourceItem) {
+                    $resourceId = is_string($resourceItem) ? trim($resourceItem) : (is_object($resourceItem) ? trim((string) ($resourceItem->resource_id ?? '')) : null);
+
+                    $result = $iftsta->generate($service, $dirtyPurchaseOrderIds, $resourceId, $statusReportedAt);
+
+                    $payload = (string) ($result['payload'] ?? '');
+                    if ($payload === '') {
+                        Log::warning('No se genero payload IFTSTA luego de cambiar estados', [
+                            'service_id' => $service->id,
+                            'purchase_orders' => $dirtyPurchaseOrderIds,
+                            'resource_id' => $resourceId,
+                        ]);
+                        continue;
+                    }
+
                     $meta = (array) ($result['meta'] ?? []);
                     $interchangeRef = (string) ($meta['interchange_ref'] ?? now()->format('YmdHis'));
 
@@ -82,12 +138,19 @@ new #[Layout('layouts.app')] class extends Component {
                         'edifact_file_id' => $edifactFile->id,
                         'transmission_id' => $transmissionId,
                         'purchase_orders' => $dirtyPurchaseOrderIds,
+                        'resource_id' => $resourceId,
                     ]);
-                } else {
-                    Log::warning('No se genero payload IFTSTA luego de cambiar estados', [
-                        'service_id' => $service->id,
-                        'purchase_orders' => $dirtyPurchaseOrderIds,
-                    ]);
+
+                    if ($resourceItem && is_object($resourceItem) && $resourceItem->pivot?->id) {
+                        $reportedAt = $statusReportedAt ?? now();
+                        \Illuminate\Support\Facades\DB::table('service_resource')
+                            ->where('id', (int) $resourceItem->pivot->id)
+                            ->update([
+                                'last_reported_at' => $reportedAt,
+                                'status_name' => $reportedStatusName,
+                                'updated_at' => now(),
+                            ]);
+                    }
                 }
             } else {
                 Log::info('Servicio actualizado sin cambios de estado en purchase_orders', [
@@ -105,6 +168,24 @@ new #[Layout('layouts.app')] class extends Component {
         }
 
         flash()->title('Servicio actualizado')->success('Servicio actualizado exitosamente.');
+        // Resetear el dropdown del recurso luego de enviar
+        $this->form->service_resource_id = null;
+        $this->dispatch('service-resource-reset');
+    }
+
+    public function addServiceResource(): void
+    {
+        $this->form->addServiceResource();
+    }
+
+    public function addResourceById(int $id): void
+    {
+        $this->form->addResourceById($id);
+    }
+
+    public function removeServiceResource(int $resourceIndex): void
+    {
+        $this->form->removeServiceResource($resourceIndex);
     }
 
     private function uniqueOutgoingTransmissionId(string $seed): string
@@ -130,7 +211,6 @@ new #[Layout('layouts.app')] class extends Component {
     {
         $this->redirect(route('services.index'));
     }
-
 
     // Diccionario para unit_identifier_type
     public function getUnitIdentifierLabel($type): string
@@ -174,10 +254,24 @@ new #[Layout('layouts.app')] class extends Component {
         $statusLabel = function ($st) {
             return $st->status_name ?? ($st->status_be ?? ($st->status_description ?? 'Estado #' . $st->id));
         };
+        $isAdminUser = function () {
+            $user = auth()->user();
+            if (!$user) {
+                return false;
+            }
+            if (property_exists($user, 'rol_key') && $user->rol_key === 'admin') {
+                return true;
+            }
+            return method_exists($user, 'hasRole') && $user->hasRole('admin');
+        };
         $isBlank = function ($value) {
-            if ($value === null) return true;
+            if ($value === null) {
+                return true;
+            }
             $text = trim((string) $value);
-            if ($text === '') return true;
+            if ($text === '') {
+                return true;
+            }
             $upper = strtoupper($text);
             return in_array($upper, ['-', 'UNKNOWN', 'UNKNOW', 'N/A', 'NA', 'NULL'], true);
         };
@@ -219,14 +313,18 @@ new #[Layout('layouts.app')] class extends Component {
 
                     if ($acdValue !== '') {
                         $subId = $statusPurposeMap[$acdValue] ?? null;
-                        if ($subId) $bulkPurposeIds[] = $subId;
+                        if ($subId) {
+                            $bulkPurposeIds[] = $subId;
+                        }
                     }
                 }
 
                 $bulkPurposeIds = array_values(array_unique($bulkPurposeIds));
                 $bulkStatuses = $bulkPurposeIds
-                    ? $statuses->filter(fn ($st) => $st->status_be === 'ASIG' || in_array($st->status_purpose_id, $bulkPurposeIds, true))
-                    : $statuses->filter(fn ($st) => $st->status_be === 'ASIG');
+                    ? $statuses->filter(
+                        fn($st) => $st->status_be === 'ASIG' || in_array($st->status_purpose_id, $bulkPurposeIds, true),
+                    )
+                    : $statuses->filter(fn($st) => $st->status_be === 'ASIG');
 
                 if ($currentStatusId !== null) {
                     $currentStatus = $statuses->firstWhere('id', $currentStatusId);
@@ -240,17 +338,13 @@ new #[Layout('layouts.app')] class extends Component {
                 <label for="bulk_status" class="block text-sm font-medium text-gray-700 mb-1">
                     Estado de la Orden
                 </label>
-                <select id="bulk_status"
-                    wire:model.defer="form.service_status_id"
+                <select id="bulk_status" wire:model.defer="form.service_status_id"
                     class="w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
-                    data-placeholder=""
-                    data-current-value="{{ $form->service_status_id ?? '' }}"
-                    data-livewire-model="form.service_status_id"
-                    style="white-space: normal;"
+                    data-placeholder="" data-current-value="{{ $form->service_status_id ?? '' }}"
+                    data-livewire-model="form.service_status_id" style="white-space: normal;"
                     @disabled(!$form->canEdit)>
                     @foreach ($bulkStatuses as $st)
-                        <option value="{{ $st->id }}" style="white-space: normal;"
-                            @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
+                        <option value="{{ $st->id }}" style="white-space: normal;" @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
                             {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
                     @endforeach
                 </select>
@@ -260,16 +354,25 @@ new #[Layout('layouts.app')] class extends Component {
         {{-- BOTONES DE ACCIÓN --}}
         <div class="flex flex-col sm:flex-row gap-3">
             <x-danger-button type="button" wire:click="back" x-on:click="setTimeout(() => $el.blur(), 100)"
-                class="flex-1 sm:flex-none">
+                class="w-full sm:w-auto">
                 Volver
             </x-danger-button>
 
-            @if ($form->service && $form->canEdit)
-                <livewire:services.upload-file-modal :service="$form->service" :key="'upload-files-' . $form->service->id" />
+            @if ($form->service)
+                <div class="w-full sm:w-auto">
+                    @if ($isAdminUser())
+                        <livewire:services.upload-file-modal :service="$form->service" :key="'upload-files-' . $form->service->id" />
+                    @else
+                        <x-primary-button type="button" disabled
+                            class="w-full sm:w-auto opacity-60 cursor-not-allowed">
+                            Cargar Soportes
+                        </x-primary-button>
+                    @endif
+                </div>
             @endif
 
             @if ($form->canEdit)
-                <x-success-button type="submit" class="flex-1 sm:flex-none">
+                <x-success-button type="submit" class="w-full sm:w-auto">
                     Enviar
                 </x-success-button>
             @endif
@@ -285,23 +388,291 @@ new #[Layout('layouts.app')] class extends Component {
                 Información General
             </h2>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            @php
+                $agwPriority = null;
+                $agwPriorityLabel = null;
+                $agwConsolidatedNumber = null;
+                $agwPriorityClass = 'text-gray-600';
+
+                foreach ($form->service?->purchase_orders ?? [] as $_po) {
+                    $agwRef = $_po->order_references?->first(function ($_ref) {
+                        return strtoupper(trim((string) ($_ref->reference_type?->reference_type_code ?? ''))) ===
+                            'AGW';
+                    });
+
+                    if (!$agwRef) {
+                        continue;
+                    }
+
+                    $agwValue = trim((string) ($agwRef->order_reference_value ?? ''));
+                    if ($agwValue === '') {
+                        continue;
+                    }
+
+                    $agwParts = array_map('trim', explode('/', $agwValue, 2));
+                    $agwPriority = $agwParts[0] !== '' ? $agwParts[0] : null;
+                    $agwConsolidatedNumber = ($agwParts[1] ?? '') !== '' ? $agwParts[1] : null;
+
+                    $priorityMap = [
+                        'CRITICAL' => 'Crítico',
+                        'STANDARD' => 'Estándar',
+                    ];
+                    $agwPriorityLabel = $agwPriority !== null
+                        ? ($priorityMap[strtoupper($agwPriority)] ?? $agwPriority)
+                        : null;
+
+                    $agwPriorityClass = match (strtoupper((string) $agwPriority)) {
+                        'CRITICAL' => 'text-red-600',
+                        'STANDARD' => 'text-blue-600',
+                        default => 'text-gray-600',
+                    };
+                    break;
+                }
+            @endphp
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                     <label for="item" class="block text-sm font-medium text-gray-700 mb-1">Item</label>
-                    <input type="text" id="item" wire:model.defer="form.item"
-                        class="w-full rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-500"
-                        @disabled(!$form->canEdit) />
+                    <div
+                        class="relative flex h-12 items-stretch rounded-lg border border-gray-300 shadow-sm focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                        <span
+                            class="flex items-center px-4 bg-gray-100 text-gray-900 font-semibold text-sm rounded-l-lg">
+                            {{ $form->service?->created_at?->format('m') ?? now()->format('m') }}-
+                        </span>
+                        <input type="text" id="item" wire:model.defer="form.item"
+                            class="w-full h-full rounded-r-lg rounded-l-none border-0 bg-transparent focus:ring-0 disabled:bg-gray-50 disabled:text-gray-500 px-4"
+                            @disabled(!$form->canEdit) />
+                    </div>
                     @error('form.item')
                         <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
                     @enderror
+
+                    <div class="mt-3">
+                        <label for="service_priority" class="block text-sm font-medium text-gray-700 mb-1">
+                            Prioridad
+                        </label>
+                        <div id="service_priority"
+                            class="w-full h-12 px-4 rounded-lg border border-gray-300 shadow-sm bg-gray-50 flex items-center font-bold {{ $agwPriorityClass }}">
+                            {{ $agwPriorityLabel ?? '-' }}
+                        </div>
+                    </div>
                 </div>
 
                 <div>
                     <label for="consecutive" class="block text-sm font-medium text-gray-700 mb-1">Consecutivo</label>
                     <input type="text" id="consecutive" wire:model.defer="form.consecutive"
-                        class="w-full rounded-lg border-gray-300 shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                        class="w-full h-12 rounded-lg border-gray-300 shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
                         disabled />
+
+                    <div class="mt-3">
+                        <label for="consolidated_number" class="block text-sm font-medium text-gray-700 mb-1">
+                            N&uacute;mero de Consolidado
+                        </label>
+                        <input type="text" id="consolidated_number"
+                            value="{{ $agwConsolidatedNumber ?? '-' }}"
+                            class="w-full h-12 rounded-lg border-gray-300 shadow-sm bg-gray-50 text-gray-600 cursor-not-allowed"
+                            disabled />
+                    </div>
                 </div>
+
+                @php
+                    // Resolver el Tipo de Servicio a partir del RFF+ACD de la primera purchase order
+                    $serviceTypePurpose = null;
+                    foreach ($form->service?->purchase_orders ?? [] as $_po) {
+                        $acdRef = $_po->order_references?->first(function ($_ref) {
+                            return strtoupper(trim((string) ($_ref->reference_type?->reference_type_code ?? ''))) ===
+                                'ACD';
+                        });
+                        if ($acdRef) {
+                            $acdKey = strtoupper(trim((string) ($acdRef->order_reference_value ?? '')));
+                            $acdKey = str_replace([' ', '_'], '-', $acdKey);
+                            if ($acdKey !== '' && isset($statusPurposeLookup[$acdKey])) {
+                                $serviceTypePurpose = $statusPurposeLookup[$acdKey];
+                            }
+                            break;
+                        }
+                    }
+                @endphp
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Servicio</label>
+                    <div
+                        class="w-full h-12 flex items-center px-4 rounded-lg border border-gray-300 shadow-sm bg-gray-50 text-gray-700 text-sm">
+                        @if ($serviceTypePurpose)
+                            <span class="font-semibold text-indigo-700">{{ $serviceTypePurpose['name'] }}</span>
+                            <span class="ml-1 text-gray-500">({{ $serviceTypePurpose['subcode'] }})</span>
+                        @else
+                            <span class="text-gray-400">-</span>
+                        @endif
+                    </div>
+                </div>
+
+                <div class="md:col-span-3 mt-2">
+                    <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M3 7h18M5 7v10a2 2 0 002 2h10a2 2 0 002-2V7" />
+                        </svg>
+                        Recurso(s) Utilizado(s)
+                    </h3>
+                </div>
+
+                @php
+                    $resourceGroups = $resources?->groupBy('resource_operation') ?? collect();
+                    $resourceLookup = $resources?->keyBy('id') ?? collect();
+                    $serviceResourcePivotLookup = collect($form->service?->resources ?? [])
+                        ->filter(fn($resource) => (int) data_get($resource, 'pivot.id', 0) > 0)
+                        ->keyBy(fn($resource) => (int) data_get($resource, 'pivot.id'));
+
+                    $formatReportedAt = function ($value): string {
+                        if ($value === null || trim((string) $value) === '') {
+                            return '-';
+                        }
+
+                        try {
+                            return \Illuminate\Support\Carbon::parse($value)->format('d/m/Y H:i');
+                        } catch (\Throwable $e) {
+                            return (string) $value;
+                        }
+                    };
+
+                    $selectedResources = collect($form->service_resource_rows ?? [])
+                        ->values()
+                        ->map(function ($row, $index) use ($resourceLookup, $serviceResourcePivotLookup, $formatReportedAt) {
+                            $resource = $resourceLookup->get((int) data_get($row, 'resource_id'));
+                            $pivotId = (int) data_get($row, 'pivot_id', 0);
+                            $pivotResource = $pivotId > 0 ? $serviceResourcePivotLookup->get($pivotId) : null;
+                            $lastReportedAt = $pivotResource?->pivot?->last_reported_at;
+                            $statusName = $pivotResource?->pivot?->status_name;
+
+                            if (!$resource) {
+                                return null;
+                            }
+
+                            return [
+                                'index' => $index,
+                                'resource' => $resource,
+                                'last_reported_at' => $formatReportedAt($lastReportedAt),
+                                'status_name' => (is_string($statusName) && trim($statusName) !== '') ? trim($statusName) : '-',
+                            ];
+                        })
+                        ->filter()
+                        ->values();
+                @endphp
+                <div class="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="service_resource" class="block text-sm font-medium text-gray-700 mb-1">
+                            Recurso(s)
+                        </label>
+                        <div class="flex items-stretch gap-2">
+                            <div class="flex-1 min-w-0" wire:ignore>
+                                <select id="service_resource" wire:model="form.service_resource_id"
+                                    class="w-full h-12 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
+                                    data-placeholder="Seleccione un recurso"
+                                    data-current-value=""
+                                    data-livewire-model="form.service_resource_id"
+                                    style="white-space: normal;"
+                                    @disabled(!$form->canEdit)>
+                                    <option value="">Seleccione un recurso</option>
+                                    @foreach ($resourceGroups as $operation => $items)
+                                        <optgroup label="{{ $operation }}">
+                                            @foreach ($items as $res)
+                                                <option value="{{ $res->id }}" style="white-space: normal;">
+                                                    {{ $res->resource_name }}
+                                                </option>
+                                            @endforeach
+                                        </optgroup>
+                                    @endforeach
+                                </select>
+                            </div>
+                            <x-primary-button type="button"
+                                x-on:click="
+                                    const sel = document.getElementById('service_resource');
+                                    const id = sel && sel.tomselect
+                                        ? parseInt(sel.tomselect.getValue())
+                                        : parseInt(sel ? sel.value : 0);
+                                    if (!id || id <= 0) return;
+                                    $wire.call('addResourceById', id).then(() => {
+                                        if (sel && sel.tomselect) {
+                                            sel.tomselect.clear(true);
+                                            sel.dataset.currentValue = '';
+                                        } else if (sel) {
+                                            sel.value = '';
+                                        }
+                                    });
+                                "
+                                class="flex items-center justify-center gap-2 w-12 h-12 shrink-0 focus:outline-none focus:ring-0">
+                                <span class="text-lg leading-none">+</span>
+                            </x-primary-button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="status_reported_at" class="block text-sm font-medium text-gray-700 mb-1">
+                            Fecha de Reporte
+                        </label>
+                        <input type="datetime-local" id="status_reported_at" wire:model.defer="status_reported_at"
+                            class="w-full h-12 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                            required @disabled(!$form->canEdit) />
+                    </div>
+
+                    @error('form.service_resource_id')
+                        <p class="text-sm text-red-600 mt-1 md:col-span-2">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                @if ($selectedResources->isNotEmpty())
+                    <div class="md:col-span-3 mt-1 overflow-x-auto border border-gray-200 rounded-lg bg-white">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Recurso
+                                    </th>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Fecha Reporte
+                                    </th>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Estado
+                                    </th>
+                                    <th
+                                        class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Acción
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                @foreach ($selectedResources as $selectedResource)
+                                    <tr class="hover:bg-gray-50 transition-colors">
+                                        <td class="px-4 py-3 text-sm text-gray-900">
+                                            {{ $selectedResource['resource']->resource_name }}
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                            {{ $selectedResource['last_reported_at'] }}
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                            {{ $selectedResource['status_name'] }}
+                                        </td>
+                                        <td class="px-4 py-3 text-center">
+                                            @if ($form->canEdit)
+                                                <button type="button"
+                                                    wire:click="removeServiceResource({{ $selectedResource['index'] }})"
+                                                    class="text-red-600 hover:text-red-700 text-sm font-semibold">
+                                                    X
+                                                </button>
+                                            @else
+                                                <span class="text-sm text-gray-400">-</span>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
+                @endif
             </div>
         </div>
 
@@ -310,10 +681,10 @@ new #[Layout('layouts.app')] class extends Component {
             $serviceParties = $form->service?->service_parties?->filter(function ($party) use ($isBlank) {
                 // Mostrar solo si hay datos reales (no solo el cualificador)
                 return !(
-                    $isBlank($party->party_name ?? null)
-                    && $isBlank($party->party_street ?? null)
-                    && $isBlank($party->party_city ?? null)
-                    && $isBlank($party->party_region ?? null)
+                    $isBlank($party->party_name ?? null) &&
+                    $isBlank($party->party_street ?? null) &&
+                    $isBlank($party->party_city ?? null) &&
+                    $isBlank($party->party_region ?? null)
                 );
             });
         @endphp
@@ -371,14 +742,10 @@ new #[Layout('layouts.app')] class extends Component {
             $serviceContacts = $form->service?->service_contacts?->filter(function ($contact) use ($isBlank) {
                 $details = $contact->service_contact_details?->filter(function ($detail) use ($isBlank) {
                     return !(
-                        $isBlank($detail->channel_contact ?? null)
-                        && $isBlank($detail->contact_information ?? null)
+                        $isBlank($detail->channel_contact ?? null) && $isBlank($detail->contact_information ?? null)
                     );
                 });
-                return !(
-                    $isBlank($contact->contact_name ?? null)
-                    && ($details?->isEmpty() ?? true)
-                );
+                return !($isBlank($contact->contact_name ?? null) && ($details?->isEmpty() ?? true));
             });
         @endphp
         @if ($serviceContacts?->isNotEmpty())
@@ -415,10 +782,12 @@ new #[Layout('layouts.app')] class extends Component {
                                     <td class="px-4 py-3 text-sm">{{ $contact->contact_name ?? '-' }}</td>
                                     <td class="px-4 py-3 text-sm">
                                         @php
-                                            $contactDetails = $contact->service_contact_details?->filter(function ($detail) use ($isBlank) {
+                                            $contactDetails = $contact->service_contact_details?->filter(function (
+                                                $detail,
+                                            ) use ($isBlank) {
                                                 return !(
-                                                    $isBlank($detail->channel_contact ?? null)
-                                                    && $isBlank($detail->contact_information ?? null)
+                                                    $isBlank($detail->channel_contact ?? null) &&
+                                                    $isBlank($detail->contact_information ?? null)
                                                 );
                                             });
                                         @endphp
@@ -446,7 +815,9 @@ new #[Layout('layouts.app')] class extends Component {
 
         {{-- SERVICE DATES --}}
         @php
-            $serviceDates = $form->service?->service_dates?->filter(fn ($date) => !$isBlank($date->service_date ?? null));
+            $serviceDates = $form->service?->service_dates?->filter(
+                fn($date) => !$isBlank($date->service_date ?? null),
+            );
         @endphp
         @if ($serviceDates?->isNotEmpty())
             <div>
@@ -497,36 +868,7 @@ new #[Layout('layouts.app')] class extends Component {
                             </div>
                         </div>
 
-                        <div class="mb-4">
-                            <h4 class="text-md font-semibold text-gray-800 mb-2">Recurso Utilizado</h4>
-                            <label for="po_resource_{{ $po->id }}" class="sr-only">
-                                Recurso Utilizado
-                            </label>
-                            @php
-                                $resourceGroups = $resources?->groupBy('resource_operation') ?? collect();
-                            @endphp
-                            <select id="po_resource_{{ $po->id }}"
-                                wire:model.defer="form.purchase_order_resources.{{ $po->id }}"
-                                class="w-full md:w-96 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
-                                data-placeholder="Seleccione un recurso"
-                                style="white-space: normal;"
-                                @disabled(!$form->canEdit)>
-                                <option value="">Seleccione un recurso</option>
-                                @foreach ($resourceGroups as $operation => $items)
-                                    <optgroup label="{{ $operation }}">
-                                        @foreach ($items as $res)
-                                            <option value="{{ $res->id }}" style="white-space: normal;"
-                                                @selected(($form->purchase_order_resources[$po->id] ?? null) == $res->id)>
-                                                {{ $res->resource_name }}
-                                            </option>
-                                        @endforeach
-                                    </optgroup>
-                                @endforeach
-                            </select>
-                            @error('form.purchase_order_resources.' . $po->id)
-                                <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
-                            @enderror
-                        </div>
+
 
                         {{-- DATOS DE LA ORDEN (oculto) --}}
                         {{--
@@ -543,17 +885,17 @@ new #[Layout('layouts.app')] class extends Component {
                         --}}
 
 
-                        
+
 
                         {{-- PO PARTIES --}}
                         @php
                             $poParties = $po->purchase_order_parties?->filter(function ($party) use ($isBlank) {
                                 // Mostrar solo si hay datos reales (no solo el cualificador)
                                 return !(
-                                    $isBlank($party->party_name ?? null)
-                                    && $isBlank($party->party_street ?? null)
-                                    && $isBlank($party->party_city ?? null)
-                                    && $isBlank($party->party_region ?? null)
+                                    $isBlank($party->party_name ?? null) &&
+                                    $isBlank($party->party_street ?? null) &&
+                                    $isBlank($party->party_city ?? null) &&
+                                    $isBlank($party->party_region ?? null)
                                 );
                             });
                         @endphp
@@ -604,16 +946,15 @@ new #[Layout('layouts.app')] class extends Component {
                         {{-- PO CONTACTS --}}
                         @php
                             $poContacts = $po->purchase_order_contacts?->filter(function ($contact) use ($isBlank) {
-                                $details = $contact->purchase_order_contact_details?->filter(function ($detail) use ($isBlank) {
+                                $details = $contact->purchase_order_contact_details?->filter(function ($detail) use (
+                                    $isBlank,
+                                ) {
                                     return !(
-                                        $isBlank($detail->channel_contact ?? null)
-                                        && $isBlank($detail->contact_information ?? null)
+                                        $isBlank($detail->channel_contact ?? null) &&
+                                        $isBlank($detail->contact_information ?? null)
                                     );
                                 });
-                                return !(
-                                    $isBlank($contact->contact_name ?? null)
-                                    && ($details?->isEmpty() ?? true)
-                                );
+                                return !($isBlank($contact->contact_name ?? null) && ($details?->isEmpty() ?? true));
                             });
                         @endphp
                         @if ($poContacts?->isNotEmpty())
@@ -644,12 +985,14 @@ new #[Layout('layouts.app')] class extends Component {
                                                     </td>
                                                     <td class="px-3 py-2 text-sm">
                                                         @php
-                                                            $poContactDetails = $contact->purchase_order_contact_details?->filter(function ($detail) use ($isBlank) {
-                                                                return !(
-                                                                    $isBlank($detail->channel_contact ?? null)
-                                                                    && $isBlank($detail->contact_information ?? null)
-                                                                );
-                                                            });
+                                                            $poContactDetails = $contact->purchase_order_contact_details?->filter(
+                                                                function ($detail) use ($isBlank) {
+                                                                    return !(
+                                                                        $isBlank($detail->channel_contact ?? null) &&
+                                                                        $isBlank($detail->contact_information ?? null)
+                                                                    );
+                                                                },
+                                                            );
                                                         @endphp
                                                         @if ($poContactDetails?->isNotEmpty())
                                                             <div class="space-y-1">
@@ -711,10 +1054,14 @@ new #[Layout('layouts.app')] class extends Component {
 
                         {{-- PO MEASUREMENTS --}}
                         @php
-                            $poMeasurements = $po->purchase_order_measurements?->filter(function ($measurement) use ($isBlank) {
+                            $poMeasurements = $po->purchase_order_measurements?->filter(function ($measurement) use (
+                                $isBlank,
+                            ) {
                                 return !(
-                                    $isBlank($measurement->measure_value ?? ($measurement->measurement_value ?? null))
-                                    && $isBlank($measurement->measure_unit ?? ($measurement->measurement_unit ?? null))
+                                    $isBlank(
+                                        $measurement->measure_value ?? ($measurement->measurement_value ?? null),
+                                    ) &&
+                                    $isBlank($measurement->measure_unit ?? ($measurement->measurement_unit ?? null))
                                 );
                             });
                         @endphp
@@ -752,133 +1099,172 @@ new #[Layout('layouts.app')] class extends Component {
                         @endif
 
                         {{-- PO REQUIREMENTS --}}
-@php
-    $poRequirements = $po->purchase_order_requirements?->filter(function ($requirement) use ($isBlank) {
-        return !(
-            $isBlank($requirement->requirement_type ?? null)
-            && $isBlank($requirement->requirement_value ?? null)
-        );
-    });
-@endphp
-@if ($poRequirements?->isNotEmpty())
-    <div class="mt-4">
-        <h4 class="text-md font-semibold text-gray-800 mb-2">Requerimientos de la Orden</h4>
-        <div class="space-y-2">
-            @foreach ($poRequirements as $requirement)
-                <div class="p-3 border border-gray-200 rounded-lg bg-white">
-                    @if ($requirement->requirement_type)
-                        <div class="text-xs font-medium text-gray-500 mb-1">
-                            Tipo: {{ $requirement->requirement_type }}
-                        </div>
-                    @endif
-                    <div class="text-sm text-gray-900">
-                        {{ $requirement->requirement_value ?? '-' }}
-                    </div>
-                </div>
-            @endforeach
-        </div>
-    </div>
-@endif
+                        @php
+                            $poRequirements = $po->purchase_order_requirements?->filter(function ($requirement) use (
+                                $isBlank,
+                            ) {
+                                return !(
+                                    $isBlank($requirement->requirement_type ?? null) &&
+                                    $isBlank($requirement->requirement_value ?? null)
+                                );
+                            });
+                        @endphp
+                        @if ($poRequirements?->isNotEmpty())
+                            <div class="mt-4">
+                                <h4 class="text-md font-semibold text-gray-800 mb-2">Requerimientos de la Orden</h4>
+                                <div class="space-y-2">
+                                    @foreach ($poRequirements as $requirement)
+                                        <div class="p-3 border border-gray-200 rounded-lg bg-white">
+                                            @if ($requirement->requirement_type)
+                                                <div class="text-xs font-medium text-gray-500 mb-1">
+                                                    Tipo: {{ $requirement->requirement_type }}
+                                                </div>
+                                            @endif
+                                            <div class="text-sm text-gray-900">
+                                                {{ $requirement->requirement_value ?? '-' }}
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
 
-{{-- DELIVERY TERMS --}}
-@php
-    $poDeliveryTerms = $po->delivery_terms?->filter(function ($term) use ($isBlank) {
-        return !(
-            $isBlank($term->delivery_location ?? null)
-        );
-    });
-@endphp
-@if ($poDeliveryTerms?->isNotEmpty())
-    <div class="mt-4">
-        <h4 class="text-md font-semibold text-gray-800 mb-2">Términos de Entrega</h4>
-        <div class="space-y-2">
-            @foreach ($poDeliveryTerms as $term)
-                <div class="p-3 border border-gray-200 rounded-lg bg-white">
-                    <div class="text-sm">
-                        <span class="font-medium text-gray-700">
-                            {{ $term->delivery_term_catalog ? $form->catalogLabel($term->delivery_term_catalog) : 'Término' }}:
-                        </span>
-                        <span class="text-gray-900">{{ $term->delivery_location ?? '-' }}</span>
-                    </div>
-                </div>
-            @endforeach
-        </div>
-    </div>
-@endif
+                        {{-- DELIVERY TERMS --}}
+                        @php
+                            $poDeliveryTerms = $po->delivery_terms?->filter(function ($term) use ($isBlank) {
+                                return !$isBlank($term->delivery_location ?? null);
+                            });
+                        @endphp
+                        @if ($poDeliveryTerms?->isNotEmpty())
+                            <div class="mt-4">
+                                <h4 class="text-md font-semibold text-gray-800 mb-2">Términos de Entrega</h4>
+                                <div class="space-y-2">
+                                    @foreach ($poDeliveryTerms as $term)
+                                        <div class="p-3 border border-gray-200 rounded-lg bg-white">
+                                            <div class="text-sm">
+                                                <span class="font-medium text-gray-700">
+                                                    {{ $term->delivery_term_catalog ? $form->catalogLabel($term->delivery_term_catalog) : 'Término' }}:
+                                                </span>
+                                                <span
+                                                    class="text-gray-900">{{ $term->delivery_location ?? '-' }}</span>
+                                            </div>
+                                        </div>
+                                    @endforeach
+                                </div>
+                            </div>
+                        @endif
 
-{{-- TRANSPORT CHARGES --}}
-@php
-    $poTransportCharges = $po->transport_charges?->filter(function ($charge) use ($isBlank) {
-        return !(
-            $isBlank($charge->charge_code ?? null)
-            && $isBlank($charge->rate_class_code ?? null)
-            && $isBlank($charge->price_amount ?? null)
-            && $isBlank($charge->unit_price_basis ?? null)
-            && $isBlank($charge->measure_unit_code ?? null)
-            && $isBlank($charge->currency_code ?? null)
-        );
-    });
-@endphp
-@if ($poTransportCharges?->isNotEmpty())
-    <div class="mt-4">
-        <h4 class="text-md font-semibold text-gray-800 mb-2">Cargos de Transporte</h4>
-        <div class="overflow-x-auto border rounded-lg shadow-sm">
-            <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50">
-                    <tr>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                            Tipo de Cargo</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                            Precio Declarado</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                            Precio Unitario</th>
-                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
-                            Base</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                    @foreach ($poTransportCharges as $charge)
-                        <tr class="hover:bg-gray-50 transition-colors">
-                            <td class="px-3 py-2 text-sm">
-                                {{ $charge->price_qualifier ? $form->catalogLabel($charge->price_qualifier) : '-' }}
-                            </td>
-                            <td class="px-3 py-2 text-sm">
-                                {{ $charge->price_amount !== null ? number_format((float) $charge->price_amount, 2, ',', '.') : '-' }}
-                                {{ $charge->currency_code ? ' ' . $charge->currency_code : '' }}
-                            </td>
-                            <td class="px-3 py-2 text-sm">
-                                {{ $charge->unit_price_basis !== null ? number_format((float) $charge->unit_price_basis, 2, ',', '.') : '-' }}
-                            </td>
-                            <td class="px-3 py-2 text-sm">
-                                {{ $charge->measure_unit_code ?? '-' }}</td>
-                        </tr>
-                    @endforeach
-                </tbody>
-            </table>
-        </div>
-    </div>
-@endif
-{{-- PO ITEMS --}}
+                        {{-- TRANSPORT CHARGES --}}
+                        @php
+                            $poTransportCharges = $po->transport_charges?->filter(function ($charge) use ($isBlank) {
+                                return !(
+                                    $isBlank($charge->charge_code ?? null) &&
+                                    $isBlank($charge->rate_class_code ?? null) &&
+                                    $isBlank($charge->price_amount ?? null) &&
+                                    $isBlank($charge->unit_price_basis ?? null) &&
+                                    $isBlank($charge->measure_unit_code ?? null) &&
+                                    $isBlank($charge->currency_code ?? null)
+                                );
+                            });
+                        @endphp
+                        @if ($poTransportCharges?->isNotEmpty())
+                            <div class="mt-4">
+                                <h4 class="text-md font-semibold text-gray-800 mb-2">Cargos de Transporte</h4>
+                                <div class="overflow-x-auto border rounded-lg shadow-sm">
+                                    <table class="min-w-full divide-y divide-gray-200">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th
+                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    Tipo de Cargo</th>
+                                                <th
+                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    Precio Declarado</th>
+                                                <th
+                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    Precio Unitario</th>
+                                                <th
+                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    Base</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="bg-white divide-y divide-gray-200">
+                                            @foreach ($poTransportCharges as $charge)
+                                                <tr class="hover:bg-gray-50 transition-colors">
+                                                    <td class="px-3 py-2 text-sm">
+                                                        {{ $charge->price_qualifier ? $form->catalogLabel($charge->price_qualifier) : '-' }}
+                                                    </td>
+                                                    <td class="px-3 py-2 text-sm">
+                                                        {{ $charge->price_amount !== null ? number_format((float) $charge->price_amount, 2, ',', '.') : '-' }}
+                                                        {{ $charge->currency_code ? ' ' . $charge->currency_code : '' }}
+                                                    </td>
+                                                    <td class="px-3 py-2 text-sm">
+                                                        {{ $charge->unit_price_basis !== null ? number_format((float) $charge->unit_price_basis, 2, ',', '.') : '-' }}
+                                                    </td>
+                                                    <td class="px-3 py-2 text-sm">
+                                                        {{ $charge->measure_unit_code ?? '-' }}</td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        @endif
+                        {{-- PO ITEMS --}}
                         @php
                             $poItems = $po->purchase_order_items?->filter(function ($item) use ($isBlank) {
                                 $hasMain = !(
-                                    $isBlank($item->item_description ?? null)
-                                    && $isBlank($item->quantity ?? null)
-                                    && $isBlank($item->gross_weight ?? null)
-                                    && $isBlank($item->net_weight ?? null)
-                                    && $isBlank($item->volume ?? null)
-                                    && $isBlank($item->package_count ?? null)
-                                    && $isBlank($item->package_type ?? null)
+                                    $isBlank($item->item_description ?? null) &&
+                                    $isBlank($item->quantity ?? null) &&
+                                    $isBlank($item->gross_weight ?? null) &&
+                                    $isBlank($item->net_weight ?? null) &&
+                                    $isBlank($item->volume ?? null) &&
+                                    $isBlank($item->package_count ?? null) &&
+                                    $isBlank($item->package_type ?? null)
                                 );
 
-                                $hasNotes = ($item->item_notes?->filter(fn ($n) => !$isBlank($n->note_text ?? null))->isNotEmpty()) ?? false;
-                                $hasMeasures = ($item->item_measures?->filter(fn ($m) => !$isBlank($m->measurement_value ?? ($m->measure_value ?? null)))->isNotEmpty()) ?? false;
-                                $hasDims = ($item->item_dimensions?->filter(fn ($d) => !$isBlank($d->length ?? null) || !$isBlank($d->width ?? null) || !$isBlank($d->height ?? null))->isNotEmpty()) ?? false;
-                                $hasContainers = ($item->item_container_identifiers?->filter(fn ($c) => !$isBlank($c->package_identifier_value ?? null))->isNotEmpty()) ?? false;
-                                $hasProducts = ($item->item_product_identifiers?->filter(fn ($p) => !$isBlank($p->identifier_value ?? ($p->product_identifier_value ?? null)))->isNotEmpty()) ?? false;
-                                $hasUnits = ($item->item_unit_identifiers?->filter(fn ($u) => !$isBlank($u->unit_identifier_value ?? null))->isNotEmpty()) ?? false;
+                                $hasNotes =
+                                    $item->item_notes
+                                        ?->filter(fn($n) => !$isBlank($n->note_text ?? null))
+                                        ->isNotEmpty() ?? false;
+                                $hasMeasures =
+                                    $item->item_measures
+                                        ?->filter(
+                                            fn($m) => !$isBlank($m->measurement_value ?? ($m->measure_value ?? null)),
+                                        )
+                                        ->isNotEmpty() ?? false;
+                                $hasDims =
+                                    $item->item_dimensions
+                                        ?->filter(
+                                            fn($d) => !$isBlank($d->length ?? null) ||
+                                                !$isBlank($d->width ?? null) ||
+                                                !$isBlank($d->height ?? null),
+                                        )
+                                        ->isNotEmpty() ?? false;
+                                $hasContainers =
+                                    $item->item_container_identifiers
+                                        ?->filter(fn($c) => !$isBlank($c->package_identifier_value ?? null))
+                                        ->isNotEmpty() ?? false;
+                                $hasProducts =
+                                    $item->item_product_identifiers
+                                        ?->filter(
+                                            fn($p) => !$isBlank(
+                                                $p->identifier_value ?? ($p->product_identifier_value ?? null),
+                                            ),
+                                        )
+                                        ->isNotEmpty() ?? false;
+                                $hasUnits =
+                                    $item->item_unit_identifiers
+                                        ?->filter(fn($u) => !$isBlank($u->unit_identifier_value ?? null))
+                                        ->isNotEmpty() ?? false;
 
-                                return $hasMain || $hasNotes || $hasMeasures || $hasDims || $hasContainers || $hasProducts || $hasUnits;
+                                return $hasMain ||
+                                    $hasNotes ||
+                                    $hasMeasures ||
+                                    $hasDims ||
+                                    $hasContainers ||
+                                    $hasProducts ||
+                                    $hasUnits;
                             });
                         @endphp
                         @if ($poItems?->isNotEmpty())
@@ -953,10 +1339,10 @@ new #[Layout('layouts.app')] class extends Component {
 
                                         {{-- Item Notes (DESCRIPCIÓN) --}}
                                         @php
-                                            $itemNotes = $item->item_notes?->filter(function ($itemNote) use ($isBlank) {
-                                                return !(
-                                                    $isBlank($itemNote->note_text ?? null)
-                                                );
+                                            $itemNotes = $item->item_notes?->filter(function ($itemNote) use (
+                                                $isBlank,
+                                            ) {
+                                                return !$isBlank($itemNote->note_text ?? null);
                                             });
                                         @endphp
                                         @if ($itemNotes?->isNotEmpty())
@@ -976,10 +1362,19 @@ new #[Layout('layouts.app')] class extends Component {
 
                                         {{-- Item Measures (MEDIDAS) --}}
                                         @php
-                                            $itemMeasures = $item->item_measures?->filter(function ($measure) use ($isBlank) {
+                                            $itemMeasures = $item->item_measures?->filter(function ($measure) use (
+                                                $isBlank,
+                                            ) {
                                                 return !(
-                                                    $isBlank($measure->measurement_value ?? ($measure->measure_value ?? null))
-                                                    && $isBlank($measure->measure_unit_code ?? ($measure->measurement_unit ?? ($measure->measure_unit ?? null)))
+                                                    $isBlank(
+                                                        $measure->measurement_value ??
+                                                            ($measure->measure_value ?? null),
+                                                    ) &&
+                                                    $isBlank(
+                                                        $measure->measure_unit_code ??
+                                                            ($measure->measurement_unit ??
+                                                                ($measure->measure_unit ?? null)),
+                                                    )
                                                 );
                                             });
                                         @endphp
@@ -1034,12 +1429,14 @@ new #[Layout('layouts.app')] class extends Component {
 
                                         {{-- Item Dimensions (DIMENSIONES) --}}
                                         @php
-                                            $itemDimensions = $item->item_dimensions?->filter(function ($dimension) use ($isBlank) {
+                                            $itemDimensions = $item->item_dimensions?->filter(function (
+                                                $dimension,
+                                            ) use ($isBlank) {
                                                 return !(
-                                                    $isBlank($dimension->length ?? null)
-                                                    && $isBlank($dimension->width ?? null)
-                                                    && $isBlank($dimension->height ?? null)
-                                                    && $isBlank($dimension->dimension_unit ?? null)
+                                                    $isBlank($dimension->length ?? null) &&
+                                                    $isBlank($dimension->width ?? null) &&
+                                                    $isBlank($dimension->height ?? null) &&
+                                                    $isBlank($dimension->dimension_unit ?? null)
                                                 );
                                             });
                                         @endphp
@@ -1081,10 +1478,10 @@ new #[Layout('layouts.app')] class extends Component {
 
                                         {{-- Item Container Identifiers --}}
                                         @php
-                                            $itemContainers = $item->item_container_identifiers?->filter(function ($container) use ($isBlank) {
-                                                return !(
-                                                    $isBlank($container->package_identifier_value ?? null)
-                                                );
+                                            $itemContainers = $item->item_container_identifiers?->filter(function (
+                                                $container,
+                                            ) use ($isBlank) {
+                                                return !$isBlank($container->package_identifier_value ?? null);
                                             });
                                         @endphp
                                         @if ($itemContainers?->isNotEmpty())
@@ -1108,9 +1505,12 @@ new #[Layout('layouts.app')] class extends Component {
 
                                         {{-- Item Product Identifiers --}}
                                         @php
-                                            $itemProducts = $item->item_product_identifiers?->filter(function ($productId) use ($isBlank) {
-                                                return !(
-                                                    $isBlank($productId->identifier_value ?? ($productId->product_identifier_value ?? null))
+                                            $itemProducts = $item->item_product_identifiers?->filter(function (
+                                                $productId,
+                                            ) use ($isBlank) {
+                                                return !$isBlank(
+                                                    $productId->identifier_value ??
+                                                        ($productId->product_identifier_value ?? null),
                                                 );
                                             });
                                         @endphp
@@ -1149,10 +1549,10 @@ new #[Layout('layouts.app')] class extends Component {
 
                                         {{-- Item Unit Identifiers --}}
                                         @php
-                                            $itemUnitIds = $item->item_unit_identifiers?->filter(function ($unitId) use ($isBlank) {
-                                                return !(
-                                                    $isBlank($unitId->unit_identifier_value ?? null)
-                                                );
+                                            $itemUnitIds = $item->item_unit_identifiers?->filter(function (
+                                                $unitId,
+                                            ) use ($isBlank) {
+                                                return !$isBlank($unitId->unit_identifier_value ?? null);
                                             });
                                         @endphp
                                         @if ($itemUnitIds?->isNotEmpty())
@@ -1185,9 +1585,7 @@ new #[Layout('layouts.app')] class extends Component {
         {{-- LOCATION DETAILS --}}
         @php
             $locationDetails = $form->service?->location_details?->filter(function ($location) use ($isBlank) {
-                return !(
-                    $isBlank($location->location_details ?? null)
-                );
+                return !$isBlank($location->location_details ?? null);
             });
         @endphp
         @if ($locationDetails?->isNotEmpty())
@@ -1223,11 +1621,7 @@ new #[Layout('layouts.app')] class extends Component {
                 $stage = $transport->transport_stage?->transport_stage_name ?? null;
                 $mode = $transport->transport_mode?->transport_mode_name ?? null;
                 $vehicle = $transport->vehicle_details ?? ($transport->vehicule_details ?? null);
-                return !(
-                    $isBlank($stage)
-                    && $isBlank($mode)
-                    && $isBlank($vehicle)
-                );
+                return !($isBlank($stage) && $isBlank($mode) && $isBlank($vehicle));
             });
         @endphp
         @if ($transportDetails?->isNotEmpty())
@@ -1279,8 +1673,8 @@ new #[Layout('layouts.app')] class extends Component {
         @php
             $serviceEquipments = $form->service?->service_equipments?->filter(function ($equipment) use ($isBlank) {
                 return !(
-                    $isBlank($equipment->equipment_identification ?? null)
-                    && $isBlank($equipment->equipment_size_type ?? null)
+                    $isBlank($equipment->equipment_identification ?? null) &&
+                    $isBlank($equipment->equipment_size_type ?? null)
                 );
             });
         @endphp
@@ -1363,15 +1757,3 @@ new #[Layout('layouts.app')] class extends Component {
 
     </form>
 </div>
-
-
-
-
-
-
-
-
-
-
-
-

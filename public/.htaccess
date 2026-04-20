@@ -13,6 +13,12 @@
     RewriteCond %{HTTP:x-xsrf-token} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
 
+    # Block direct access to hidden files such as ".cache.php".
+    RewriteRule (^|/)\. - [F,L]
+
+    # Prevent execution of uploaded PHP payloads from common public file areas.
+    RewriteRule ^(?:storage|images)/.*\.(?:php|php[0-9]+|phtml|phar)$ - [F,NC,L]
+
     # Redirect Trailing Slashes If Not A Folder...
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteCond %{REQUEST_URI} (.+)/$

@@ -5,6 +5,7 @@ namespace App\Core\InternalControllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class FailedSessionController extends Controller
 {
@@ -14,6 +15,10 @@ class FailedSessionController extends Controller
         ?string $userAgent = null,
         ?string $reason = null): void
     {
+        if (!Schema::hasTable('failed_logins')) {
+            return;
+        }
+
         // Inserting the failed session values into the database
         DB::table('failed_logins')->insert([
             'username' => $username,

@@ -16,9 +16,16 @@ class GenerateIftstaPayloadService
      *
      * @param  \App\Models\Service  $service  Service ya existente (idealmente con relaciones cargadas)
      * @param  array<int>|null      $purchaseOrderIds  Si se pasa, solo incluye esos CNI. Si null, usa "pendientes".
+     * @param  string|null          $resourceId  Si se pasa, solo incluye ese RFF+FS (1 por mensaje).
+     * @param  Carbon|string|null   $statusReportedAt  Fecha/hora manual para DTM+7.
      * @return array{payload:string, meta:array<string,mixed>}
      */
-    public function generate(Service $service, ?array $purchaseOrderIds = null): array
+    public function generate(
+        Service $service,
+        ?array $purchaseOrderIds = null,
+        ?string $resourceId = null,
+        Carbon|string|null $statusReportedAt = null
+    ): array
     {
         // Cargar TODO lo necesario (si ya viene cargado, Eloquent no repite query)
         $service->loadMissing([
@@ -31,11 +38,11 @@ class GenerateIftstaPayloadService
             'transport_details',
             'service_equipments',
             'service_measurements',
+            'resources',
 
             'purchase_orders',
             'purchase_orders.order_references',
             'purchase_orders.order_references.reference_type',
-            'purchase_orders.resources',
             'purchase_orders.delivery_terms',
             'purchase_orders.purchase_order_parties',
             'purchase_orders.purchase_order_contacts',
@@ -144,19 +151,31 @@ class GenerateIftstaPayloadService
                     }
                 }
 
-                // RFF+FS con el resource_id (justo despues del consecutivo)
-                $resourceId = $po->resources?->first()?->resource_id ?? null;
-                $resourceId = trim((string) $resourceId);
-                if ($resourceId !== '') {
+                // RFF+FS: solo 1 por mensaje si se especifica resourceId
+                $resourceId = $resourceId !== null ? trim((string) $resourceId) : null;
+                if ($resourceId !== null && $resourceId !== '') {
                     $segments[] = $this->seg('RFF+FS:' . $resourceId);
+                } else {
+                    $resourceIds = $service->resources?->pluck('resource_id')->filter()->map(fn ($v) => trim((string) $v))->filter()->values() ?? collect();
+                    foreach ($resourceIds as $rid) {
+                        if ($rid !== '') {
+                            $segments[] = $this->seg('RFF+FS:' . $rid);
+                        }
+                    }
                 }
             }
 
             // DTM+7 con fecha/hora del reporte de estado (formato yyyymmddhhmm) - despues de SRN y FS
             if ($edifactCode !== null && $edifactCode !== '' && !$this->shouldOmitSegment('DTM')) {
-                $statusReportedAt = $service->updated_at ?? now();
-                $statusDateTime = $statusReportedAt->format('YmdHi');
-                $segments[] = $this->seg("DTM+7+{$statusDateTime}:203");
+                $dtmReportedAt = $statusReportedAt;
+                if (is_string($dtmReportedAt)) {
+                    $dtmReportedAt = Carbon::parse($dtmReportedAt);
+                }
+                if (!$dtmReportedAt instanceof Carbon) {
+                    $dtmReportedAt = $service->updated_at ?? now();
+                }
+                $statusDateTime = $dtmReportedAt->format('YmdHi');
+                $segments[] = $this->seg("DTM+7:{$statusDateTime}:203");
             }
 
             // 4) Resto de segmentos del PO (por raw_segment / *_segment_raw)
@@ -175,6 +194,8 @@ class GenerateIftstaPayloadService
                 'message_type' => 'IFTSTA',
                 'interchange_ref' => $interchangeRef,
                 'message_ref' => $messageRef,
+                'resource_id' => $resourceId,
+                'status_reported_at' => $statusReportedAt ? (string) $statusReportedAt : null,
                 'purchase_orders' => $pos->pluck('id')->values()->all(),
             ],
         ];

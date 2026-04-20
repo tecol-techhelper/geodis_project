@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -136,5 +137,13 @@ class Service extends Model
     public function status()
     {
         return $this->belongsTo(Status::class, 'status_id');
+    }
+
+    // N-to-N with resources (service-level)
+    public function resources(): BelongsToMany
+    {
+        return $this->belongsToMany(Resource::class, 'service_resource', 'service_id', 'resource_id')
+            ->withPivot('id', 'last_reported_at', 'status_name')
+            ->withTimestamps();
     }
 }
