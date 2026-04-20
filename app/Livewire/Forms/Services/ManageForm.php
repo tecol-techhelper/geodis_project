@@ -36,20 +36,28 @@ class ManageForm extends Form
     public ?int $original_service_status_id = null;
 
     /**
-     * Recurso por CNI (purchase_order)
-     * key = purchase_orders.id
-     * value = resources.id | null
-     *
-     * @var array<int, int|null>
+     * Recurso seleccionado (dropdown)
      */
-    public array $purchase_order_resources = [];
+    public ?int $service_resource_id = null;
 
     /**
-     * Snapshot original de recursos
+     * Filas de recursos del servicio.
      *
-     * @var array<int, int|null>
+     * @var array<int, array{pivot_id:int|null,resource_id:int}>
      */
-    public array $original_purchase_order_resources = [];
+    public array $service_resource_rows = [];
+
+    /**
+     * Snapshot original de recursos.
+     *
+     * @var array<int, array{pivot_id:int|null,resource_id:int}>
+     */
+    public array $original_service_resource_rows = [];
+
+    /**
+     * Flag para limpiar el dropdown de recursos luego de guardar
+     */
+    public bool $reset_resource_selection = false;
 
     /**
      * IDs de Purchase Orders (CNI) que cambiaron en esta edición
@@ -95,9 +103,11 @@ class ManageForm extends Form
                 'transport_details.transport_stage',
                 'transport_details.transport_mode',
 
+                // Service
+                'resources',
+
                 // Purchase Orders (CNIs)
                 'purchase_orders',
-                'purchase_orders.resources',
                 'purchase_orders.order_references.reference_type',
 
                 // Delivery terms
@@ -141,7 +151,11 @@ class ManageForm extends Form
         $this->id = $s->id;
         $this->consecutive = (string) $s->consecutive;
 
-        $this->item = $s->item;
+        $item = $s->item;
+        if (is_string($item)) {
+            $item = preg_replace('/^\d{2}-/u', '', $item);
+        }
+        $this->item = $item;
         $this->observation = $s->observation;
 
         $this->ttcol_value = $s->ttcol_value;
@@ -153,18 +167,19 @@ class ManageForm extends Form
         $this->service_status_id = $s->status_id !== null ? (int) $s->status_id : null;
         $this->original_service_status_id = $this->service_status_id;
 
-        // Recurso por CNI (solo uno en UI)
-        $resMap = ($s->purchase_orders ?? collect())
-            ->mapWithKeys(function ($po) {
-                $poId = (int) $po->id;
-                $resourceId = $po->resources?->first()?->id;
-                $resourceId = $resourceId !== null ? (int) $resourceId : null;
-                return [$poId => $resourceId];
-            })
-            ->toArray();
-
-        $this->purchase_order_resources = $resMap;
-        $this->original_purchase_order_resources = $resMap;
+        // Recursos a nivel de servicio, preservando filas repetidas del pivote.
+        $rows = $s->resources
+            ?->map(fn($resource) => [
+                'pivot_id' => $resource->pivot?->id !== null ? (int) $resource->pivot->id : null,
+                'resource_id' => (int) $resource->id,
+            ])
+            ->values()
+            ->all() ?? [];
+        $this->service_resource_rows = $rows;
+        $this->original_service_resource_rows = $rows;
+        // Siempre dejar el dropdown limpio al cargar/recargar
+        $this->service_resource_id = null;
+        $this->reset_resource_selection = false;
 
         // Reset de "dirty" cuando recargas
         $this->dirty_purchase_order_ids = [];
@@ -183,9 +198,47 @@ class ManageForm extends Form
             // Permite "Sin estado" (null). Si eliges un valor, debe existir en statuses.
             'service_status_id' => ['nullable', 'integer', 'exists:statuses,id'],
 
-            'purchase_order_resources' => ['array'],
-            'purchase_order_resources.*' => ['nullable', 'integer', 'exists:resources,id'],
+            'service_resource_id' => ['nullable', 'integer', 'exists:resources,id'],
+            'service_resource_rows' => ['array'],
+            'service_resource_rows.*.pivot_id' => ['nullable', 'integer'],
+            'service_resource_rows.*.resource_id' => ['integer', 'exists:resources,id'],
         ];
+    }
+
+    public function addServiceResource(): void
+    {
+        if ($this->service_resource_id === null) {
+            return;
+        }
+
+        $this->addResourceById((int) $this->service_resource_id);
+        $this->service_resource_id = null;
+    }
+
+    /**
+     * Agrega un recurso por ID pasado directamente como argumento.
+     * Usado desde Alpine/JS para evitar race conditions con wire:model.
+     */
+    public function addResourceById(int $id): void
+    {
+        if ($id <= 0) {
+            return;
+        }
+
+        $this->service_resource_rows[] = [
+            'pivot_id' => null,
+            'resource_id' => $id,
+        ];
+    }
+
+    public function removeServiceResource(int $resourceIndex): void
+    {
+        if (!array_key_exists($resourceIndex, $this->service_resource_rows)) {
+            return;
+        }
+
+        unset($this->service_resource_rows[$resourceIndex]);
+        $this->service_resource_rows = array_values($this->service_resource_rows);
     }
 
     /**
@@ -210,8 +263,17 @@ class ManageForm extends Form
         DB::transaction(function () use (&$dirtyIds) {
             $s = Service::query()->findOrFail($this->id);
 
+            $rawItem = trim((string) ($this->item ?? ''));
+            if ($rawItem !== '') {
+                $rawItem = preg_replace('/^\d{2}-/u', '', $rawItem);
+                $rawItem = preg_replace('/^mes-/i', '', $rawItem);
+                $rawItem = ltrim($rawItem, '-');
+            }
+            $monthPrefix = $s->created_at?->format('m') ?? now()->format('m');
+            $normalizedItem = $rawItem !== '' ? ($monthPrefix . '-' . $rawItem) : null;
+
             $s->fill([
-                'item' => $this->item,
+                'item' => $normalizedItem,
                 'observation' => $this->observation,
                 'ttcol_value' => $this->ttcol_value,
                 'cargo_value' => $this->cargo_value,
@@ -232,32 +294,68 @@ class ManageForm extends Form
                 // Si cambia el estado del servicio, marcar todos los CNI para IFTSTA
                 $dirtyIds = array_merge(
                     $dirtyIds,
-                    $s->purchase_orders?->pluck('id')->map(fn ($id) => (int) $id)->all() ?? []
+                    $s->purchase_orders?->pluck('id')->map(fn($id) => (int) $id)->all() ?? []
                 );
             }
 
-            // Detectar cambios reales de recurso por CNI
-            foreach ($this->purchase_order_resources as $purchaseOrderId => $newResourceId) {
-                $purchaseOrderId = (int) $purchaseOrderId;
-                $newResourceId = $newResourceId !== null ? (int) $newResourceId : null;
+            // Detectar cambios reales de recurso a nivel de servicio, preservando duplicados.
+            $normalizeResourceRows = function (array $rows): array {
+                return array_values(array_filter(array_map(function ($row) {
+                    $resourceId = (int) data_get($row, 'resource_id', 0);
 
-                $oldResourceId = $this->original_purchase_order_resources[$purchaseOrderId] ?? null;
-                $oldResourceId = $oldResourceId !== null ? (int) $oldResourceId : null;
-
-                if ($newResourceId === $oldResourceId) {
-                    continue;
-                }
-
-                $dirtyIds[] = $purchaseOrderId;
-
-                $poModel = $s->purchase_orders?->firstWhere('id', $purchaseOrderId);
-                if ($poModel) {
-                    if ($newResourceId === null) {
-                        $poModel->resources()->detach();
-                    } else {
-                        $poModel->resources()->sync([$newResourceId]);
+                    if ($resourceId <= 0) {
+                        return null;
                     }
+
+                    $pivotId = data_get($row, 'pivot_id');
+
+                    return [
+                        'pivot_id' => $pivotId !== null ? (int) $pivotId : null,
+                        'resource_id' => $resourceId,
+                    ];
+                }, $rows)));
+            };
+
+            $newResourceRows = $normalizeResourceRows($this->service_resource_rows);
+            $oldResourceRows = $normalizeResourceRows($this->original_service_resource_rows);
+
+            if ($newResourceRows !== $oldResourceRows) {
+                $pivotIdsToKeep = array_values(array_filter(array_map(
+                    fn($row) => $row['pivot_id'],
+                    $newResourceRows
+                )));
+
+                $pivotIdsToDelete = array_values(array_filter(array_map(
+                    fn($row) => $row['pivot_id'],
+                    $oldResourceRows
+                ), fn($pivotId) => !in_array($pivotId, $pivotIdsToKeep, true)));
+
+                if ($pivotIdsToDelete !== []) {
+                    DB::table('service_resource')
+                        ->where('service_id', $s->id)
+                        ->whereIn('id', $pivotIdsToDelete)
+                        ->delete();
                 }
+
+                $rowsToInsert = array_map(
+                    fn($row) => [
+                        'service_id' => $s->id,
+                        'resource_id' => $row['resource_id'],
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ],
+                    array_values(array_filter($newResourceRows, fn($row) => $row['pivot_id'] === null))
+                );
+
+                if ($rowsToInsert !== []) {
+                    DB::table('service_resource')->insert($rowsToInsert);
+                }
+
+                // Si cambia recurso, marcar todos los CNI para IFTSTA
+                $dirtyIds = array_merge(
+                    $dirtyIds,
+                    $s->purchase_orders?->pluck('id')->map(fn($id) => (int) $id)->all() ?? []
+                );
             }
 
             // Guarda “dirty” para que el botón Enviar sepa qué CNIs incluir en IFTSTA
@@ -265,6 +363,7 @@ class ManageForm extends Form
             $this->dirty_purchase_order_ids = $dirtyIds;
 
             // Recarga todo (y refresca snapshot)
+            $this->reset_resource_selection = true;
             $this->mount($s);
             $this->dirty_purchase_order_ids = $dirtyIds;
         });
@@ -324,4 +423,3 @@ class ManageForm extends Form
         return $this->service?->purchase_orders?->flatMap(fn($po) => $po->purchase_order_items ?? collect()) ?? collect();
     }
 }
-

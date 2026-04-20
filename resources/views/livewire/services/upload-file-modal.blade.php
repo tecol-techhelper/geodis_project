@@ -44,8 +44,8 @@ new class extends Component {
 {{-- @if (Auth::user()->hasRole('admin') || Auth::user()->hasRole('coord')) --}}
 <div x-data="{ modalIsOpen: false, confirmClear: false }" x-effect="if (!modalIsOpen) { $refs.openSupportBtn?.blur() }">
     <x-primary-button x-ref="openSupportBtn" x-on:click="modalIsOpen = true; $nextTick(() => $refs.openSupportBtn.blur())"
-        type="button" class="space-x-1">
-        <span>Carga Soportes</span>
+        type="button" class="w-full sm:w-auto space-x-1">
+        <span>Cargar Soportes</span>
     </x-primary-button>
 
     <div x-cloak x-show="modalIsOpen" x-transition.opacity.duration.200ms x-trap.inert.noscroll="modalIsOpen"

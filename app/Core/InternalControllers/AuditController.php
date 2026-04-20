@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * AuditController
@@ -33,6 +34,10 @@ class AuditController extends Controller
         string $userRole,
         string $action
     ): void {
+        if (!Schema::hasTable('audits')) {
+            return;
+        }
+
         $dirty = $model->getDirty();
 
         // Si no hay cambios y no es una creación, salimos

@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
 
 class BlockedIpMiddleware
@@ -16,6 +17,10 @@ class BlockedIpMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
+        if (!Schema::hasTable('blocked_ips')) {
+            return $next($request);
+        }
+
         $blockedIP = DB::table('blocked_ips')
             ->where('ip_address', $request->ip())
             ->where('ip_status', 'blocked')

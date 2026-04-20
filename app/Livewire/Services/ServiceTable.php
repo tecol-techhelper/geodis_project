@@ -196,8 +196,34 @@ final class ServiceTable extends PowerGridComponent
 
             Column::make('Piezas', 'pieces')->sortable(),
 
-            Column::make('Origen', 'origin_full')->searchable(),
-            Column::make('Destino', 'destination_full')->searchable(),
+            Column::make('Origen', 'origin_full')
+                ->searchableRaw("EXISTS (
+                    SELECT 1
+                    FROM service_parties sp
+                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
+                    WHERE sp.service_id = services.id
+                      AND pt.party_qualifier = 'CZ'
+                      AND CONCAT_WS(' ',
+                          COALESCE(sp.party_name, ''),
+                          COALESCE(sp.party_street, ''),
+                          COALESCE(sp.party_city, ''),
+                          COALESCE(sp.party_region, '')
+                      ) LIKE ?
+                )"),
+            Column::make('Destino', 'destination_full')
+                ->searchableRaw("EXISTS (
+                    SELECT 1
+                    FROM service_parties sp
+                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
+                    WHERE sp.service_id = services.id
+                      AND pt.party_qualifier = 'PW'
+                      AND CONCAT_WS(' ',
+                          COALESCE(sp.party_name, ''),
+                          COALESCE(sp.party_street, ''),
+                          COALESCE(sp.party_city, ''),
+                          COALESCE(sp.party_region, '')
+                      ) LIKE ?
+                )"),
         ];
     }
 
