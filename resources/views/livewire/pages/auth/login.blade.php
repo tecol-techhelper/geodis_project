@@ -5,8 +5,7 @@ use Livewire\Attributes\Layout;
 use App\Models\User;
 use Livewire\Volt\Component;
 
-new #[Layout('layouts.guest')] class extends Component
-{
+new #[Layout('layouts.guest')] class extends Component {
     public LoginForm $form;
 
     /**
@@ -22,7 +21,7 @@ new #[Layout('layouts.guest')] class extends Component
     }
 }; ?>
 
-@section('title','Inicio de Sesión')
+@section('title', 'Inicio de Sesión')
 <div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border shadow-lg space-y-6">
 
     <!-- Imagen centrada (máx 50% del ancho del contenedor) -->
@@ -59,10 +58,11 @@ new #[Layout('layouts.guest')] class extends Component
 
         <!-- Botón de envío -->
         <div class="flex items-center justify-between items-center">
-            <a href="{{route('password.request')}}" class="text-xs sm:text-sm lg:text-sm text-blue-600 hover:underline">¿Olvidaste tu
+            <a href="{{ route('password.request') }}"
+                class="text-xs sm:text-sm lg:text-sm text-blue-600 hover:underline">¿Olvidaste tu
                 contraseña?</a>
             <x-success-button class="sm:w-24 lg:w-[40%]">
-                Login
+                Iniciar Sesión
             </x-success-button>
         </div>
     </form>

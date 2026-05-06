@@ -40,10 +40,13 @@ function initStatusSelects(root = document, options = {}) {
             placeholder,
             allowEmptyOption: true,
             plugins: ['dropdown_input'],
-            sortField: {
-                field: 'text',
-                direction: 'asc',
-            },
+            // Preserve the order from the original <option> list rendered by Blade.
+            sortField: [
+                {
+                    field: '$order',
+                    direction: 'asc',
+                },
+            ],
             render: {
                 option(data, escape) {
                     return `<div>${escape(data.text)}</div>`;

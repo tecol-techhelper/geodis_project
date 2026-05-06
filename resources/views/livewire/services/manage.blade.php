@@ -32,7 +32,7 @@ new #[Layout('layouts.app')] class extends Component {
         $this->status_reported_at = null;
 
         $this->statuses = Status::query()
-            ->select(['id', 'status_name', 'status_be', 'status_description', 'status_purpose_id'])
+            ->select(['id', 'status_name', 'status_be', 'status_description', 'status_purpose_id', 'edifact_code'])
             ->orderBy('id')
             ->get();
 
@@ -52,6 +52,14 @@ new #[Layout('layouts.app')] class extends Component {
                 ],
             )
             ->all();
+
+        // Alias de negocio: algunos IFCSUM traen ROAD como ACD para Transporte entre Bodegas.
+        if (isset($this->statusPurposeMap['DELIVERY-SO'])) {
+            $this->statusPurposeMap['ROAD'] = $this->statusPurposeMap['DELIVERY-SO'];
+        }
+        if (isset($this->statusPurposeLookup['DELIVERY-SO'])) {
+            $this->statusPurposeLookup['ROAD'] = $this->statusPurposeLookup['DELIVERY-SO'];
+        }
 
         $this->resources = Resource::query()
             ->select(['id', 'resource_id', 'resource_name', 'resource_operation'])
@@ -166,6 +174,9 @@ new #[Layout('layouts.app')] class extends Component {
             flash()->title('Actualizacion parcial')->warning('Servicio actualizado, pero no se pudo enviar IFTSTA.');
             return;
         }
+
+        $this->form->mount($service);
+        $this->status_reported_at = null;
 
         flash()->title('Servicio actualizado')->success('Servicio actualizado exitosamente.');
         // Resetear el dropdown del recurso luego de enviar
@@ -332,6 +343,15 @@ new #[Layout('layouts.app')] class extends Component {
                         $bulkStatuses = $bulkStatuses->concat([$currentStatus])->unique('id');
                     }
                 }
+
+                $bulkStatuses = $bulkStatuses
+                    ->sortBy(function ($st) {
+                        $code = is_numeric($st->edifact_code ?? null) ? (int) $st->edifact_code : PHP_INT_MAX;
+                        $zeroFirst = $code === 0 ? 0 : 1;
+
+                        return [$zeroFirst, $code, (int) $st->id];
+                    })
+                    ->values();
             @endphp
 
             <div class="w-full lg:w-96" wire:ignore>
@@ -344,8 +364,12 @@ new #[Layout('layouts.app')] class extends Component {
                     data-livewire-model="form.service_status_id" style="white-space: normal;"
                     @disabled(!$form->canEdit)>
                     @foreach ($bulkStatuses as $st)
+                        @php
+                            $stateCode = is_numeric($st->edifact_code ?? null) ? (int) $st->edifact_code : null;
+                            $stateCodeLabel = ($stateCode !== null && $stateCode !== 0) ? " ({$stateCode})" : '';
+                        @endphp
                         <option value="{{ $st->id }}" style="white-space: normal;" @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
-                            {{ $statusLabel($st) . ' - ' . $st->status_description }}</option>
+                            {{ $stateCodeLabel . ' ' . $statusLabel($st) . ' - ' . $st->status_description }}</option>
                     @endforeach
                 </select>
             </div>
