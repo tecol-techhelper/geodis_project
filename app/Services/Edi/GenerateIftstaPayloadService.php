@@ -62,9 +62,10 @@ class GenerateIftstaPayloadService
         ]);
 
         $pos = $this->selectPurchaseOrders($service, $purchaseOrderIds);
+        $messagePos = $pos->take(1)->values();
 
         // Si no hay CNIs a reportar, no generes basura.
-        if ($pos->isEmpty()) {
+        if ($messagePos->isEmpty()) {
             return [
                 'payload' => '',
                 'meta' => [
@@ -111,7 +112,9 @@ class GenerateIftstaPayloadService
          * BLOQUE POR CNI (Purchase Order):
          * CNI + STS + resto (RFF/DTM/LOC/TDT/â€¦ segÃºn raw_segment que tengas guardado)
          */
-        foreach ($pos as $po) {
+        foreach ($messagePos as $poIndex => $po) {
+            $isFirstCni = $poIndex === 0;
+
             // 1) CNI (purchase_orders.raw_segment)
             $segments[] = $this->seg((string) $po->raw_segment);
 
@@ -124,16 +127,12 @@ class GenerateIftstaPayloadService
                 }
             }
 
-            // 3) STS por CNI (tu nueva regla)
-            //    Se reporta el edifact_code del status asociado.
             $edifactCode = $service->status?->edifact_code;
-            if ($edifactCode !== null && $edifactCode !== '') {
+
+            // 3) STS solo una vez, en el primer bloque CNI.
+            if ($isFirstCni && $edifactCode !== null && $edifactCode !== '') {
                 $segments[] = $this->seg("STS+{$stsType}+{$edifactCode}");
-            } else {
-                // Si no hay status/edifact_code, no invento uno. Solo omito STS.
             }
-
-
 
             // 3.1) RFF (solo SRN del servicio) justo despues de STS
             if (!$this->shouldOmitSegment('RFF')) {
@@ -151,22 +150,25 @@ class GenerateIftstaPayloadService
                     }
                 }
 
-                // RFF+FS: solo 1 por mensaje si se especifica resourceId
-                $resourceId = $resourceId !== null ? trim((string) $resourceId) : null;
-                if ($resourceId !== null && $resourceId !== '') {
-                    $segments[] = $this->seg('RFF+FS:' . $resourceId);
-                } else {
-                    $resourceIds = $service->resources?->pluck('resource_id')->filter()->map(fn ($v) => trim((string) $v))->filter()->values() ?? collect();
-                    foreach ($resourceIds as $rid) {
-                        if ($rid !== '') {
-                            $segments[] = $this->seg('RFF+FS:' . $rid);
+                // RFF+FS: solo una vez, en el primer bloque CNI.
+                if ($isFirstCni) {
+                    $resourceId = $resourceId !== null ? trim((string) $resourceId) : null;
+                    if ($resourceId !== null && $resourceId !== '') {
+                        $segments[] = $this->seg('RFF+FS:' . $resourceId);
+                    } else {
+                        $resourceIds = $service->resources?->pluck('resource_id')->filter()->map(fn ($v) => trim((string) $v))->filter()->values() ?? collect();
+                        foreach ($resourceIds as $rid) {
+                            if ($rid !== '') {
+                                $segments[] = $this->seg('RFF+FS:' . $rid);
+                                break;
+                            }
                         }
                     }
                 }
             }
 
-            // DTM+7 con fecha/hora del reporte de estado (formato yyyymmddhhmm) - despues de SRN y FS
-            if ($edifactCode !== null && $edifactCode !== '' && !$this->shouldOmitSegment('DTM')) {
+            // DTM+7 asociado al bloque de estado, por lo tanto se emite una sola vez.
+            if ($isFirstCni && $edifactCode !== null && $edifactCode !== '' && !$this->shouldOmitSegment('DTM')) {
                 $dtmReportedAt = $statusReportedAt;
                 if (is_string($dtmReportedAt)) {
                     $dtmReportedAt = Carbon::parse($dtmReportedAt);
@@ -196,7 +198,7 @@ class GenerateIftstaPayloadService
                 'message_ref' => $messageRef,
                 'resource_id' => $resourceId,
                 'status_reported_at' => $statusReportedAt ? (string) $statusReportedAt : null,
-                'purchase_orders' => $pos->pluck('id')->values()->all(),
+                'purchase_orders' => $messagePos->pluck('id')->values()->all(),
             ],
         ];
     }
