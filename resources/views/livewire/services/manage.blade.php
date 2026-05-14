@@ -265,14 +265,17 @@ new #[Layout('layouts.app')] class extends Component {
         $statusLabel = function ($st) {
             return $st->status_name ?? ($st->status_be ?? ($st->status_description ?? 'Estado #' . $st->id));
         };
-        $isAdminUser = function () {
+        $canUploadSupports = function () {
             $user = auth()->user();
             if (!$user) {
                 return false;
             }
-            if (property_exists($user, 'rol_key') && $user->rol_key === 'admin') {
+
+            $username = strtolower(trim((string) ($user->username ?? '')));
+            if ($username === 'administrador') {
                 return true;
             }
+
             return method_exists($user, 'hasRole') && $user->hasRole('admin');
         };
         $isBlank = function ($value) {
@@ -384,7 +387,7 @@ new #[Layout('layouts.app')] class extends Component {
 
             @if ($form->service)
                 <div class="w-full sm:w-auto">
-                    @if ($isAdminUser())
+                    @if ($canUploadSupports())
                         <livewire:services.upload-file-modal :service="$form->service" :key="'upload-files-' . $form->service->id" />
                     @else
                         <x-primary-button type="button" disabled

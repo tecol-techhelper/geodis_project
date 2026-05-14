@@ -31,6 +31,15 @@ final class ServiceTable extends PowerGridComponent
             ->select([
                 'services.id',
                 'services.consecutive',
+                DB::raw("(SELECT UPPER(TRIM(orx.order_reference_value))
+                    FROM purchase_orders po
+                    INNER JOIN order_references orx ON orx.purchase_order_id = po.id
+                    INNER JOIN reference_types rt ON rt.id = orx.reference_type_id
+                    WHERE po.service_id = services.id
+                      AND UPPER(TRIM(rt.reference_type_code)) = 'ACD'
+                      AND TRIM(COALESCE(orx.order_reference_value, '')) <> ''
+                    ORDER BY orx.id DESC
+                    LIMIT 1) as acd_type_value"),
 
                 DB::raw("(SELECT sd.service_date
                     FROM service_dates sd
@@ -91,44 +100,48 @@ final class ServiceTable extends PowerGridComponent
                 DB::raw("(SELECT sp.party_name
                     FROM service_parties sp
                     INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'CZ'
+                    WHERE sp.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'PW'
                     ORDER BY sp.id DESC LIMIT 1) as origin_party_name"),
                 DB::raw("(SELECT sp.party_street
                     FROM service_parties sp
                     INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'CZ'
+                    WHERE sp.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'PW'
                     ORDER BY sp.id DESC LIMIT 1) as origin_party_street"),
                 DB::raw("(SELECT sp.party_city
                     FROM service_parties sp
                     INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'CZ'
+                    WHERE sp.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'PW'
                     ORDER BY sp.id DESC LIMIT 1) as origin_party_city"),
                 DB::raw("(SELECT sp.party_region
                     FROM service_parties sp
                     INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'CZ'
+                    WHERE sp.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'PW'
                     ORDER BY sp.id DESC LIMIT 1) as origin_party_region"),
 
-                DB::raw("(SELECT sp.party_name
-                    FROM service_parties sp
-                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'PW'
-                    ORDER BY sp.id DESC LIMIT 1) as dest_party_name"),
-                DB::raw("(SELECT sp.party_street
-                    FROM service_parties sp
-                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'PW'
-                    ORDER BY sp.id DESC LIMIT 1) as dest_party_street"),
-                DB::raw("(SELECT sp.party_city
-                    FROM service_parties sp
-                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'PW'
-                    ORDER BY sp.id DESC LIMIT 1) as dest_party_city"),
-                DB::raw("(SELECT sp.party_region
-                    FROM service_parties sp
-                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id AND pt.party_qualifier = 'PW'
-                    ORDER BY sp.id DESC LIMIT 1) as dest_party_region"),
+                DB::raw("(SELECT pop.party_name
+                    FROM purchase_order_parties pop
+                    INNER JOIN party_types pt ON pt.id = pop.party_type_id
+                    INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
+                    WHERE po.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
+                    ORDER BY pop.id DESC LIMIT 1) as dest_party_name"),
+                DB::raw("(SELECT pop.party_street
+                    FROM purchase_order_parties pop
+                    INNER JOIN party_types pt ON pt.id = pop.party_type_id
+                    INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
+                    WHERE po.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
+                    ORDER BY pop.id DESC LIMIT 1) as dest_party_street"),
+                DB::raw("(SELECT pop.party_city
+                    FROM purchase_order_parties pop
+                    INNER JOIN party_types pt ON pt.id = pop.party_type_id
+                    INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
+                    WHERE po.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
+                    ORDER BY pop.id DESC LIMIT 1) as dest_party_city"),
+                DB::raw("(SELECT pop.party_region
+                    FROM purchase_order_parties pop
+                    INNER JOIN party_types pt ON pt.id = pop.party_type_id
+                    INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
+                    WHERE po.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
+                    ORDER BY pop.id DESC LIMIT 1) as dest_party_region"),
             ]);
     }
 
@@ -142,6 +155,7 @@ final class ServiceTable extends PowerGridComponent
         return PowerGrid::fields()
             ->add('id')
             ->add('consecutive')
+            ->add('service_type', fn($row) => $this->fmtServiceType($row->acd_type_value ?? null))
 
             // Fecha unificada
             ->add('date_any', fn($row) => $this->fmtDate($row->date_any))
@@ -188,6 +202,9 @@ final class ServiceTable extends PowerGridComponent
                 ->sortable()
                 ->searchable(),
 
+            Column::make('Tipo de Servicio', 'service_type', 'acd_type_value')
+                ->sortable(),
+
             // ÚNICA columna de fecha
             Column::make('Fecha Inicio Estimada', 'date_any')->sortable(),
 
@@ -202,7 +219,7 @@ final class ServiceTable extends PowerGridComponent
                     FROM service_parties sp
                     INNER JOIN party_types pt ON pt.id = sp.party_type_id
                     WHERE sp.service_id = services.id
-                      AND pt.party_qualifier = 'CZ'
+                      AND UPPER(TRIM(pt.party_qualifier)) = 'PW'
                       AND CONCAT_WS(' ',
                           COALESCE(sp.party_name, ''),
                           COALESCE(sp.party_street, ''),
@@ -213,15 +230,16 @@ final class ServiceTable extends PowerGridComponent
             Column::make('Destino', 'destination_full')
                 ->searchableRaw("EXISTS (
                     SELECT 1
-                    FROM service_parties sp
-                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id
-                      AND pt.party_qualifier = 'PW'
+                    FROM purchase_order_parties pop
+                    INNER JOIN party_types pt ON pt.id = pop.party_type_id
+                    INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
+                    WHERE po.service_id = services.id
+                      AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
                       AND CONCAT_WS(' ',
-                          COALESCE(sp.party_name, ''),
-                          COALESCE(sp.party_street, ''),
-                          COALESCE(sp.party_city, ''),
-                          COALESCE(sp.party_region, '')
+                          COALESCE(pop.party_name, ''),
+                          COALESCE(pop.party_street, ''),
+                          COALESCE(pop.party_city, ''),
+                          COALESCE(pop.party_region, '')
                       ) LIKE ?
                 )"),
         ];
@@ -284,6 +302,26 @@ final class ServiceTable extends PowerGridComponent
     {
         if ($date === null || trim((string)$date) === '') return '';
         return substr((string)$date, 0, 10);
+    }
+
+    protected function fmtServiceType($acdValue): string
+    {
+        $value = strtoupper(trim((string)($acdValue ?? '')));
+        if ($value === '') {
+            return '';
+        }
+
+        $normalized = str_replace(['_', ' '], '-', $value);
+
+        if (in_array($normalized, ['POST-CARRIAGE', 'DOM-CONSOL', 'EMPTY-CONTAINER'], true)) {
+            return 'Logistica de Entrada';
+        }
+
+        if (in_array($normalized, ['DELIVERY-SO', 'ROAD'], true)) {
+            return 'Transporte Entre Bodegas';
+        }
+
+        return '';
     }
 
     private function fmtMeasure($value, $unit, string $label, bool $nullable = false): ?string
