@@ -62,6 +62,8 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
 
         Route::get('/edifact-files/{edifactFile}/download', \App\Http\Controllers\EdifactFileDownloadController::class)
             ->name('edifactfiles.download');
+        Route::get('/edifact-files/{edifactFile}/view', \App\Http\Controllers\EdifactFileViewController::class)
+            ->name('edifactfiles.view');
     });
 });
 

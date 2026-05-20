@@ -37,6 +37,7 @@ function initStatusSelects(root = document, options = {}) {
         const instance = new TomSelect(select, {
             create: false,
             maxItems: 1,
+            maxOptions: null,
             placeholder,
             allowEmptyOption: true,
             plugins: ['dropdown_input'],

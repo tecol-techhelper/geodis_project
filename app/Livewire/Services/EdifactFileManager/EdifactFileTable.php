@@ -79,7 +79,7 @@ final class EdifactFileTable extends PowerGridComponent
             Column::make('Fecha de Recepción', 'received_at_formatted', 'received_at')
                 ->sortable(),
 
-            Column::make('Archivo', 'file_url')
+            Column::make('Acciones', 'file_url')
                 ->sortable()
                 ->searchable()
         ];
