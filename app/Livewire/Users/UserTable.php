@@ -5,6 +5,7 @@ namespace App\Livewire\Users;
 use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use PowerComponents\LivewirePowerGrid\Button;
 use PowerComponents\LivewirePowerGrid\Column;
@@ -83,8 +84,27 @@ final class UserTable extends PowerGridComponent
                 ->slot('<span class="text-blue-600 hover:underline">Editar</span>')
                 ->id($row->id)
                 ->class('cursor-pointer')
-                ->route('user.edit', ['user' => $row->id])
+                ->route('user.edit', ['user' => $row->id]),
+            Button::add('delete')
+                ->slot('<span class="text-red-600 hover:underline">Eliminar</span>')
+                ->id('delete-user-' . $row->id)
+                ->class('cursor-pointer')
+                ->confirm('Esta accion eliminara el usuario. Deseas continuar?')
+                ->dispatch('deleteUser', ['rowId' => $row->id])
         ];
+    }
+
+    #[\Livewire\Attributes\On('deleteUser')]
+    public function deleteUser(int $rowId): void
+    {
+        if (Auth::id() === $rowId) {
+            flash()->title('Accion no permitida')->warning('No puedes eliminar tu propio usuario.');
+            return;
+        }
+
+        User::query()->findOrFail($rowId)->delete();
+
+        flash()->title('Usuario eliminado')->success('El usuario fue eliminado correctamente.');
     }
 
     public function onUpdatedToggleable(string|int $id, string $field, string $value): void

@@ -3,6 +3,8 @@
 namespace App\Livewire\Forms\Services;
 
 use App\Models\FileType;
+use App\Models\OrderReference;
+use App\Models\PurchaseOrder;
 use App\Models\Service;
 use App\Models\SupportFile;
 use App\Models\User;
@@ -27,10 +29,14 @@ class UploadFileForm extends Form
 
     public array $tempFiles = [];
 
-    #[Validate('string|in:CLI,CLP,IC,IF,RO,RT,ID,TRC,TDC,GABF301,PDR,GPS,RP')]
+    #[Validate('string|in:CLI,CLP,IC,IF,RT,ID,TRC,TDC,GABF301,PDR,GPS,RP')]
     public ?string $file_type = null;
 
     public ?string $free_text = null;
+    public ?int $purchase_order_id = null;
+    public ?string $purchase_order_number = null;
+    public ?int $order_reference_id = null;
+    public ?string $order_reference_value = null;
     public ?int $service_id = null;
 
     private function canManageSupports(): bool
@@ -78,6 +84,9 @@ class UploadFileForm extends Form
             return;
         }
 
+        $purchaseOrderContext = $this->selectedPurchaseOrderContext();
+        $orderReferenceContext = $this->selectedOrderReferenceContext();
+
         try {
             foreach ($incomingFiles as $file) {
                 $extension = strtolower((string) $file->getClientOriginalExtension());
@@ -93,9 +102,13 @@ class UploadFileForm extends Form
                 $tempPath = $file->storeAs('temp_support_files', $newFileName, 'local');
 
                 $this->tempFiles[] = [
-                    'fileName'   => $newFileName,
-                    'temp_path'  => $tempPath,
-                    'file_type'  => $this->file_type,
+                    'fileName'               => $newFileName,
+                    'temp_path'              => $tempPath,
+                    'file_type'              => $this->file_type,
+                    'purchase_order_id'      => $purchaseOrderContext['id'],
+                    'purchase_order_number'  => $purchaseOrderContext['number'],
+                    'order_reference_id'     => $orderReferenceContext['id'],
+                    'order_reference_value'  => $orderReferenceContext['value'],
                 ];
 
                 flash()->title('Archivo Cargado')->info("Archivo <b>{$newFileName}</b> Cargado Correctamente!");
@@ -244,7 +257,9 @@ class UploadFileForm extends Form
             }
 
             try {
-                $fileType = FileType::where('file_type', $temp['file_type'])->first();
+                $fileType = FileType::query()
+                    ->where('file_type', '=', $temp['file_type'], 'and')
+                    ->first();
                 $fileTypeId = $fileType?->id;
 
                 $supportFile = SupportFile::create([
@@ -256,6 +271,10 @@ class UploadFileForm extends Form
                     'service_id'     => $this->service_id,
                     'user_id'        => Auth::id(),
                     'file_type_id'   => $fileTypeId,
+                    'purchase_order_id' => $temp['purchase_order_id'] ?? null,
+                    'purchase_order_number' => $temp['purchase_order_number'] ?? null,
+                    'order_reference_id' => $temp['order_reference_id'] ?? null,
+                    'order_reference_value' => $temp['order_reference_value'] ?? null,
                     'uploaded_sftp'  => 1,
                     'sftp_error'     => null,
                 ]);
@@ -295,6 +314,58 @@ class UploadFileForm extends Form
         if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
             throw new \RuntimeException("No se pudo confirmar la creacion del directorio remoto {$remoteDir} por latencia.");
         }
+    }
+
+    private function selectedPurchaseOrderContext(): array
+    {
+        if (!$this->purchase_order_id || !$this->service_id) {
+            return ['id' => null, 'number' => null];
+        }
+
+        $purchaseOrder = PurchaseOrder::query()
+            ->select(['id', 'purchase_order_number', 'service_id'])
+            ->whereKey($this->purchase_order_id)
+            ->where('service_id', $this->service_id)
+            ->first();
+
+        if (!$purchaseOrder) {
+            return ['id' => null, 'number' => null];
+        }
+
+        $this->purchase_order_number = $purchaseOrder->purchase_order_number;
+
+        return [
+            'id' => $purchaseOrder->id,
+            'number' => $purchaseOrder->purchase_order_number,
+        ];
+    }
+
+    private function selectedOrderReferenceContext(): array
+    {
+        if (!$this->order_reference_id || !$this->service_id) {
+            return ['id' => null, 'value' => null];
+        }
+
+        $reference = OrderReference::query()
+            ->select(['order_references.id', 'order_references.order_reference_value'])
+            ->join('reference_types', 'reference_types.id', '=', 'order_references.reference_type_id')
+            ->join('purchase_orders', 'purchase_orders.id', '=', 'order_references.purchase_order_id')
+            ->where('order_references.id', $this->order_reference_id)
+            ->where('purchase_orders.service_id', $this->service_id)
+            ->whereRaw("UPPER(TRIM(reference_types.reference_type_code)) = 'COI'")
+            ->first();
+
+        if (!$reference) {
+            return ['id' => null, 'value' => null];
+        }
+
+        $value = trim(explode('/', trim((string) $reference->order_reference_value), 2)[0] ?? '');
+        $this->order_reference_value = $value !== '' ? $value : null;
+
+        return [
+            'id' => $reference->id,
+            'value' => $this->order_reference_value,
+        ];
     }
 
     private function uploadToSftp(string $remoteDir, string $remoteFileName, string $remotePath, string $localPath): array
