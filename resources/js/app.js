@@ -14,6 +14,10 @@ import 'flatpickr/dist/flatpickr.min.css';
 import TomSelect from 'tom-select';
 import 'tom-select/dist/css/tom-select.css';
 
+function initIcons() {
+    createIcons({ icons });
+}
+
 function initStatusSelects(root = document, options = {}) {
     const { force = false } = options;
     const selects = root.querySelectorAll('select.js-status-select');
@@ -81,15 +85,27 @@ function initStatusSelects(root = document, options = {}) {
     });
 }
 
-document.addEventListener('DOMContentLoaded', () => initStatusSelects());
-document.addEventListener('livewire:navigated', () => initStatusSelects(document, { force: true }));
+document.addEventListener('DOMContentLoaded', () => {
+    initIcons();
+    initStatusSelects();
+});
+document.addEventListener('livewire:navigated', () => {
+    initIcons();
+    initStatusSelects(document, { force: true });
+});
 
 if (window.Livewire && typeof window.Livewire.hook === 'function') {
     // Livewire v2 compatibility
-    window.Livewire.hook('message.processed', () => initStatusSelects(document, { force: true }));
+    window.Livewire.hook('message.processed', () => {
+        initIcons();
+        initStatusSelects(document, { force: true });
+    });
     // Livewire v3
     window.Livewire.hook('commit', ({ succeed }) => {
-        succeed(() => initStatusSelects(document, { force: true }));
+        succeed(() => {
+            initIcons();
+            initStatusSelects(document, { force: true });
+        });
     });
 }
 

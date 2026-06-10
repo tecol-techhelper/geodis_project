@@ -34,3 +34,5 @@ yarn-error.log
 /public/storage
 error_log
 public/error_log
+.agents
+AGENTS.md

@@ -8,6 +8,7 @@ use App\Models\StatusPurpose;
 use App\Jobs\UploadEdifactToSftpJob;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use App\Services\Edi\GenerateIftstaPayloadService;
 use Livewire\Attributes\Layout;
 use Livewire\Volt\Component;
@@ -62,7 +63,7 @@ new #[Layout('layouts.app')] class extends Component {
         }
 
         $this->resources = Resource::query()
-            ->select(['id', 'resource_id', 'resource_name', 'resource_operation'])
+            ->select(['id', 'resource_id', 'resource_name', 'resource_operation', 'required_report_mask'])
             ->orderBy('resource_operation')
             ->orderBy('resource_name')
             ->get();
@@ -70,7 +71,18 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function save(): void
     {
-        $dirtyPurchaseOrderIds = $this->form->update();
+        try {
+            $dirtyPurchaseOrderIds = $this->form->update();
+        } catch (ValidationException $exception) {
+            foreach (array_keys($exception->errors()) as $errorKey) {
+                if (preg_match('/additional_information\.([^\.]+)\./', $errorKey, $matches)) {
+                    $this->form->active_resource_row_key = $matches[1];
+                    break;
+                }
+            }
+
+            throw $exception;
+        }
 
         try {
             $service = Service::query()
@@ -80,6 +92,9 @@ new #[Layout('layouts.app')] class extends Component {
             if (count($dirtyPurchaseOrderIds) > 0) {
                 $this->validate([
                     'status_reported_at' => ['required', 'date'],
+                ], [
+                    'status_reported_at.required' => 'La fecha de reporte es obligatoria.',
+                    'status_reported_at.date' => 'La fecha de reporte no tiene un formato válido.',
                 ]);
 
                 /** @var GenerateIftstaPayloadService $iftsta */
@@ -199,6 +214,34 @@ new #[Layout('layouts.app')] class extends Component {
         $this->form->removeServiceResource($resourceIndex);
     }
 
+    public function updateAdditionalInformation(): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateAdditionalInformation($rowKey);
+
+        flash()
+            ->title('Información actualizada')
+            ->success('La información adicional se actualizó correctamente.');
+    }
+
+    public function openAdditionalInformation(string $rowKey): void
+    {
+        $this->form->openAdditionalInformation($rowKey);
+    }
+
+    public function closeAdditionalInformation(): void
+    {
+        $this->form->closeAdditionalInformation();
+    }
+
+    public function clearAdditionalInformation(string $rowKey): void
+    {
+        $this->form->clearAdditionalInformation($rowKey);
+    }
+
     private function uniqueOutgoingTransmissionId(string $seed): string
     {
         $base = 'OUT-' . preg_replace('/[^A-Za-z0-9_-]/', '', $seed);
@@ -252,7 +295,8 @@ new #[Layout('layouts.app')] class extends Component {
 };
 ?>
 @section('title', 'Servicio')
-<div class="space-y-6 pb-8" x-data x-on:support-files-saved.window="setTimeout(() => window.location.reload(), 3200)">
+<div class="space-y-6 pb-8" x-data="{ resourceToRemove: null }"
+    x-on:support-files-saved.window="setTimeout(() => window.location.reload(), 3200)">
     <div wire:ignore>
         <x-breadcrums :items="[
             ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
@@ -565,9 +609,10 @@ new #[Layout('layouts.app')] class extends Component {
 
                     $selectedResources = collect($form->service_resource_rows ?? [])
                         ->values()
-                        ->map(function ($row, $index) use ($resourceLookup, $serviceResourcePivotLookup, $formatReportedAt) {
+                        ->map(function ($row, $index) use ($resourceLookup, $serviceResourcePivotLookup, $formatReportedAt, $form) {
                             $resource = $resourceLookup->get((int) data_get($row, 'resource_id'));
                             $pivotId = (int) data_get($row, 'pivot_id', 0);
+                            $rowKey = (string) data_get($row, 'row_key');
                             $pivotResource = $pivotId > 0 ? $serviceResourcePivotLookup->get($pivotId) : null;
                             $lastReportedAt = $pivotResource?->pivot?->last_reported_at;
                             $statusName = $pivotResource?->pivot?->status_name;
@@ -578,9 +623,11 @@ new #[Layout('layouts.app')] class extends Component {
 
                             return [
                                 'index' => $index,
+                                'row_key' => $rowKey,
                                 'resource' => $resource,
                                 'last_reported_at' => $formatReportedAt($lastReportedAt),
                                 'status_name' => (is_string($statusName) && trim($statusName) !== '') ? trim($statusName) : '-',
+                                'additional_status' => $form->additionalInformationStatus($rowKey),
                             ];
                         })
                         ->filter()
@@ -667,6 +714,10 @@ new #[Layout('layouts.app')] class extends Component {
                                     </th>
                                     <th
                                         class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Información Adicional
+                                    </th>
+                                    <th
+                                        class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Acción
                                     </th>
                                 </tr>
@@ -684,11 +735,85 @@ new #[Layout('layouts.app')] class extends Component {
                                             {{ $selectedResource['status_name'] }}
                                         </td>
                                         <td class="px-4 py-3 text-center">
+                                            @php
+                                                $additionalStatus = $selectedResource['additional_status'];
+                                                $additionalStatusIcon = match ($additionalStatus) {
+                                                    'registered', 'complete' => 'circle-check',
+                                                    'pending' => 'circle-plus',
+                                                    default => 'circle-minus',
+                                                };
+                                                $additionalStatusClass = match ($additionalStatus) {
+                                                    'registered', 'complete' => 'border-green-300 bg-green-50 text-green-700 hover:bg-green-100',
+                                                    'pending' => 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100',
+                                                    default => 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400',
+                                                };
+                                                $additionalStatusTitle = match ($additionalStatus) {
+                                                    'registered' => 'Información adicional registrada.',
+                                                    'complete' => 'Información adicional completa, pendiente de guardar.',
+                                                    'pending' => 'Información adicional pendiente.',
+                                                    default => 'Este recurso no requiere información adicional para ser reportado.',
+                                                };
+                                                $requiresAdditionalInformation = $selectedResource['resource']->requiresAdditionalInformation();
+                                            @endphp
+
+                                            <button type="button"
+                                                @if ($requiresAdditionalInformation)
+                                                    wire:click="openAdditionalInformation('{{ $selectedResource['row_key'] }}')"
+                                                @else
+                                                    disabled
+                                                @endif
+                                                title="{{ $additionalStatusTitle }}"
+                                                aria-label="{{ $additionalStatusTitle }}"
+                                                class="inline-flex h-9 w-9 items-center justify-center rounded-lg border transition {{ $additionalStatusClass }}">
+                                                @switch($additionalStatusIcon)
+                                                    @case('circle-check')
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                            class="h-5 w-5" aria-hidden="true">
+                                                            <circle cx="12" cy="12" r="10" />
+                                                            <path d="m9 12 2 2 4-4" />
+                                                        </svg>
+                                                    @break
+
+                                                    @case('circle-plus')
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                            class="h-5 w-5" aria-hidden="true">
+                                                            <circle cx="12" cy="12" r="10" />
+                                                            <path d="M8 12h8" />
+                                                            <path d="M12 8v8" />
+                                                        </svg>
+                                                    @break
+
+                                                    @default
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                            class="h-5 w-5" aria-hidden="true">
+                                                            <circle cx="12" cy="12" r="10" />
+                                                            <path d="M8 12h8" />
+                                                        </svg>
+                                                @endswitch
+                                            </button>
+                                        </td>
+                                        <td class="px-4 py-3 text-center">
                                             @if ($form->canEdit)
                                                 <button type="button"
-                                                    wire:click="removeServiceResource({{ $selectedResource['index'] }})"
-                                                    class="text-red-600 hover:text-red-700 text-sm font-semibold">
-                                                    X
+                                                    x-on:click="resourceToRemove = {{ $selectedResource['index'] }}"
+                                                    class="inline-flex items-center gap-1 text-sm font-semibold text-red-600 hover:text-red-700">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                        viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                        class="h-4 w-4" aria-hidden="true">
+                                                        <path d="M3 6h18" />
+                                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                                        <path d="M19 6l-1 14c0 1-1 2-2 2H8c-1 0-2-1-2-2L5 6" />
+                                                        <path d="M10 11v6" />
+                                                        <path d="M14 11v6" />
+                                                    </svg>
+                                                    <span>Eliminar</span>
                                                 </button>
                                             @else
                                                 <span class="text-sm text-gray-400">-</span>
@@ -698,6 +823,218 @@ new #[Layout('layouts.app')] class extends Component {
                                 @endforeach
                             </tbody>
                         </table>
+                    </div>
+                @endif
+
+                <div x-cloak x-show="resourceToRemove !== null" x-transition.opacity
+                    x-on:keydown.escape.window="resourceToRemove = null"
+                    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+                    role="dialog" aria-modal="true" aria-labelledby="removeResourceTitle">
+                    <div x-on:click.outside="resourceToRemove = null"
+                        class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+                        <h3 id="removeResourceTitle" class="text-lg font-semibold text-gray-900">
+                            Eliminar recurso del servicio
+                        </h3>
+                        <p class="mt-2 text-sm text-gray-600">
+                            También se descartará la información adicional temporal de esta fila. El cambio será
+                            definitivo cuando pulses Enviar.
+                        </p>
+                        <div class="mt-6 flex justify-end gap-3">
+                            <x-secondary-button type="button" x-on:click="resourceToRemove = null">
+                                Cancelar
+                            </x-secondary-button>
+                            <x-danger-button type="button"
+                                x-on:click="$wire.removeServiceResource(resourceToRemove); resourceToRemove = null">
+                                Sí, eliminar
+                            </x-danger-button>
+                        </div>
+                    </div>
+                </div>
+
+                @php
+                    $activeResourceRow = $selectedResources->firstWhere('row_key', $form->active_resource_row_key);
+                    $activeRowKey = $activeResourceRow['row_key'] ?? null;
+                    $activeRequirements = $activeRowKey ? $form->requirementsForRow($activeRowKey) : [];
+                    $activeOperatorLabels = $activeRowKey ? $form->operatorLabelsForRow($activeRowKey) : [];
+                    $activeHasRegisteredInformation = $activeRowKey
+                        && filled(data_get($form->additional_information, "{$activeRowKey}.report_id"));
+                @endphp
+
+                @if ($activeResourceRow && $activeRowKey)
+                    <div x-data="{ confirmClear: false }" x-on:keydown.escape.window="$wire.closeAdditionalInformation()"
+                        class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-8 backdrop-blur-sm"
+                        role="dialog" aria-modal="true" aria-labelledby="additionalInformationTitle">
+                        <div class="my-4 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
+                            <div class="flex items-start justify-between border-b border-gray-200 bg-gray-50 px-5 py-4">
+                                <div>
+                                    <h3 id="additionalInformationTitle" class="font-semibold text-gray-900">
+                                        Información adicional
+                                    </h3>
+                                    <p class="mt-1 text-sm text-gray-600">
+                                        {{ $activeResourceRow['resource']->resource_name }}
+                                    </p>
+                                </div>
+                                <button type="button" wire:click="closeAdditionalInformation"
+                                    class="rounded-md p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                                    aria-label="Cerrar modal">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        class="h-5 w-5" aria-hidden="true">
+                                        <path d="M18 6 6 18" />
+                                        <path d="m6 6 12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="space-y-5 overflow-y-auto px-5 py-5">
+                                @if (!$form->canEdit)
+                                    <div class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                        Tienes acceso de solo lectura a esta información.
+                                    </div>
+                                @else
+                                    <p class="text-sm text-gray-600">
+                                        Los campos marcados con <span class="font-semibold text-red-600">*</span> son
+                                        obligatorios. Cerrar este modal conserva la información.
+                                        @if ($activeHasRegisteredInformation)
+                                            Usa Actualizar para guardar únicamente los cambios de este recurso.
+                                        @else
+                                            El registro inicial se guarda al pulsar Enviar en el servicio.
+                                        @endif
+                                    </p>
+                                @endif
+
+                                @if ($activeRequirements['vehicle'] ?? false)
+                                    <div>
+                                        <x-input-label for="additional_vehicle_plate">
+                                            Placa del Vehículo <span class="text-red-600">*</span>
+                                        </x-input-label>
+                                        <x-text-input id="additional_vehicle_plate" type="text"
+                                            wire:model.defer="form.additional_information.{{ $activeRowKey }}.vehicle_plate"
+                                            class="mt-1 w-full uppercase" maxlength="32"
+                                            placeholder="Ej. ABC123" :disabled="!$form->canEdit" />
+                                        @error('form.additional_information.' . $activeRowKey . '.vehicle_plate')
+                                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+                                @endif
+
+                                @if ($activeRequirements['operator'] ?? false)
+                                    <fieldset class="space-y-4 rounded-xl border border-gray-200 p-4">
+                                        <legend class="px-2 text-sm font-semibold text-gray-800">
+                                            {{ $activeOperatorLabels['role'] }}
+                                        </legend>
+
+                                        <div>
+                                            <x-input-label for="additional_operator_identification">
+                                                {{ $activeOperatorLabels['identification'] }} <span class="text-red-600">*</span>
+                                            </x-input-label>
+                                            <x-text-input id="additional_operator_identification" type="text"
+                                                wire:model.defer="form.additional_information.{{ $activeRowKey }}.operator_identification"
+                                                class="mt-1 w-full" maxlength="64" :disabled="!$form->canEdit" />
+                                            @error('form.additional_information.' . $activeRowKey . '.operator_identification')
+                                                <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                            @enderror
+                                        </div>
+
+                                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                            <div>
+                                                <x-input-label for="additional_operator_first_name">
+                                                    {{ $activeOperatorLabels['first_name'] }} <span class="text-red-600">*</span>
+                                                </x-input-label>
+                                                <x-text-input id="additional_operator_first_name" type="text"
+                                                    wire:model.defer="form.additional_information.{{ $activeRowKey }}.operator_first_name"
+                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                @error('form.additional_information.' . $activeRowKey . '.operator_first_name')
+                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                @enderror
+                                            </div>
+                                            <div>
+                                                <x-input-label for="additional_operator_last_name">
+                                                    {{ $activeOperatorLabels['last_name'] }} <span class="text-red-600">*</span>
+                                                </x-input-label>
+                                                <x-text-input id="additional_operator_last_name" type="text"
+                                                    wire:model.defer="form.additional_information.{{ $activeRowKey }}.operator_last_name"
+                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                @error('form.additional_information.' . $activeRowKey . '.operator_last_name')
+                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                @enderror
+                                            </div>
+                                        </div>
+                                    </fieldset>
+                                @endif
+
+                                @if ($activeRequirements['remittance'] ?? false)
+                                    <div>
+                                        <x-input-label for="additional_remittance">
+                                            Remesa de transporte <span class="text-red-600">*</span>
+                                        </x-input-label>
+                                        <x-text-input id="additional_remittance" type="text"
+                                            wire:model.defer="form.additional_information.{{ $activeRowKey }}.remesa_transporte"
+                                            class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                        @error('form.additional_information.' . $activeRowKey . '.remesa_transporte')
+                                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+                                @endif
+
+                                @if ($activeRequirements['container'] ?? false)
+                                    <div>
+                                        <x-input-label for="additional_container_number">
+                                            Número de contenedor <span class="text-red-600">*</span>
+                                        </x-input-label>
+                                        <x-text-input id="additional_container_number" type="text"
+                                            wire:model.defer="form.additional_information.{{ $activeRowKey }}.container_number"
+                                            class="mt-1 w-full uppercase" maxlength="64"
+                                            :disabled="!$form->canEdit" />
+                                        @error('form.additional_information.' . $activeRowKey . '.container_number')
+                                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                        @enderror
+                                    </div>
+                                @endif
+
+                            </div>
+
+                            <div class="flex flex-col-reverse gap-3 border-t border-gray-200 bg-gray-50 px-5 py-4 sm:flex-row sm:justify-end">
+                                @if ($form->canEdit)
+                                    <x-danger-button type="button" x-on:click="confirmClear = true"
+                                        title="Eliminará toda la información registrada o relacionada con este recurso.">
+                                        Limpiar
+                                    </x-danger-button>
+
+                                    @if ($activeHasRegisteredInformation)
+                                        <x-success-button type="button" wire:click="updateAdditionalInformation"
+                                            wire:loading.attr="disabled" wire:target="updateAdditionalInformation">
+                                            Actualizar
+                                        </x-success-button>
+                                    @endif
+                                @endif
+
+                                <x-primary-button type="button" wire:click="closeAdditionalInformation">
+                                    Cerrar
+                                </x-primary-button>
+                            </div>
+                        </div>
+
+                        <div x-cloak x-show="confirmClear" x-transition.opacity
+                            class="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+                            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+                                <h4 class="text-lg font-semibold text-gray-900">Limpiar información adicional</h4>
+                                <p class="mt-2 text-sm text-gray-600">
+                                    Se vaciarán los campos de esta fila. No podrás enviar el servicio hasta completar
+                                    nuevamente los datos requeridos o eliminar el recurso.
+                                </p>
+                                <div class="mt-6 flex justify-end gap-3">
+                                    <x-secondary-button type="button" x-on:click="confirmClear = false">
+                                        Cancelar
+                                    </x-secondary-button>
+                                    <x-danger-button type="button"
+                                        x-on:click="$wire.clearAdditionalInformation('{{ $activeRowKey }}'); confirmClear = false">
+                                        Sí, limpiar
+                                    </x-danger-button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 @endif
             </div>

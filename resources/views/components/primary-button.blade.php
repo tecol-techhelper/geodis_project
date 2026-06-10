@@ -22,19 +22,20 @@
                             hover:text-white
                             dark:hover:text-white
                             dark:hover:bg-white
-                            focus:bg-blue-700
-                            dark:focus:bg-white
+                            focus-visible:bg-blue-700
+                            focus-visible:text-white
+                            dark:focus-visible:bg-blue-700
+                            dark:focus-visible:text-white
                             active:bg-blue-900
                             dark:active:bg-blue-300
                             focus:outline-none
-                            focus:ring-2
-                            focus:ring-indigo-500
-                            focus:ring-offset-2
-                            dark:focus:ring-offset-blue-800
+                            focus-visible:ring-2
+                            focus-visible:ring-indigo-500
+                            focus-visible:ring-offset-2
+                            dark:focus-visible:ring-offset-blue-800
                             transition
                             ease-in-out
-                            duration-150
-                            focus:outline-none',
+                            duration-150',
     ]) }}>
     {{ $slot }}
 </button>

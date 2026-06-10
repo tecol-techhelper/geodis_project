@@ -146,4 +146,14 @@ class Service extends Model
             ->withPivot('id', 'last_reported_at', 'status_name')
             ->withTimestamps();
     }
+
+    public function service_resource_rows(): HasMany
+    {
+        return $this->hasMany(ServiceResource::class);
+    }
+
+    public function service_resource_reports(): HasMany
+    {
+        return $this->hasMany(ServiceResourceReport::class);
+    }
 }
