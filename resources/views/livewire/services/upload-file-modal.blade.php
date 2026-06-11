@@ -9,10 +9,56 @@ use App\Services\SharePointUploader;
 new class extends Component {
     use WithFileUploads;
     public UploadFileForm $form;
+    public array $cniOptions = [];
+    public array $coiOptions = [];
 
     public function mount(Service $service): void
     {
         $this->form->service_id = $service->id;
+        $service->loadMissing('purchase_orders.order_references.reference_type');
+
+        $this->cniOptions = $service->purchase_orders
+            ->map(function ($purchaseOrder) {
+                $number = trim((string) ($purchaseOrder->purchase_order_number ?? ''));
+
+                return $number !== '' ? [
+                    'id' => $purchaseOrder->id,
+                    'value' => $number,
+                ] : null;
+            })
+            ->filter()
+            ->unique('value')
+            ->values()
+            ->all();
+
+        $this->coiOptions = $service->purchase_orders
+            ->flatMap(fn($purchaseOrder) => $purchaseOrder->order_references ?? collect())
+            ->filter(function ($reference) {
+                return strtoupper(trim((string) ($reference->reference_type?->reference_type_code ?? ''))) === 'COI';
+            })
+            ->map(function ($reference) {
+                $value = trim((string) ($reference->order_reference_value ?? ''));
+                $value = trim(explode('/', $value, 2)[0] ?? '');
+
+                return $value !== '' ? [
+                    'id' => $reference->id,
+                    'value' => $value,
+                ] : null;
+            })
+            ->filter()
+            ->unique('value')
+            ->values()
+            ->all();
+
+        if (count($this->cniOptions) === 1) {
+            $this->form->purchase_order_id = (int) $this->cniOptions[0]['id'];
+            $this->form->purchase_order_number = $this->cniOptions[0]['value'];
+        }
+
+        if (count($this->coiOptions) === 1) {
+            $this->form->order_reference_id = (int) $this->coiOptions[0]['id'];
+            $this->form->order_reference_value = $this->coiOptions[0]['value'];
+        }
     }
 
     public function uploadFiles(): void
@@ -80,22 +126,54 @@ new class extends Component {
                     <select id="file_type" wire:model="form.file_type"
                         class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
                         <option selected value="">Seleccione un tipo</option>
-                        <option value="CLI">Cumplido</option>
-                        <option value="CLP">Check List Preoperacional</option>
-                        <option value="IC">Informe de Cargue</option>
-                        <option value="IF">Informe final (Registro Fotográfico)</option>
-                        <option value="RO">Reporte OnSite</option>
-                        <option value="RT">Remesa de Transporte</option>
-                        <option value="ID">Informe de Descargue</option>
-                        <option value="TRC">Tirilla de Retiro de Contenedores</option>
-                        <option value="TDC">Tirilla de Devolución de Contenedores</option>
-                        <option value="GABF301">Formato de inspección de contenedores y unidades de carga para
-                            importación y exportación</option>
-                        <option value="PDR">Plan de Ruta Contenedores – Impo // Expo</option>
-                        <option value="GPS">Reporte de GPS – Impo // Expo</option>
-                        <option value="RP">Reempaques</option>
+                        <option value="CLI">CUMPLIDO</option>
+                        <option value="CLP">CHECK LIST PREOPERACIONAL</option>
+                        <option value="GABF301">CONTAINER AND CARGO UNIT INSPECTION FORMAT FOR IMPORT AND EXPORT</option>
+                        <option value="GPS">REPORTE DE GPS - IMPO // EXPO</option>
+                        <option value="IC">INFORME DE CARGUE (REGISTRO FOTOGRÁFICO)</option>
+                        <option value="ID">INFORME DE DESCARGUE</option>
+                        <option value="IF">INFORME FINAL</option>
+                        <option value="PDR">PLAN DE RUTA CONTENEDORES - IMPO // EXPO</option>
+                        <option value="RP">REEMPAQUES</option>
+                        <option value="RT">REMESA DE TRANSPORTE</option>
+                        <option value="TDC">TIRILLA DE DEVOLUCION DE CONTENEDORES</option>
+                        <option value="TRC">TIRILLA DE RETIRO DE CONTENEDORES</option>
                     </select>
                     <x-input-error :messages="$errors->get('form.file_type')" class="mt-2" />
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <x-input-label for="cni_value">CNI</x-input-label>
+                        <select id="cni_value" wire:model="form.purchase_order_id"
+                            class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400"
+                            @disabled(count($cniOptions) <= 1)>
+                            @if (count($cniOptions) !== 1)
+                                <option value="">Seleccione CNI</option>
+                            @endif
+                            @forelse ($cniOptions as $cniOption)
+                                <option value="{{ $cniOption['id'] }}">{{ $cniOption['value'] }}</option>
+                            @empty
+                                <option value="">Sin CNI</option>
+                            @endforelse
+                        </select>
+                    </div>
+
+                    <div class="space-y-1">
+                        <x-input-label for="coi_value">COI</x-input-label>
+                        <select id="coi_value" wire:model="form.order_reference_id"
+                            class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400"
+                            @disabled(count($coiOptions) <= 1)>
+                            @if (count($coiOptions) !== 1)
+                                <option value="">Seleccione COI</option>
+                            @endif
+                            @forelse ($coiOptions as $coiOption)
+                                <option value="{{ $coiOption['id'] }}">{{ $coiOption['value'] }}</option>
+                            @empty
+                                <option value="">Sin COI</option>
+                            @endforelse
+                        </select>
+                    </div>
                 </div>
 
                 <div class="pt-3">

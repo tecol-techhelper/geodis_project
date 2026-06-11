@@ -64,14 +64,14 @@
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Mensajes
                     Extraidos</a>
                 <a href="{{ route('edifactfiles.index') }}"
-                    class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Archivos
-                    Edi Leidos</a>
-                <a href="{{ route('uploaded.file') }}"
+                    class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Edi
+                    Procesados</a>
+                {{-- <a href="{{ route('uploaded.file') }}"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Soportes
                     Cargados</a>
                 <a href="{{ route('upload.file') }}"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Cargar
-                    Soportes</a>
+                    Soportes</a> --}}
             </div>
         @endif
     </div>

@@ -1,5 +1,6 @@
 /.phpunit.cache
 /node_modules
+/.vite
 /public/build
 /public/hot
 /public/storage
@@ -34,3 +35,5 @@ yarn-error.log
 /public/storage
 error_log
 public/error_log
+.agents
+AGENTS.md
