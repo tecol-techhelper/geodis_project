@@ -41,14 +41,6 @@ final class ServiceTable extends PowerGridComponent
                     ORDER BY orx.id DESC
                     LIMIT 1) as acd_type_value"),
 
-                DB::raw("(SELECT sd.service_date
-                    FROM service_dates sd
-                    INNER JOIN date_types dt ON dt.id = sd.date_type_id
-                    WHERE sd.service_id = services.id
-                      AND dt.type_qualifier IN ('81', '11')
-                    ORDER BY CASE WHEN dt.type_qualifier = '81' THEN 0 ELSE 1 END, sd.id DESC
-                    LIMIT 1) as date_any"),
-
                 DB::raw("(SELECT sm.measure_value
                     FROM service_measurements sm
                     INNER JOIN global_measure_types gmt ON gmt.id = sm.global_measure_type_id
@@ -157,9 +149,6 @@ final class ServiceTable extends PowerGridComponent
             ->add('consecutive')
             ->add('service_type', fn($row) => $this->fmtServiceType($row->acd_type_value ?? null))
 
-            // Fecha unificada
-            ->add('date_any', fn($row) => $this->fmtDate($row->date_any))
-
             ->add('weight', function ($row) {
                 $gross = $this->fmtMeasure($row->weight_gross_value, $row->weight_gross_unit, 'Bruto', true);
                 $net   = $this->fmtMeasure($row->weight_net_value,   $row->weight_net_unit,   'Neto', true);
@@ -204,9 +193,6 @@ final class ServiceTable extends PowerGridComponent
 
             Column::make('Tipo de Servicio', 'service_type', 'acd_type_value')
                 ->sortable(),
-
-            // ÚNICA columna de fecha
-            Column::make('Fecha Inicio Estimada', 'date_any')->sortable(),
 
             Column::make('Peso', 'weight'),
             Column::make('Volumen', 'volume'),
@@ -298,12 +284,6 @@ final class ServiceTable extends PowerGridComponent
     // Helpers
     // ==========================
 
-    private function fmtDate($date): string
-    {
-        if ($date === null || trim((string)$date) === '') return '';
-        return substr((string)$date, 0, 10);
-    }
-
     protected function fmtServiceType($acdValue): string
     {
         $value = strtoupper(trim((string)($acdValue ?? '')));
@@ -314,14 +294,23 @@ final class ServiceTable extends PowerGridComponent
         $normalized = str_replace(['_', ' '], '-', $value);
 
         if (in_array($normalized, ['POST-CARRIAGE', 'DOM-CONSOL', 'EMPTY-CONTAINER'], true)) {
-            return 'Logistica de Entrada';
+            return $this->renderServiceType('LOG ENT', $normalized);
         }
 
         if (in_array($normalized, ['DELIVERY-SO', 'ROAD'], true)) {
-            return 'Transporte Entre Bodegas';
+            return $this->renderServiceType('OTX', $normalized);
         }
 
         return '';
+    }
+
+    private function renderServiceType(string $type, string $subtype): string
+    {
+        return sprintf(
+            '<span class="whitespace-nowrap"><span class="font-bold text-indigo-700">%s</span> <span class="font-medium text-gray-500">(%s)</span></span>',
+            e($type),
+            e($subtype)
+        );
     }
 
     private function fmtMeasure($value, $unit, string $label, bool $nullable = false): ?string

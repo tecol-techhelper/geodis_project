@@ -873,19 +873,59 @@ new #[Layout('layouts.app')] class extends Component {
 
         {{-- PURCHASE ORDERS --}}
         @if ($form->service?->purchase_orders?->isNotEmpty())
-            <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Órdenes de Compra
-                </h2>
+            <section
+                x-data="{ selectedPurchaseOrder: {{ (int) $form->service->purchase_orders->first()->id }} }"
+                aria-labelledby="purchase-orders-title">
+                <div class="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                    <h2 id="purchase-orders-title"
+                        class="flex items-center gap-2 text-xl font-bold text-gray-900">
+                        <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Órdenes de Compra
+                    </h2>
+                    <p class="text-sm text-gray-500">
+                        {{ $form->service->purchase_orders->count() }}
+                        {{ $form->service->purchase_orders->count() === 1 ? 'orden disponible' : 'órdenes disponibles' }}
+                    </p>
+                </div>
 
-                @foreach ($form->service->purchase_orders as $index => $po)
-                    <div class="mb-6 p-4 border-2 border-indigo-200 rounded-xl bg-indigo-50/30">
+                <div class="grid grid-cols-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-0">
+                    <nav class="rounded-xl border border-gray-200 bg-white shadow-sm lg:rounded-r-none"
+                        aria-label="Órdenes de compra del servicio">
+                        <div class="border-b border-gray-200 px-4 py-3">
+                            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Seleccionar orden</p>
+                        </div>
+
+                        <div class="flex gap-2 overflow-x-auto p-3 lg:max-h-[70vh] lg:flex-col lg:overflow-y-auto">
+                            @foreach ($form->service->purchase_orders as $index => $po)
+                                <button type="button"
+                                    x-on:click="selectedPurchaseOrder = {{ (int) $po->id }}"
+                                    x-bind:aria-current="selectedPurchaseOrder === {{ (int) $po->id }} ? 'true' : 'false'"
+                                    x-bind:class="selectedPurchaseOrder === {{ (int) $po->id }}
+                                        ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-600'
+                                        : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-gray-50'"
+                                    class="min-w-[14rem] rounded-lg border px-4 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 lg:min-w-0 lg:w-full">
+                                    <span class="block truncate text-sm font-semibold">
+                                        Orden {{ $index + 1 }} # {{ $po->purchase_order_number ?? 'Sin número' }}
+                                    </span>
+                                </button>
+                            @endforeach
+                        </div>
+                    </nav>
+
+                    <div class="min-w-0">
+                        @foreach ($form->service->purchase_orders as $index => $po)
+                            <article x-show="selectedPurchaseOrder === {{ (int) $po->id }}" x-cloak
+                                x-transition.opacity.duration.150ms
+                                aria-labelledby="purchase-order-{{ $po->id }}-title"
+                                style="display: none;"
+                                class="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 shadow-sm sm:p-5 lg:rounded-l-none">
                         <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-3">
-                            <h3 class="text-lg font-semibold text-gray-900">
+                            <h3 id="purchase-order-{{ $po->id }}-title"
+                                class="text-lg font-semibold text-gray-900">
                                 Orden #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
                             </h3>
 
@@ -1295,74 +1335,248 @@ new #[Layout('layouts.app')] class extends Component {
                             });
                         @endphp
                         @if ($poItems?->isNotEmpty())
-                            <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Items de la Orden</h4>
+                            <div class="mt-4" x-data="{ itemSearch: '', expandedItem: null }">
+                                <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <h4 class="text-md font-semibold text-gray-800">Items de la Orden</h4>
 
-                                @foreach ($poItems as $itemIndex => $item)
-                                    <div class="mb-4 p-4 border-2 border-purple-200 rounded-lg bg-purple-50/20">
-                                        <h5 class="text-sm font-bold text-gray-900 mb-3">
-                                            Item #{{ $item->line_item_number ?? $itemIndex + 1 }}
-                                        </h5>
+                                    <label class="relative block w-full sm:max-w-xs">
+                                        <span class="sr-only">Buscar Item</span>
+                                        <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+                                            fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="m21 21-4.35-4.35m1.35-5.65a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z" />
+                                        </svg>
+                                        <input type="search" x-model.debounce.200ms="itemSearch"
+                                            placeholder="Buscar Item, descripción o contenedor"
+                                            class="w-full rounded-lg border-gray-300 py-2 pl-9 pr-3 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                                    </label>
+                                </div>
 
-                                        {{-- Item Principal Info --}}
-                                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-                                            @if ($item->item_description)
-                                                <div class="col-span-2">
-                                                    <div class="text-xs text-gray-600">Descripción</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ $item->item_description }}</div>
-                                                </div>
-                                            @endif
-                                            @if ($item->quantity)
-                                                <div>
-                                                    <div class="text-xs text-gray-600">Cantidad</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ $item->quantity }} {{ $item->quantity_unit ?? '' }}
-                                                    </div>
-                                                </div>
-                                            @endif
-                                            @if ($item->gross_weight)
-                                                <div>
-                                                    <div class="text-xs text-gray-600">Peso Bruto</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ number_format($item->gross_weight, 2) }}
-                                                        {{ $item->gross_weight_unit ?? '' }}
-                                                    </div>
-                                                </div>
-                                            @endif
-                                            @if ($item->net_weight)
-                                                <div>
-                                                    <div class="text-xs text-gray-600">Peso Neto</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ number_format($item->net_weight, 2) }}
-                                                        {{ $item->net_weight_unit ?? '' }}
-                                                    </div>
-                                                </div>
-                                            @endif
-                                            @if ($item->volume)
-                                                <div>
-                                                    <div class="text-xs text-gray-600">Volumen</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ number_format($item->volume, 2) }}
-                                                        {{ $item->volume_unit ?? '' }}
-                                                    </div>
-                                                </div>
-                                            @endif
-                                            @if ($item->package_count)
-                                                <div>
-                                                    <div class="text-xs text-gray-600">Paquetes</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ $item->package_count }}</div>
-                                                </div>
-                                            @endif
-                                            @if ($item->package_type)
-                                                <div>
-                                                    <div class="text-xs text-gray-600">Tipo Paquete</div>
-                                                    <div class="text-sm font-medium text-gray-900">
-                                                        {{ $item->package_type }}</div>
-                                                </div>
-                                            @endif
-                                        </div>
+                                <div class="overflow-x-auto rounded-lg border border-gray-200 shadow-sm">
+                                    <table class="min-w-[72rem] w-full divide-y divide-gray-200 text-sm">
+                                        <thead class="bg-gray-50">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Item
+                                                </th>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Descripción
+                                                </th>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Peso
+                                                </th>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Volumen
+                                                </th>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Unidades
+                                                </th>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Dimensiones (L/A/A)
+                                                </th>
+                                                <th class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Contenedor
+                                                </th>
+                                                <th class="px-3 py-2 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    Acción
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-gray-200 bg-white">
+                                            @foreach ($poItems as $itemIndex => $item)
+                                                @php
+                                                    $itemNumber = $item->item_number ?? $itemIndex + 1;
+                                                    $itemNotes = $item->item_notes
+                                                        ?->filter(fn($note) => !$isBlank($note->note_text ?? null))
+                                                        ->values() ?? collect();
+                                                    $itemDescription = trim((string) ($itemNotes->first()?->note_text ?? ''));
+
+                                                    $summaryMeasures = $item->item_measures
+                                                        ?->filter(
+                                                            fn($measure) => !$isBlank(
+                                                                $measure->measurement_value ?? ($measure->measure_value ?? null),
+                                                            ),
+                                                        )
+                                                        ->values() ?? collect();
+                                                    $weightMeasures = $summaryMeasures->filter(function ($measure) {
+                                                        $attributeCode = strtoupper(
+                                                            trim(
+                                                                (string) ($measure->measurement_attribute_code
+                                                                    ?->measurement_attribute_code ?? ''),
+                                                            ),
+                                                        );
+                                                        $purposeCode = strtoupper(
+                                                            trim(
+                                                                (string) ($measure->measurement_purpose_code
+                                                                    ?->measurement_purpose_code ?? ''),
+                                                            ),
+                                                        );
+
+                                                        return in_array($attributeCode, ['AAC', 'AAD'], true) ||
+                                                            $purposeCode === 'WT';
+                                                    });
+                                                    $volumeMeasures = $summaryMeasures->filter(function ($measure) {
+                                                        $attributeCode = strtoupper(
+                                                            trim(
+                                                                (string) ($measure->measurement_attribute_code
+                                                                    ?->measurement_attribute_code ?? ''),
+                                                            ),
+                                                        );
+                                                        $purposeCode = strtoupper(
+                                                            trim(
+                                                                (string) ($measure->measurement_purpose_code
+                                                                    ?->measurement_purpose_code ?? ''),
+                                                            ),
+                                                        );
+
+                                                        return $attributeCode === 'AAW' || $purposeCode === 'VOL';
+                                                    });
+                                                    $formatSummaryMeasure = function ($measure): string {
+                                                        if (!$measure) {
+                                                            return '-';
+                                                        }
+
+                                                        $value = $measure->measurement_value ?? ($measure->measure_value ?? null);
+                                                        $formattedValue =
+                                                            $value !== null
+                                                                ? rtrim(
+                                                                    rtrim(number_format((float) $value, 3, ',', '.'), '0'),
+                                                                    ',',
+                                                                )
+                                                                : '-';
+                                                        $unit =
+                                                            $measure->measure_unit_code ??
+                                                            ($measure->measurement_unit ?? ($measure->measure_unit ?? ''));
+
+                                                        return trim($formattedValue . ' ' . $unit);
+                                                    };
+                                                    $weightSummary = $formatSummaryMeasure($weightMeasures->first());
+                                                    if ($weightMeasures->count() > 1) {
+                                                        $weightSummary .= ' +' . ($weightMeasures->count() - 1);
+                                                    }
+                                                    $volumeSummary = $formatSummaryMeasure($volumeMeasures->first());
+                                                    if ($volumeMeasures->count() > 1) {
+                                                        $volumeSummary .= ' +' . ($volumeMeasures->count() - 1);
+                                                    }
+
+                                                    $summaryDimensions = $item->item_dimensions
+                                                        ?->filter(
+                                                            fn($dimension) => !$isBlank($dimension->length ?? null) ||
+                                                                !$isBlank($dimension->width ?? null) ||
+                                                                !$isBlank($dimension->height ?? null),
+                                                        )
+                                                        ->values() ?? collect();
+                                                    $firstDimension = $summaryDimensions->first();
+                                                    $dimensionSummary = $firstDimension
+                                                        ? implode(' / ', [
+                                                            $firstDimension->length ?? '-',
+                                                            $firstDimension->width ?? '-',
+                                                            $firstDimension->height ?? '-',
+                                                        ]) .
+                                                            ($firstDimension->dimension_unit
+                                                                ? ' ' . $firstDimension->dimension_unit
+                                                                : '')
+                                                        : '-';
+                                                    if ($summaryDimensions->count() > 1) {
+                                                        $dimensionSummary .= ' +' . ($summaryDimensions->count() - 1);
+                                                    }
+
+                                                    $summaryContainers = $item->item_container_identifiers
+                                                        ?->filter(
+                                                            fn($container) => !$isBlank(
+                                                                $container->package_identifier_value ?? null,
+                                                            ),
+                                                        )
+                                                        ->values() ?? collect();
+                                                    $containerSummary =
+                                                        $summaryContainers->first()?->package_identifier_value ?? '-';
+                                                    if ($summaryContainers->count() > 1) {
+                                                        $containerSummary .= ' +' . ($summaryContainers->count() - 1);
+                                                    }
+
+                                                    $unitsSummary = trim(
+                                                        (string) ($item->item_count ?? '-') .
+                                                            ' ' .
+                                                            (string) ($item->item_type ?? ''),
+                                                    );
+                                                    $itemSearchText = strtolower(
+                                                        trim(
+                                                            implode(' ', [
+                                                                $itemNumber,
+                                                                $itemDescription,
+                                                                $containerSummary,
+                                                            ]),
+                                                        ),
+                                                    );
+                                                @endphp
+
+                                                <tr x-show="itemSearch === '' || @js($itemSearchText).includes(itemSearch.toLowerCase())"
+                                                    class="hover:bg-gray-50">
+                                                    <td class="whitespace-nowrap px-3 py-3 font-semibold text-gray-900">
+                                                        {{ $itemNumber }}
+                                                    </td>
+                                                    <td class="max-w-xs px-3 py-3 text-gray-700">
+                                                        <span class="block truncate" title="{{ $itemDescription }}">
+                                                            {{ $itemDescription !== '' ? $itemDescription : '-' }}
+                                                        </span>
+                                                    </td>
+                                                    <td class="whitespace-nowrap px-3 py-3 text-gray-700">
+                                                        {{ $weightSummary }}
+                                                    </td>
+                                                    <td class="whitespace-nowrap px-3 py-3 text-gray-700">
+                                                        {{ $volumeSummary }}
+                                                    </td>
+                                                    <td class="whitespace-nowrap px-3 py-3 text-gray-700">
+                                                        {{ $unitsSummary }}
+                                                    </td>
+                                                    <td class="whitespace-nowrap px-3 py-3 text-gray-700">
+                                                        {{ $dimensionSummary }}
+                                                    </td>
+                                                    <td class="max-w-xs px-3 py-3 text-gray-700">
+                                                        <span class="block truncate" title="{{ $containerSummary }}">
+                                                            {{ $containerSummary }}
+                                                        </span>
+                                                    </td>
+                                                    <td class="whitespace-nowrap px-3 py-3 text-right">
+                                                        <button type="button"
+                                                            x-on:click="expandedItem = expandedItem === {{ (int) $item->id }} ? null : {{ (int) $item->id }}"
+                                                            x-bind:aria-expanded="expandedItem === {{ (int) $item->id }}"
+                                                            class="font-semibold text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                                                            <span x-text="expandedItem === {{ (int) $item->id }} ? 'Ocultar' : 'Ver detalle'"></span>
+                                                        </button>
+                                                    </td>
+                                                </tr>
+
+                                                <tr x-show="expandedItem === {{ (int) $item->id }} && (itemSearch === '' || @js($itemSearchText).includes(itemSearch.toLowerCase()))"
+                                                    x-cloak style="display: none;">
+                                                    <td colspan="8" class="bg-purple-50/30 p-4 sm:p-5">
+                                                        <div class="rounded-lg border border-purple-200 bg-white p-4">
+                                                            <h5 class="mb-3 text-sm font-bold text-gray-900">
+                                                                Detalle del Item #{{ $itemNumber }}
+                                                            </h5>
+
+                                                            {{-- Item Principal Info --}}
+                                                            <div class="mb-3">
+                                                                <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                                    Información general
+                                                                </div>
+                                                                <dl class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                                                    <div>
+                                                                        <dt class="text-xs text-gray-600">Número de Item</dt>
+                                                                        <dd class="text-sm font-medium text-gray-900">{{ $itemNumber }}</dd>
+                                                                    </div>
+                                                                    <div>
+                                                                        <dt class="text-xs text-gray-600">Unidades</dt>
+                                                                        <dd class="text-sm font-medium text-gray-900">{{ $unitsSummary }}</dd>
+                                                                    </div>
+                                                                    <div class="sm:col-span-3">
+                                                                        <dt class="text-xs text-gray-600">Descripción</dt>
+                                                                        <dd class="text-sm font-medium text-gray-900">
+                                                                            {{ $itemDescription !== '' ? $itemDescription : '-' }}
+                                                                        </dd>
+                                                                    </div>
+                                                                </dl>
+                                                            </div>
 
                                         {{-- Item Notes (DESCRIPCIÓN) --}}
                                         @php
@@ -1579,7 +1793,10 @@ new #[Layout('layouts.app')] class extends Component {
                                             $itemUnitIds = $item->item_unit_identifiers?->filter(function (
                                                 $unitId,
                                             ) use ($isBlank) {
-                                                return !$isBlank($unitId->unit_identifier_value ?? null);
+                                                return !$isBlank(
+                                                    $unitId->unit_identifier_value ??
+                                                        ($unitId->identifier_value_from ?? null),
+                                                );
                                             });
                                         @endphp
                                         @if ($itemUnitIds?->isNotEmpty())
@@ -1594,19 +1811,26 @@ new #[Layout('layouts.app')] class extends Component {
                                                                 {{ $this->getUnitIdentifierLabel($unitId->unit_identifier_type ?? '') }}:
                                                             </span>
                                                             <span
-                                                                class="text-gray-900">{{ $unitId->unit_identifier_value ?? '-' }}</span>
+                                                                class="text-gray-900">{{ $unitId->unit_identifier_value ?? ($unitId->identifier_value_from ?? '-') }}</span>
                                                         </div>
                                                     @endforeach
                                                 </div>
                                             </div>
                                         @endif
-                                    </div>
-                                @endforeach
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         @endif
+                            </article>
+                        @endforeach
                     </div>
-                @endforeach
-            </div>
+                </div>
+            </section>
         @endif
 
         {{-- LOCATION DETAILS --}}
