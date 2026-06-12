@@ -1,4 +1,5 @@
 <div class="mt-4">
+    @if (!$hiddenForTrash)
     @if (!$service)
         <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-600">
             Seleccione una fila en `Ver Resumen` para ver información adicional.
@@ -82,5 +83,6 @@
                 @endif
             </div>
         </div>
+    @endif
     @endif
 </div>
