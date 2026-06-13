@@ -15,8 +15,8 @@ class PermissionRoleSeeder extends Seeder
     {
         $now = now();
 
-        $attach = function (?Role $role, array $keys) use ($now) {
-            if (!$role || empty($keys)) {
+        $sync = function (?Role $role, array $keys) use ($now): void {
+            if (! $role) {
                 return;
             }
 
@@ -27,14 +27,19 @@ class PermissionRoleSeeder extends Seeder
                 $id => ['created_at' => $now, 'updated_at' => $now],
             ]);
 
-            $role->permissions()->syncWithoutDetaching($pivot);
+            $role->permissions()->sync($pivot);
         };
 
-        $attach(Role::where('rol_key', 'admin')->first(), Permission::pluck('permission_key')->toArray());
-        $attach(Role::where('rol_key', 'coord')->first(), ['view_services', 'edit_transport_block', 'upload_files']);
-        $attach(Role::where('rol_key', 'account')->first(), ['view_services', 'edit_accounting_block']);
-        $attach(Role::where('rol_key', 'od')->first(), ['view_services', 'edit_payment_block']);
-        $attach(Role::where('rol_key', 'sec')->first(), ['view_services', 'edit_tracking_block']);
-        $attach(Role::where('rol_key', 'spec')->first(), ['view_services', 'edit_record_block']);
+        $sync(Role::where('rol_key', 'admin')->first(), Permission::pluck('permission_key')->all());
+        $sync(Role::where('rol_key', 'coord')->first(), [
+            'view_services',
+            'edit_services',
+            'upload_files',
+            'delete_services',
+        ]);
+        $sync(Role::where('rol_key', 'account')->first(), ['view_services']);
+        $sync(Role::where('rol_key', 'od')->first(), ['view_services']);
+        $sync(Role::where('rol_key', 'sec')->first(), ['view_services']);
+        $sync(Role::where('rol_key', 'spec')->first(), ['view_services']);
     }
 }

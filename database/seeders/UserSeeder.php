@@ -19,7 +19,7 @@ class UserSeeder extends Seeder
             'email' => 'administrador@geodis.com',
             'first_name' => 'System',
             'last_name' => 'Administrator',
-            'username' => 'admin',
+            'username' => 'admin_pruebas',
             'user_area' => 'Sistemas',
             'password' => 'ParasiteEve1424*',
             'is_active' => 1,
@@ -29,7 +29,7 @@ class UserSeeder extends Seeder
         $admin = User::query()
             ->where('email', $adminData['email'])
             ->orWhere('username', $adminData['username'])
-            ->orWhere('username', 'admin_pruebas')
+            ->orWhere('username', 'admin')
             ->first();
 
         if ($admin) {

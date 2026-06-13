@@ -1,6 +1,4 @@
 <div>
-    @includeIf(data_get($setUp, 'header.includeViewOnTop'))
-
     <div class="mb-3 md:flex md:flex-row w-full justify-between items-center">
         <div class="md:flex md:flex-row w-full gap-1">
             <div x-data="pgRenderActions">
