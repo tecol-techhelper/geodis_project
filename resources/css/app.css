@@ -5,8 +5,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 /* Tom Select: separar visualmente selección vs búsqueda */
 .ts-wrapper .ts-control {
     background-color: #f8fafc;
