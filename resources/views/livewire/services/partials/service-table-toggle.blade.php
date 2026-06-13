@@ -1,10 +1,11 @@
 @if (auth()->user()?->hasRole('admin'))
     <div x-data="{ trash: @entangle('showTrash') }"
         wire:key="service-table-view-toggle"
-        class="relative grid h-10 w-[4.5rem] shrink-0 grid-cols-2 rounded-full border border-gray-300 bg-gray-100 p-0.5 shadow-inner"
+        class="relative grid h-10 w-[4.5rem] shrink-0 grid-cols-2 items-center rounded-full border border-gray-300
+            bg-gray-100 p-1 shadow-inner"
         role="group" aria-label="Cambiar vista de servicios">
         <span aria-hidden="true"
-            class="absolute left-0.5 top-0.5 h-9 w-9 rounded-full shadow-sm
+            class="absolute left-1 top-1 h-8 w-8 rounded-full shadow-sm
                 transition-all duration-300 ease-in-out motion-reduce:transition-none"
             x-bind:class="trash
                 ? 'translate-x-8 bg-red-600'
@@ -18,7 +19,7 @@
             wire:target="setTrashMode"
             title="Servicios activos"
             aria-label="Mostrar servicios activos"
-            class="relative z-10 inline-flex h-9 w-9 items-center justify-center rounded-full
+            class="relative z-10 inline-flex h-8 w-8 items-center justify-center rounded-full
                 transition-colors duration-300 ease-in-out motion-reduce:transition-none
                 focus:outline-none focus-visible:ring-2 focus-visible:ring-green-500 focus-visible:ring-offset-2"
             x-bind:class="trash ? 'text-green-700' : 'text-white'">
@@ -37,7 +38,7 @@
             wire:target="setTrashMode"
             title="Papelera"
             aria-label="Mostrar papelera de servicios"
-            class="relative z-10 inline-flex h-9 w-9 items-center justify-center rounded-full
+            class="relative z-10 inline-flex h-8 w-8 items-center justify-center rounded-full
                 transition-colors duration-300 ease-in-out motion-reduce:transition-none
                 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2"
             x-bind:class="trash ? 'text-white' : 'text-red-700'">

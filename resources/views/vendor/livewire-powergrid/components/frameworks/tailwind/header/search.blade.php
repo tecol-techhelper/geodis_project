@@ -1,5 +1,5 @@
 @if (data_get($setUp, 'header.searchInput'))
-    <div class="flex flex-row mt-3 md:mt-0 w-full rounded-full justify-start sm:justify-center md:justify-end gap-2">
+    <div class="flex flex-row items-center mt-3 md:mt-0 w-full rounded-full justify-start sm:justify-center md:justify-end gap-2">
         @includeIf(data_get($setUp, 'header.includeViewOnTop'))
 
         <button type="button"
