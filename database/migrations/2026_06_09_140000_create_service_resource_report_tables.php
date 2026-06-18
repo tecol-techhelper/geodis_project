@@ -51,11 +51,6 @@ return new class extends Migration
                 ->constrained('vehicles')
                 ->cascadeOnUpdate()
                 ->nullOnDelete();
-            $table->foreignId('operator_id')
-                ->nullable()
-                ->constrained('operators')
-                ->cascadeOnUpdate()
-                ->nullOnDelete();
             $table->foreignId('container_id')
                 ->nullable()
                 ->constrained('containers')
@@ -72,6 +67,7 @@ return new class extends Migration
                 ->constrained('users')
                 ->cascadeOnUpdate()
                 ->nullOnDelete();
+            $table->softDeletes();
             $table->timestamps();
 
             $table->index(['service_id', 'resource_id']);

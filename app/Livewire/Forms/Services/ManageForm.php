@@ -7,6 +7,7 @@ use App\Models\Operator;
 use App\Models\Resource;
 use App\Models\Service;
 use App\Models\ServiceResourceReport;
+use App\Models\ServiceResourceReportPersonnel;
 use App\Models\Vehicle;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
@@ -53,7 +54,8 @@ class ManageForm extends Form
      *     pivot_id:int|null,
      *     resource_id:int,
      *     required_report_mask:int,
-     *     resource_operation:string
+     *     resource_operation:string,
+     *     personnel_requirements:array<int, array<string, mixed>>
      * }>
      */
     public array $service_resource_rows = [];
@@ -66,7 +68,8 @@ class ManageForm extends Form
      *     pivot_id:int|null,
      *     resource_id:int,
      *     required_report_mask:int,
-     *     resource_operation:string
+     *     resource_operation:string,
+     *     personnel_requirements:array<int, array<string, mixed>>
      * }>
      */
     public array $original_service_resource_rows = [];
@@ -130,10 +133,11 @@ class ManageForm extends Form
                 'transport_details.transport_mode',
 
                 // Service
-                'resources',
+                'resources.personnelRequirements.personnelRole',
                 'service_resource_rows.report.vehicle',
-                'service_resource_rows.report.operator',
                 'service_resource_rows.report.container',
+                'service_resource_rows.report.personnel.operator',
+                'service_resource_rows.report.personnel.personnelRole',
 
                 // Purchase Orders (CNIs)
                 'purchase_orders',
@@ -206,7 +210,8 @@ class ManageForm extends Form
                 $rowKey = $pivotId !== null ? "pivot-{$pivotId}" : (string) Str::uuid();
                 $report = $pivotId !== null ? $serviceResourceRows->get($pivotId)?->report : null;
 
-                $additionalInformation[$rowKey] = $this->additionalInformationFromReport($report);
+                $personnelRequirements = $this->resourcePersonnelRequirementsPayload($resource);
+                $additionalInformation[$rowKey] = $this->additionalInformationFromReport($report, $personnelRequirements);
 
                 return [
                     'row_key' => $rowKey,
@@ -214,6 +219,7 @@ class ManageForm extends Form
                     'resource_id' => (int) $resource->id,
                     'required_report_mask' => (int) $resource->required_report_mask,
                     'resource_operation' => (string) $resource->resource_operation,
+                    'personnel_requirements' => $personnelRequirements,
                 ];
             })
             ->values()
@@ -288,13 +294,16 @@ class ManageForm extends Form
             return;
         }
 
-        $resource = Resource::query()->find($id);
+        $resource = Resource::query()
+            ->with('personnelRequirements.personnelRole')
+            ->find($id);
 
         if (!$resource) {
             return;
         }
 
         $rowKey = 'new-' . Str::uuid();
+        $personnelRequirements = $this->resourcePersonnelRequirementsPayload($resource);
 
         $this->service_resource_rows[] = [
             'row_key' => $rowKey,
@@ -302,8 +311,9 @@ class ManageForm extends Form
             'resource_id' => $id,
             'required_report_mask' => (int) $resource->required_report_mask,
             'resource_operation' => (string) $resource->resource_operation,
+            'personnel_requirements' => $personnelRequirements,
         ];
-        $this->additional_information[$rowKey] = $this->emptyAdditionalInformation();
+        $this->additional_information[$rowKey] = $this->emptyAdditionalInformation($personnelRequirements);
     }
 
     public function removeServiceResource(int $resourceIndex): void
@@ -348,7 +358,9 @@ class ManageForm extends Form
             return;
         }
 
-        $this->additional_information[$rowKey] = $this->emptyAdditionalInformation();
+        $this->additional_information[$rowKey] = $this->emptyAdditionalInformation(
+            $this->personnelRequirementsForRow($rowKey),
+        );
         $this->resetValidation("additional_information.{$rowKey}");
     }
 
@@ -390,17 +402,21 @@ class ManageForm extends Form
             abort_unless($report, 404, 'La información adicional registrada no fue encontrada.');
 
             $report = $this->persistAdditionalInformationRow($service, $row, $report);
-            $this->additional_information[$rowKey]['report_id'] = (int) $report->id;
+            $report->load(['vehicle', 'container', 'personnel.operator', 'personnel.personnelRole']);
+            $this->additional_information[$rowKey] = $this->additionalInformationFromReport(
+                $report,
+                $this->personnelRequirementsForRow($rowKey),
+            );
         });
     }
 
     public function requiresAdditionalInformationForRow(string $rowKey): bool
     {
-        return $this->resourceForRow($rowKey)?->requiresAdditionalInformation() ?? false;
+        return in_array(true, $this->requirementsForRow($rowKey), true);
     }
 
     /**
-     * @return array{vehicle:bool,operator:bool,remittance:bool,container:bool}
+     * @return array{vehicle:bool,personnel:bool,remittance:bool,container:bool}
      */
     public function requirementsForRow(string $rowKey): array
     {
@@ -408,30 +424,63 @@ class ManageForm extends Form
 
         return [
             'vehicle' => $resource?->requiresVehicle() ?? false,
-            'operator' => $resource?->requiresOperator() ?? false,
+            'personnel' => ($resource?->requiresPersonnel() ?? false)
+                && $this->personnelRequirementsForRow($rowKey) !== [],
             'remittance' => $resource?->requiresRemittance() ?? false,
             'container' => $resource?->requiresContainer() ?? false,
         ];
     }
 
     /**
-     * @return array{role:string,identification:string,first_name:string,last_name:string}
+     * @return array<int, array{
+     *     role_id:int,
+     *     role_code:string,
+     *     role_name:string,
+     *     quantity_required:int,
+     *     is_required:bool,
+     *     sort_order:int
+     * }>
      */
-    public function operatorLabelsForRow(string $rowKey): array
+    public function personnelRequirementsForRow(string $rowKey): array
     {
-        $isTransport = strtoupper((string) data_get(
-            $this->resourceRow($rowKey),
-            'resource_operation',
-        )) === 'TRANSPORTE';
-        $role = $isTransport ? 'Conductor' : 'Operador';
+        $row = $this->resourceRow($rowKey);
 
-        return [
-            'role' => $role,
-            'identification' => "Identificación del {$role}",
-            'first_name' => "Nombre(s) del {$role}",
-            'last_name' => "Apellido(s) del {$role}",
-        ];
+        if (!$row) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            (array) data_get($row, 'personnel_requirements', []),
+            fn($requirement) => (int) data_get($requirement, 'quantity_required', 0) > 0,
+        ));
     }
+
+    public function fillPersonnelFromOperator(string $rowKey, int $roleId, int $index): bool
+    {
+        $identificationPath = "{$rowKey}.personnel.{$roleId}.{$index}.identification";
+        $identification = Str::upper(trim((string) data_get($this->additional_information, $identificationPath)));
+
+        if ($identification === '') {
+            return false;
+        }
+
+        $operator = Operator::query()
+            ->where('identification', $identification)
+            ->first(['identification', 'first_name', 'last_name']);
+
+        if (!$operator) {
+            return false;
+        }
+
+        data_set($this->additional_information, $identificationPath, $operator->identification);
+        data_set($this->additional_information, "{$rowKey}.personnel.{$roleId}.{$index}.first_name", $operator->first_name);
+        data_set($this->additional_information, "{$rowKey}.personnel.{$roleId}.{$index}.last_name", $operator->last_name);
+
+        $this->resetValidation("additional_information.{$rowKey}.personnel.{$roleId}.{$index}");
+
+        return true;
+    }
+
 
     public function additionalInformationStatus(string $rowKey): string
     {
@@ -457,10 +506,17 @@ class ManageForm extends Form
             return false;
         }
 
-        if ($requirements['operator']) {
-            foreach (['operator_identification', 'operator_first_name', 'operator_last_name'] as $field) {
-                if (blank(data_get($draft, $field))) {
-                    return false;
+        if ($requirements['personnel']) {
+            foreach ($this->personnelRequirementsForRow($rowKey) as $personnelRequirement) {
+                $roleId = (int) $personnelRequirement['role_id'];
+                $quantityRequired = (int) $personnelRequirement['quantity_required'];
+
+                for ($index = 0; $index < $quantityRequired; $index++) {
+                    foreach (['identification', 'first_name', 'last_name'] as $field) {
+                        if (blank(data_get($draft, "personnel.{$roleId}.{$index}.{$field}"))) {
+                            return false;
+                        }
+                    }
                 }
             }
         }
@@ -551,6 +607,7 @@ class ManageForm extends Form
                         'resource_id' => $resourceId,
                         'required_report_mask' => (int) data_get($row, 'required_report_mask', 0),
                         'resource_operation' => (string) data_get($row, 'resource_operation', ''),
+                        'personnel_requirements' => (array) data_get($row, 'personnel_requirements', []),
                     ];
                 }, $rows)));
             };
@@ -632,7 +689,6 @@ class ManageForm extends Form
             }
 
             $requirements = $this->requirementsForRow($rowKey);
-            $operatorLabels = $this->operatorLabelsForRow($rowKey);
             $prefix = "additional_information.{$rowKey}";
 
             if ($requirements['vehicle']) {
@@ -640,13 +696,24 @@ class ManageForm extends Form
                 $attributes["{$prefix}.vehicle_plate"] = 'placa del vehículo';
             }
 
-            if ($requirements['operator']) {
-                $rules["{$prefix}.operator_identification"] = ['required', 'string', 'max:64'];
-                $rules["{$prefix}.operator_first_name"] = ['required', 'string', 'max:128'];
-                $rules["{$prefix}.operator_last_name"] = ['required', 'string', 'max:128'];
-                $attributes["{$prefix}.operator_identification"] = strtolower($operatorLabels['identification']);
-                $attributes["{$prefix}.operator_first_name"] = strtolower($operatorLabels['first_name']);
-                $attributes["{$prefix}.operator_last_name"] = strtolower($operatorLabels['last_name']);
+            if ($requirements['personnel']) {
+                foreach ($this->personnelRequirementsForRow($rowKey) as $personnelRequirement) {
+                    $roleId = (int) $personnelRequirement['role_id'];
+                    $roleName = strtolower((string) $personnelRequirement['role_name']);
+                    $quantityRequired = (int) $personnelRequirement['quantity_required'];
+
+                    for ($index = 0; $index < $quantityRequired; $index++) {
+                        $entryPrefix = "{$prefix}.personnel.{$roleId}.{$index}";
+                        $entrySuffix = $quantityRequired > 1 ? ' ' . ($index + 1) : '';
+
+                        $rules["{$entryPrefix}.identification"] = ['required', 'string', 'max:64'];
+                        $rules["{$entryPrefix}.first_name"] = ['required', 'string', 'max:128'];
+                        $rules["{$entryPrefix}.last_name"] = ['required', 'string', 'max:128'];
+                        $attributes["{$entryPrefix}.identification"] = "identificación del {$roleName}{$entrySuffix}";
+                        $attributes["{$entryPrefix}.first_name"] = "nombre(s) del {$roleName}{$entrySuffix}";
+                        $attributes["{$entryPrefix}.last_name"] = "apellido(s) del {$roleName}{$entrySuffix}";
+                    }
+                }
             }
 
             if ($requirements['remittance']) {
@@ -672,18 +739,17 @@ class ManageForm extends Form
      *     pivot_id:int,
      *     resource_id:int,
      *     required_report_mask:int,
-     *     resource_operation:string
+     *     resource_operation:string,
+     *     personnel_requirements:array<int, array<string, mixed>>
      * }> $resourceRows
      */
     private function persistAdditionalInformation(Service $service, array $resourceRows): void
     {
         foreach ($resourceRows as $row) {
-            $resource = new Resource([
-                'required_report_mask' => $row['required_report_mask'],
-            ]);
+            $requirements = $this->requirementsForRow($row['row_key']);
 
-            if (!$resource->requiresAdditionalInformation()) {
-                ServiceResourceReport::query()
+            if (!in_array(true, $requirements, true)) {
+                ServiceResourceReport::withTrashed()
                     ->where('service_resource_id', $row['pivot_id'])
                     ->delete();
                 continue;
@@ -699,7 +765,8 @@ class ManageForm extends Form
      *     pivot_id:int,
      *     resource_id:int,
      *     required_report_mask:int,
-     *     resource_operation:string
+     *     resource_operation:string,
+     *     personnel_requirements:array<int, array<string, mixed>>
      * } $row
      */
     private function persistAdditionalInformationRow(
@@ -708,23 +775,22 @@ class ManageForm extends Form
         ?ServiceResourceReport $existingReport = null,
     ): ServiceResourceReport
     {
-        $resource = new Resource([
-            'required_report_mask' => $row['required_report_mask'],
-        ]);
+        $requirements = $this->requirementsForRow($row['row_key']);
         $draft = $this->additional_information[$row['row_key']] ?? [];
-        $vehicleId = $resource->requiresVehicle()
+        $vehicleId = $requirements['vehicle']
             ? $this->persistVehicle((string) data_get($draft, 'vehicle_plate'))
             : null;
-        $operatorId = $resource->requiresOperator()
-            ? $this->persistOperator($draft)
-            : null;
-        $containerId = $resource->requiresContainer()
+        $containerId = $requirements['container']
             ? $this->persistContainer((string) data_get($draft, 'container_number'))
             : null;
 
-        $report = $existingReport ?? ServiceResourceReport::query()->firstOrNew([
+        $report = $existingReport ?? ServiceResourceReport::withTrashed()->firstOrNew([
             'service_resource_id' => $row['pivot_id'],
         ]);
+
+        if ($report->trashed()) {
+            $report->restore();
+        }
 
         if (!$report->exists) {
             $report->created_by = Auth::id();
@@ -734,14 +800,16 @@ class ManageForm extends Form
             'service_id' => $service->id,
             'resource_id' => $row['resource_id'],
             'vehicle_id' => $vehicleId,
-            'operator_id' => $operatorId,
             'container_id' => $containerId,
-            'remesa_transporte' => $resource->requiresRemittance()
+            'remesa_transporte' => $requirements['remittance']
                 ? trim((string) data_get($draft, 'remesa_transporte'))
                 : null,
             'updated_by' => Auth::id(),
         ]);
         $report->save();
+        $this->persistReportPersonnel($report, $draft, $requirements['personnel']
+            ? $this->personnelRequirementsForRow($row['row_key'])
+            : []);
 
         return $report;
     }
@@ -761,11 +829,11 @@ class ManageForm extends Form
     }
 
     /**
-     * @param array<string, mixed> $draft
+     * @param array<string, mixed> $entry
      */
-    private function persistOperator(array $draft): int
+    private function persistOperator(array $entry): int
     {
-        $identification = Str::upper(trim((string) data_get($draft, 'operator_identification')));
+        $identification = Str::upper(trim((string) data_get($entry, 'identification')));
         $operator = Operator::withTrashed()->firstOrNew([
             'identification' => $identification,
         ]);
@@ -775,12 +843,41 @@ class ManageForm extends Form
         }
 
         $operator->fill([
-            'first_name' => trim((string) data_get($draft, 'operator_first_name')),
-            'last_name' => trim((string) data_get($draft, 'operator_last_name')),
+            'first_name' => trim((string) data_get($entry, 'first_name')),
+            'last_name' => trim((string) data_get($entry, 'last_name')),
         ]);
         $operator->save();
 
         return (int) $operator->id;
+    }
+
+    /**
+     * @param array<string, mixed> $draft
+     * @param array<int, array{role_id:int, quantity_required:int}> $personnelRequirements
+     */
+    private function persistReportPersonnel(
+        ServiceResourceReport $report,
+        array $draft,
+        array $personnelRequirements,
+    ): void {
+        $report->personnel()->delete();
+
+        foreach ($personnelRequirements as $personnelRequirement) {
+            $roleId = (int) $personnelRequirement['role_id'];
+            $quantityRequired = (int) $personnelRequirement['quantity_required'];
+
+            for ($index = 0; $index < $quantityRequired; $index++) {
+                $entry = (array) data_get($draft, "personnel.{$roleId}.{$index}", []);
+
+                ServiceResourceReportPersonnel::query()->create([
+                    'service_resource_report_id' => $report->id,
+                    'operator_id' => $this->persistOperator($entry),
+                    'personnel_role_id' => $roleId,
+                    'created_by' => Auth::id(),
+                    'updated_by' => Auth::id(),
+                ]);
+            }
+        }
     }
 
     private function persistContainer(string $containerNumber): int
@@ -802,18 +899,44 @@ class ManageForm extends Form
     /**
      * @return array<string, mixed>
      */
-    private function additionalInformationFromReport(?ServiceResourceReport $report): array
+    private function additionalInformationFromReport(
+        ?ServiceResourceReport $report,
+        array $personnelRequirements = [],
+    ): array
     {
         if (!$report) {
-            return $this->emptyAdditionalInformation();
+            return $this->emptyAdditionalInformation($personnelRequirements);
+        }
+
+        $personnel = $this->emptyPersonnelInformation($personnelRequirements);
+        $reportedPersonnel = $report->personnel
+            ?->sortBy('id')
+            ->groupBy('personnel_role_id') ?? collect();
+
+        foreach ($personnelRequirements as $personnelRequirement) {
+            $roleId = (int) $personnelRequirement['role_id'];
+            $reportedEntries = $reportedPersonnel->get($roleId, collect())->values();
+
+            foreach ($personnel[$roleId] ?? [] as $index => $entry) {
+                $reportedEntry = $reportedEntries->get($index);
+
+                if (!$reportedEntry) {
+                    continue;
+                }
+
+                $personnel[$roleId][$index] = [
+                    'report_personnel_id' => (int) $reportedEntry->id,
+                    'identification' => $reportedEntry->operator?->identification,
+                    'first_name' => $reportedEntry->operator?->first_name,
+                    'last_name' => $reportedEntry->operator?->last_name,
+                ];
+            }
         }
 
         return [
             'report_id' => (int) $report->id,
             'vehicle_plate' => $report->vehicle?->plate,
-            'operator_identification' => $report->operator?->identification,
-            'operator_first_name' => $report->operator?->first_name,
-            'operator_last_name' => $report->operator?->last_name,
+            'personnel' => $personnel,
             'remesa_transporte' => $report->remesa_transporte,
             'container_number' => $report->container?->container_number,
         ];
@@ -822,17 +945,75 @@ class ManageForm extends Form
     /**
      * @return array<string, mixed>
      */
-    private function emptyAdditionalInformation(): array
+    private function emptyAdditionalInformation(array $personnelRequirements = []): array
     {
         return [
             'report_id' => null,
             'vehicle_plate' => null,
-            'operator_identification' => null,
-            'operator_first_name' => null,
-            'operator_last_name' => null,
+            'personnel' => $this->emptyPersonnelInformation($personnelRequirements),
             'remesa_transporte' => null,
             'container_number' => null,
         ];
+    }
+
+    /**
+     * @param array<int, array{role_id:int, quantity_required:int}> $personnelRequirements
+     * @return array<int, array<int, array{
+     *     report_personnel_id:int|null,
+     *     identification:string|null,
+     *     first_name:string|null,
+     *     last_name:string|null
+     * }>>
+     */
+    private function emptyPersonnelInformation(array $personnelRequirements): array
+    {
+        $personnel = [];
+
+        foreach ($personnelRequirements as $personnelRequirement) {
+            $roleId = (int) $personnelRequirement['role_id'];
+            $quantityRequired = (int) $personnelRequirement['quantity_required'];
+
+            for ($index = 0; $index < $quantityRequired; $index++) {
+                $personnel[$roleId][$index] = [
+                    'report_personnel_id' => null,
+                    'identification' => null,
+                    'first_name' => null,
+                    'last_name' => null,
+                ];
+            }
+        }
+
+        return $personnel;
+    }
+
+    /**
+     * @return array<int, array{
+     *     role_id:int,
+     *     role_code:string,
+     *     role_name:string,
+     *     quantity_required:int,
+     *     is_required:bool,
+     *     sort_order:int
+     * }>
+     */
+    private function resourcePersonnelRequirementsPayload(Resource $resource): array
+    {
+        return $resource->personnelRequirements
+            ?->filter(fn($requirement) => (bool) $requirement->is_required)
+            ->map(fn($requirement) => [
+                'role_id' => (int) $requirement->personnel_role_id,
+                'role_code' => (string) ($requirement->personnelRole?->code ?? ''),
+                'role_name' => (string) ($requirement->personnelRole?->name ?? 'Personal'),
+                'quantity_required' => max(1, (int) $requirement->quantity_required),
+                'is_required' => (bool) $requirement->is_required,
+                'sort_order' => (int) $requirement->sort_order,
+            ])
+            ->sortBy([
+                ['sort_order', 'asc'],
+                ['role_id', 'asc'],
+            ])
+            ->values()
+            ->all() ?? [];
     }
 
     /**

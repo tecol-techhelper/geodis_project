@@ -60,6 +60,9 @@
                 <a href="{{ route('audits.index') }}"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Auditoria
                 </a>
+                <a href="{{ route('resources.report-configuration') }}"
+                    class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Configuración
+                    de Recursos</a>
                 <a href="{{ route('edifact.viewer') }}"
                     class="block px-10 py-1 text-black hover:bg-gray-100 hover:border-l-4 hover:border-gray-700">Mensajes
                     Extraidos</a>

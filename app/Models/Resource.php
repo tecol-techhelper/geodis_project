@@ -12,7 +12,7 @@ class Resource extends Model
     use SoftDeletes;
 
     public const REQUIRES_VEHICLE = 1;
-    public const REQUIRES_OPERATOR = 2;
+    public const REQUIRES_PERSONNEL = 2;
     public const REQUIRES_REMITTANCE = 4;
     public const REQUIRES_CONTAINER = 8;
 
@@ -33,9 +33,9 @@ class Resource extends Model
         return $this->requires(self::REQUIRES_VEHICLE);
     }
 
-    public function requiresOperator(): bool
+    public function requiresPersonnel(): bool
     {
-        return $this->requires(self::REQUIRES_OPERATOR);
+        return $this->requires(self::REQUIRES_PERSONNEL);
     }
 
     public function requiresRemittance(): bool
@@ -74,5 +74,12 @@ class Resource extends Model
     public function serviceResourceReports(): HasMany
     {
         return $this->hasMany(ServiceResourceReport::class);
+    }
+
+    public function personnelRequirements(): HasMany
+    {
+        return $this->hasMany(ResourcePersonnelRequirement::class)
+            ->orderBy('sort_order')
+            ->orderBy('id');
     }
 }

@@ -4,15 +4,18 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ServiceResourceReport extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'service_resource_id',
         'service_id',
         'resource_id',
         'vehicle_id',
-        'operator_id',
         'container_id',
         'remesa_transporte',
         'created_by',
@@ -24,7 +27,6 @@ class ServiceResourceReport extends Model
         'service_id' => 'integer',
         'resource_id' => 'integer',
         'vehicle_id' => 'integer',
-        'operator_id' => 'integer',
         'container_id' => 'integer',
         'created_by' => 'integer',
         'updated_by' => 'integer',
@@ -50,14 +52,14 @@ class ServiceResourceReport extends Model
         return $this->belongsTo(Vehicle::class);
     }
 
-    public function operator(): BelongsTo
-    {
-        return $this->belongsTo(Operator::class);
-    }
-
     public function container(): BelongsTo
     {
         return $this->belongsTo(Container::class);
+    }
+
+    public function personnel(): HasMany
+    {
+        return $this->hasMany(ServiceResourceReportPersonnel::class);
     }
 
     public function creator(): BelongsTo

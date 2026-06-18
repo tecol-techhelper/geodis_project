@@ -227,6 +227,26 @@ new #[Layout('layouts.app')] class extends Component {
             ->success('La información adicional se actualizó correctamente.');
     }
 
+    public function searchPersonnel(string $lookupKey): void
+    {
+        $parts = explode(':', $lookupKey);
+        abort_unless(count($parts) === 3, 404, 'Búsqueda de persona inválida.');
+
+        [$rowKey, $roleId, $personnelIndex] = $parts;
+        $roleId = (int) $roleId;
+        $personnelIndex = (int) $personnelIndex;
+        $found = $this->form->fillPersonnelFromOperator($rowKey, $roleId, $personnelIndex);
+
+        $this->dispatch(
+            'personnel-lookup-result',
+            lookupKey: $lookupKey,
+            rowKey: $rowKey,
+            roleId: $roleId,
+            personnelIndex: $personnelIndex,
+            found: $found,
+        );
+    }
+
     public function openAdditionalInformation(string $rowKey): void
     {
         $this->form->openAdditionalInformation($rowKey);
@@ -753,7 +773,9 @@ new #[Layout('layouts.app')] class extends Component {
                                                     'pending' => 'Información adicional pendiente.',
                                                     default => 'Este recurso no requiere información adicional para ser reportado.',
                                                 };
-                                                $requiresAdditionalInformation = $selectedResource['resource']->requiresAdditionalInformation();
+                                                $requiresAdditionalInformation = $form->requiresAdditionalInformationForRow(
+                                                    $selectedResource['row_key'],
+                                                );
                                             @endphp
 
                                             <button type="button"
@@ -836,8 +858,8 @@ new #[Layout('layouts.app')] class extends Component {
                             Eliminar recurso del servicio
                         </h3>
                         <p class="mt-2 text-sm text-gray-600">
-                            También se descartará la información adicional temporal de esta fila. El cambio será
-                            definitivo cuando pulses Enviar.
+                            Esta acción también eliminará información asociada al recurso. El cambio será definitivo
+                            al pulsar Enviar.
                         </p>
                         <div class="mt-6 flex justify-end gap-3">
                             <x-secondary-button type="button" x-on:click="resourceToRemove = null">
@@ -855,7 +877,7 @@ new #[Layout('layouts.app')] class extends Component {
                     $activeResourceRow = $selectedResources->firstWhere('row_key', $form->active_resource_row_key);
                     $activeRowKey = $activeResourceRow['row_key'] ?? null;
                     $activeRequirements = $activeRowKey ? $form->requirementsForRow($activeRowKey) : [];
-                    $activeOperatorLabels = $activeRowKey ? $form->operatorLabelsForRow($activeRowKey) : [];
+                    $activePersonnelRequirements = $activeRowKey ? $form->personnelRequirementsForRow($activeRowKey) : [];
                     $activeHasRegisteredInformation = $activeRowKey
                         && filled(data_get($form->additional_information, "{$activeRowKey}.report_id"));
                 @endphp
@@ -865,7 +887,7 @@ new #[Layout('layouts.app')] class extends Component {
                         class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-8 backdrop-blur-sm"
                         role="dialog" aria-modal="true" aria-labelledby="additionalInformationTitle">
                         <div class="my-4 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
-                            <div class="flex items-start justify-between border-b border-gray-200 bg-gray-50 px-5 py-4">
+                            <div class="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50 px-5 py-4">
                                 <div>
                                     <h3 id="additionalInformationTitle" class="font-semibold text-gray-900">
                                         Información adicional
@@ -903,94 +925,164 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
                                     </p>
                                 @endif
+                                @if (($activeRequirements['vehicle'] ?? false) || ($activeRequirements['remittance'] ?? false) || ($activeRequirements['container'] ?? false))
+                                    <section class="rounded-xl border border-gray-200 bg-white p-4">
+                                        <div class="space-y-4">
+                                            @if ($activeRequirements['vehicle'] ?? false)
+                                                <div>
+                                                    <x-input-label for="additional_vehicle_plate">
+                                                        Placa del vehículo <span class="text-red-600">*</span>
+                                                    </x-input-label>
+                                                    <x-text-input id="additional_vehicle_plate" type="text"
+                                                        wire:model.defer="form.additional_information.{{ $activeRowKey }}.vehicle_plate"
+                                                        class="mt-1 w-full uppercase" maxlength="32"
+                                                        placeholder="Ej. ABC123" :disabled="!$form->canEdit" />
+                                                    @error('form.additional_information.' . $activeRowKey . '.vehicle_plate')
+                                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                    @enderror
+                                                </div>
+                                            @endif
 
-                                @if ($activeRequirements['vehicle'] ?? false)
-                                    <div>
-                                        <x-input-label for="additional_vehicle_plate">
-                                            Placa del Vehículo <span class="text-red-600">*</span>
-                                        </x-input-label>
-                                        <x-text-input id="additional_vehicle_plate" type="text"
-                                            wire:model.defer="form.additional_information.{{ $activeRowKey }}.vehicle_plate"
-                                            class="mt-1 w-full uppercase" maxlength="32"
-                                            placeholder="Ej. ABC123" :disabled="!$form->canEdit" />
-                                        @error('form.additional_information.' . $activeRowKey . '.vehicle_plate')
-                                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                                        @enderror
-                                    </div>
-                                @endif
+                                            @if ($activeRequirements['remittance'] ?? false)
+                                                <div>
+                                                    <x-input-label for="additional_remittance">
+                                                        Remesa de transporte <span class="text-red-600">*</span>
+                                                    </x-input-label>
+                                                    <x-text-input id="additional_remittance" type="text"
+                                                        wire:model.defer="form.additional_information.{{ $activeRowKey }}.remesa_transporte"
+                                                        class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                    @error('form.additional_information.' . $activeRowKey . '.remesa_transporte')
+                                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                    @enderror
+                                                </div>
+                                            @endif
 
-                                @if ($activeRequirements['operator'] ?? false)
-                                    <fieldset class="space-y-4 rounded-xl border border-gray-200 p-4">
-                                        <legend class="px-2 text-sm font-semibold text-gray-800">
-                                            {{ $activeOperatorLabels['role'] }}
-                                        </legend>
-
-                                        <div>
-                                            <x-input-label for="additional_operator_identification">
-                                                {{ $activeOperatorLabels['identification'] }} <span class="text-red-600">*</span>
-                                            </x-input-label>
-                                            <x-text-input id="additional_operator_identification" type="text"
-                                                wire:model.defer="form.additional_information.{{ $activeRowKey }}.operator_identification"
-                                                class="mt-1 w-full" maxlength="64" :disabled="!$form->canEdit" />
-                                            @error('form.additional_information.' . $activeRowKey . '.operator_identification')
-                                                <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                                            @enderror
+                                            @if ($activeRequirements['container'] ?? false)
+                                                <div>
+                                                    <x-input-label for="additional_container_number">
+                                                        Número de contenedor <span class="text-red-600">*</span>
+                                                    </x-input-label>
+                                                    <x-text-input id="additional_container_number" type="text"
+                                                        wire:model.defer="form.additional_information.{{ $activeRowKey }}.container_number"
+                                                        class="mt-1 w-full uppercase" maxlength="64"
+                                                        :disabled="!$form->canEdit" />
+                                                    @error('form.additional_information.' . $activeRowKey . '.container_number')
+                                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                    @enderror
+                                                </div>
+                                            @endif
                                         </div>
+                                    </section>
+                                @endif
 
-                                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                                            <div>
-                                                <x-input-label for="additional_operator_first_name">
-                                                    {{ $activeOperatorLabels['first_name'] }} <span class="text-red-600">*</span>
-                                                </x-input-label>
-                                                <x-text-input id="additional_operator_first_name" type="text"
-                                                    wire:model.defer="form.additional_information.{{ $activeRowKey }}.operator_first_name"
-                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
-                                                @error('form.additional_information.' . $activeRowKey . '.operator_first_name')
-                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                                                @enderror
-                                            </div>
-                                            <div>
-                                                <x-input-label for="additional_operator_last_name">
-                                                    {{ $activeOperatorLabels['last_name'] }} <span class="text-red-600">*</span>
-                                                </x-input-label>
-                                                <x-text-input id="additional_operator_last_name" type="text"
-                                                    wire:model.defer="form.additional_information.{{ $activeRowKey }}.operator_last_name"
-                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
-                                                @error('form.additional_information.' . $activeRowKey . '.operator_last_name')
-                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                                                @enderror
-                                            </div>
+                                @if ($activeRequirements['personnel'] ?? false)
+                                    <section class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                                        <div class="space-y-4">
+                                            @foreach ($activePersonnelRequirements as $personnelRequirement)
+                                                @php
+                                                    $roleId = (int) $personnelRequirement['role_id'];
+                                                    $roleName = (string) $personnelRequirement['role_name'];
+                                                    $quantityRequired = (int) $personnelRequirement['quantity_required'];
+                                                @endphp
+
+                                                @for ($personnelIndex = 0; $personnelIndex < $quantityRequired; $personnelIndex++)
+                                                    @php
+                                                        $entryLabel = $quantityRequired > 1 ? ' ' . ($personnelIndex + 1) : '';
+                                                        $fieldIdPrefix = "additional_personnel_{$roleId}_{$personnelIndex}";
+                                                        $fieldPrefix = 'form.additional_information.' . $activeRowKey . '.personnel.' . $roleId . '.' . $personnelIndex;
+                                                        $lookupKey = "{$activeRowKey}:{$roleId}:{$personnelIndex}";
+                                                        $searchPersonnelAction = "searchPersonnel('{$lookupKey}')";
+                                                    @endphp
+
+                                                    <fieldset class="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
+                                                        <legend class="px-2 text-sm font-semibold text-gray-800">
+                                                            {{ $roleName }}{{ $entryLabel }}
+                                                        </legend>
+
+                                                        <div x-data="{ lookupStatus: 'idle', lookupKey: @js($lookupKey) }"
+                                                            x-on:personnel-lookup-result.window="
+                                                                if ($event.detail.lookupKey === lookupKey) {
+                                                                    lookupStatus = $event.detail.found ? 'found' : 'not_found';
+                                                                    setTimeout(() => lookupStatus = 'idle', 2500);
+                                                                }
+                                                            ">
+                                                            <x-input-label for="{{ $fieldIdPrefix }}_identification">
+                                                                Identificación del {{ $roleName }} <span class="text-red-600">*</span>
+                                                            </x-input-label>
+                                                            <div class="mt-1 flex">
+                                                                <x-text-input id="{{ $fieldIdPrefix }}_identification" type="text"
+                                                                    wire:model.defer="{{ $fieldPrefix }}.identification"
+                                                                    class="w-full rounded-r-none" maxlength="64" :disabled="!$form->canEdit" />
+                                                                @if ($form->canEdit)
+                                                                    <button type="button"
+                                                                        wire:click="{{ $searchPersonnelAction }}"
+                                                                        wire:loading.attr="disabled" wire:target="{{ $searchPersonnelAction }}"
+                                                                        x-bind:title="lookupStatus === 'not_found'
+                                                                            ? 'No existe una persona con esta identificación.'
+                                                                            : (lookupStatus === 'found'
+                                                                                ? 'Persona encontrada.'
+                                                                                : 'Buscar persona por identificación.')"
+                                                                        x-bind:aria-label="lookupStatus === 'not_found'
+                                                                            ? 'No existe una persona con esta identificación.'
+                                                                            : (lookupStatus === 'found'
+                                                                                ? 'Persona encontrada.'
+                                                                                : 'Buscar persona por identificación.')"
+                                                                        x-bind:class="{
+                                                                            'border-red-700 bg-red-700 hover:bg-red-800': lookupStatus === 'not_found',
+                                                                            'border-green-700 bg-green-700 hover:bg-green-800': lookupStatus === 'found',
+                                                                            'border-blue-700 bg-blue-700 hover:bg-blue-800': lookupStatus === 'idle'
+                                                                        }"
+                                                                        class="-ml-px inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-r-xl border text-white transition ease-in-out duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+                                                                        <svg xmlns="http://www.w3.org/2000/svg"
+                                                                            viewBox="0 0 24 24" fill="none"
+                                                                            stroke="currentColor" stroke-width="2"
+                                                                            stroke-linecap="round" stroke-linejoin="round"
+                                                                            class="h-5 w-5" aria-hidden="true">
+                                                                            <circle cx="11" cy="11" r="8" />
+                                                                            <path d="m21 21-4.3-4.3" />
+                                                                        </svg>
+                                                                    </button>
+                                                                @endif
+                                                            </div>
+                                                            <p x-cloak x-show="lookupStatus === 'not_found'"
+                                                                x-transition.opacity
+                                                                class="mt-1 text-sm text-red-600">
+                                                                No existe una persona con esta identificación.
+                                                            </p>
+                                                            @error($fieldPrefix . '.identification')
+                                                                <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                            @enderror
+                                                        </div>
+
+                                                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                                            <div>
+                                                                <x-input-label for="{{ $fieldIdPrefix }}_first_name">
+                                                                    Nombre(s) del {{ $roleName }} <span class="text-red-600">*</span>
+                                                                </x-input-label>
+                                                                <x-text-input id="{{ $fieldIdPrefix }}_first_name" type="text"
+                                                                    wire:model.defer="{{ $fieldPrefix }}.first_name"
+                                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                                @error($fieldPrefix . '.first_name')
+                                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </div>
+                                                            <div>
+                                                                <x-input-label for="{{ $fieldIdPrefix }}_last_name">
+                                                                    Apellido(s) del {{ $roleName }} <span class="text-red-600">*</span>
+                                                                </x-input-label>
+                                                                <x-text-input id="{{ $fieldIdPrefix }}_last_name" type="text"
+                                                                    wire:model.defer="{{ $fieldPrefix }}.last_name"
+                                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                                @error($fieldPrefix . '.last_name')
+                                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </div>
+                                                        </div>
+                                                    </fieldset>
+                                                @endfor
+                                            @endforeach
                                         </div>
-                                    </fieldset>
-                                @endif
-
-                                @if ($activeRequirements['remittance'] ?? false)
-                                    <div>
-                                        <x-input-label for="additional_remittance">
-                                            Remesa de transporte <span class="text-red-600">*</span>
-                                        </x-input-label>
-                                        <x-text-input id="additional_remittance" type="text"
-                                            wire:model.defer="form.additional_information.{{ $activeRowKey }}.remesa_transporte"
-                                            class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
-                                        @error('form.additional_information.' . $activeRowKey . '.remesa_transporte')
-                                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                                        @enderror
-                                    </div>
-                                @endif
-
-                                @if ($activeRequirements['container'] ?? false)
-                                    <div>
-                                        <x-input-label for="additional_container_number">
-                                            Número de contenedor <span class="text-red-600">*</span>
-                                        </x-input-label>
-                                        <x-text-input id="additional_container_number" type="text"
-                                            wire:model.defer="form.additional_information.{{ $activeRowKey }}.container_number"
-                                            class="mt-1 w-full uppercase" maxlength="64"
-                                            :disabled="!$form->canEdit" />
-                                        @error('form.additional_information.' . $activeRowKey . '.container_number')
-                                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                                        @enderror
-                                    </div>
+                                    </section>
                                 @endif
 
                             </div>
@@ -1019,10 +1111,11 @@ new #[Layout('layouts.app')] class extends Component {
                         <div x-cloak x-show="confirmClear" x-transition.opacity
                             class="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
                             <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
-                                <h4 class="text-lg font-semibold text-gray-900">Limpiar información adicional</h4>
+                                <h4 class="text-lg font-semibold text-gray-900">Eliminar Datos</h4>
                                 <p class="mt-2 text-sm text-gray-600">
-                                    Se vaciarán los campos de esta fila. No podrás enviar el servicio hasta completar
-                                    nuevamente los datos requeridos o eliminar el recurso.
+                                    ¿Está seguro de eliminar la información registrada? Estos datos son de obligatorio
+                                    diligenciamiento; si no se completan nuevamente, será necesario eliminar el recurso
+                                    antes de enviar el servicio.
                                 </p>
                                 <div class="mt-6 flex justify-end gap-3">
                                     <x-secondary-button type="button" x-on:click="confirmClear = false">
@@ -1030,7 +1123,7 @@ new #[Layout('layouts.app')] class extends Component {
                                     </x-secondary-button>
                                     <x-danger-button type="button"
                                         x-on:click="$wire.clearAdditionalInformation('{{ $activeRowKey }}'); confirmClear = false">
-                                        Sí, limpiar
+                                        Sí, eliminar
                                     </x-danger-button>
                                 </div>
                             </div>

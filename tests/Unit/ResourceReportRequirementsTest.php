@@ -11,13 +11,13 @@ class ResourceReportRequirementsTest extends TestCase
     {
         $resource = new Resource([
             'required_report_mask' => Resource::REQUIRES_VEHICLE
-                | Resource::REQUIRES_OPERATOR
+                | Resource::REQUIRES_PERSONNEL
                 | Resource::REQUIRES_REMITTANCE
                 | Resource::REQUIRES_CONTAINER,
         ]);
 
         $this->assertTrue($resource->requiresVehicle());
-        $this->assertTrue($resource->requiresOperator());
+        $this->assertTrue($resource->requiresPersonnel());
         $this->assertTrue($resource->requiresRemittance());
         $this->assertTrue($resource->requiresContainer());
         $this->assertTrue($resource->requiresAdditionalInformation());
@@ -28,19 +28,19 @@ class ResourceReportRequirementsTest extends TestCase
         $resource = new Resource(['required_report_mask' => 0]);
 
         $this->assertFalse($resource->requiresVehicle());
-        $this->assertFalse($resource->requiresOperator());
+        $this->assertFalse($resource->requiresPersonnel());
         $this->assertFalse($resource->requiresRemittance());
         $this->assertFalse($resource->requiresContainer());
         $this->assertFalse($resource->requiresAdditionalInformation());
     }
 
-    public function test_operator_is_a_single_requirement_bit(): void
+    public function test_personnel_is_a_single_requirement_bit(): void
     {
         $resource = new Resource([
-            'required_report_mask' => Resource::REQUIRES_OPERATOR,
+            'required_report_mask' => Resource::REQUIRES_PERSONNEL,
         ]);
 
-        $this->assertTrue($resource->requiresOperator());
+        $this->assertTrue($resource->requiresPersonnel());
         $this->assertFalse($resource->requiresVehicle());
         $this->assertFalse($resource->requiresRemittance());
         $this->assertFalse($resource->requiresContainer());
