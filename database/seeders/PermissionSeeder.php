@@ -51,29 +51,9 @@ class PermissionSeeder extends Seeder
                 'permission_description' => 'Permite consultar el listado de servicios.',
             ],
             [
-                'permission_key' => 'edit_transport_block',
-                'permission_name' => 'Editar bloque de transporte',
-                'permission_description' => 'Permite editar los campos relacionados a la operatividad del servicio.',
-            ],
-            [
-                'permission_key' => 'edit_accounting_block',
-                'permission_name' => 'Editar bloque de contabilidad',
-                'permission_description' => 'Permite editar campos relacionados a pagos y facturación.',
-            ],
-            [
-                'permission_key' => 'edit_tracking_block',
-                'permission_name' => 'Editar bloque de seguimiento',
-                'permission_description' => 'Acceso exclusivo al campo de seguimiento o reporte de novedades del servicio.',
-            ],
-            [
-                'permission_key' => 'edit_payment_block',
-                'permission_name' => 'Editar bloque de pago',
-                'permission_description' => 'Acceso exclusivo al campo de aprobación de pago, solo una persona puede tener este permiso fuera del administrador.',
-            ],
-            [
-                'permission_key' => 'edit_record_block',
-                'permission_name' => 'Editar bloque de acta',
-                'permission_description' => 'Acceso único al campo de acta.',
+                'permission_key' => 'edit_services',
+                'permission_name' => 'Editar servicios',
+                'permission_description' => 'Permite editar la información operativa de los servicios.',
             ],
             [
                 'permission_key' => 'upload_files',
@@ -83,13 +63,19 @@ class PermissionSeeder extends Seeder
             [
                 'permission_key' => 'delete_services',
                 'permission_name' => 'Eliminar servicios',
-                'permission_description' => 'Permite eliminar los servicios.',
+                'permission_description' => 'Permite realizar el borrado lógico de servicios.',
+            ],
+            [
+                'permission_key' => 'purge_services',
+                'permission_name' => 'Eliminar servicios definitivamente',
+                'permission_description' => 'Permite eliminar servicios de forma permanente.',
             ],
         ];
 
-        $rows = array_map(function (array $row) use ($now) {
+        $rows = array_map(function (array $row) use ($now): array {
             $row['created_at'] = $now;
             $row['updated_at'] = $now;
+
             return $row;
         }, $rows);
 
@@ -98,5 +84,15 @@ class PermissionSeeder extends Seeder
             ['permission_key'],
             ['permission_name', 'permission_description', 'updated_at']
         );
+
+        DB::table('permissions')
+            ->whereIn('permission_key', [
+                'edit_transport_block',
+                'edit_accounting_block',
+                'edit_tracking_block',
+                'edit_payment_block',
+                'edit_record_block',
+            ])
+            ->delete();
     }
 }

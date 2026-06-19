@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class ServiceResource extends Model
@@ -34,5 +35,10 @@ class ServiceResource extends Model
     public function report(): HasOne
     {
         return $this->hasOne(ServiceResourceReport::class);
+    }
+
+    public function statusReports(): HasMany
+    {
+        return $this->hasMany(ServiceResourceStatusReport::class);
     }
 }

@@ -96,6 +96,18 @@ class ManageForm extends Form
      */
     public array $dirty_purchase_order_ids = [];
 
+    /**
+     * Last persisted change summary, used by the parent component to decide
+     * whether an IFTSTA report is needed.
+     *
+     * @var array{status_changed:bool,resource_added:bool,resource_removed:bool}
+     */
+    public array $last_update_changes = [
+        'status_changed' => false,
+        'resource_added' => false,
+        'resource_removed' => false,
+    ];
+
     public array $omit = [
         'segment_tag',
         'raw_segment',
@@ -138,6 +150,8 @@ class ManageForm extends Form
                 'service_resource_rows.report.container',
                 'service_resource_rows.report.personnel.operator',
                 'service_resource_rows.report.personnel.personnelRole',
+                'service_status_reports.status',
+                'service_status_reports.resourceStatusReports.serviceResource.resource',
 
                 // Purchase Orders (CNIs)
                 'purchase_orders',
@@ -551,6 +565,11 @@ class ManageForm extends Form
         $this->validateAdditionalInformation();
 
         $dirtyIds = [];
+        $this->last_update_changes = [
+            'status_changed' => false,
+            'resource_added' => false,
+            'resource_removed' => false,
+        ];
 
         DB::transaction(function () use (&$dirtyIds) {
             $s = Service::query()->findOrFail($this->id);
@@ -580,6 +599,8 @@ class ManageForm extends Form
             $oldStatusId = $this->original_service_status_id !== null ? (int) $this->original_service_status_id : null;
 
             if ($newStatusId !== $oldStatusId) {
+                $this->last_update_changes['status_changed'] = true;
+
                 $s->status_id = $newStatusId;
                 $s->save();
 
@@ -634,11 +655,15 @@ class ManageForm extends Form
                 ), fn($pivotId) => !in_array($pivotId, $pivotIdsToKeep, true)));
 
                 if ($pivotIdsToDelete !== []) {
+                    $this->last_update_changes['resource_removed'] = true;
+
                     DB::table('service_resource')
                         ->where('service_id', $s->id)
                         ->whereIn('id', $pivotIdsToDelete)
                         ->delete();
                 }
+
+                $insertedResource = false;
 
                 foreach ($newResourceRows as &$row) {
                     if ($row['pivot_id'] !== null) {
@@ -651,14 +676,19 @@ class ManageForm extends Form
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
+                    $insertedResource = true;
                 }
                 unset($row);
 
-                // Si cambia recurso, marcar todos los CNI para IFTSTA
-                $dirtyIds = array_merge(
-                    $dirtyIds,
-                    $s->purchase_orders?->pluck('id')->map(fn($id) => (int) $id)->all() ?? []
-                );
+                if ($insertedResource) {
+                    $this->last_update_changes['resource_added'] = true;
+
+                    // Solo los recursos nuevos requieren reporte IFTSTA; eliminar es independiente.
+                    $dirtyIds = array_merge(
+                        $dirtyIds,
+                        $s->purchase_orders?->pluck('id')->map(fn($id) => (int) $id)->all() ?? []
+                    );
+                }
             }
 
             $this->persistAdditionalInformation($s, $newResourceRows);

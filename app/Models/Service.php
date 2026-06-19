@@ -156,4 +156,9 @@ class Service extends Model
     {
         return $this->hasMany(ServiceResourceReport::class);
     }
+
+    public function service_status_reports(): HasMany
+    {
+        return $this->hasMany(ServiceStatusReport::class);
+    }
 }

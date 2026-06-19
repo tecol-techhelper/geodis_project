@@ -22,7 +22,7 @@ new #[Layout('layouts.guest')] class extends Component {
 }; ?>
 
 @section('title', 'Inicio de Sesión')
-<div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border shadow-lg space-y-6">
+<div class="w-full max-w-full bg-white p-6 sm:p-8 rounded-lg border border-gray-200 shadow-sm space-y-6">
 
     <!-- Imagen centrada (máx 50% del ancho del contenedor) -->
     <div class="flex justify-center">
@@ -57,11 +57,11 @@ new #[Layout('layouts.guest')] class extends Component {
         </div>
 
         <!-- Botón de envío -->
-        <div class="flex items-center justify-between items-center">
+        <div class="flex items-center justify-between gap-4">
             <a href="{{ route('password.request') }}"
                 class="text-xs sm:text-sm lg:text-sm text-blue-600 hover:underline">¿Olvidaste tu
                 contraseña?</a>
-            <x-success-button class="sm:w-24 lg:w-[40%]">
+            <x-success-button class="sm:w-32">
                 Iniciar Sesión
             </x-success-button>
         </div>

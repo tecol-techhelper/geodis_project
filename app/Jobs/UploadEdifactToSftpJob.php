@@ -27,7 +27,7 @@ class UploadEdifactToSftpJob implements ShouldQueue
     public function __construct(
         public int $edifactFileId,
         public string $payload,
-        public string $remoteDisk = 'sftp',
+        public string $remoteDisk = 'sftp_geodis',
         public string $localDisk = 'public',
         public string $localBaseDir = 'edifact'
     ) {}

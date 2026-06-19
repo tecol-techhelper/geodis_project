@@ -22,6 +22,10 @@ class SupportFile extends Model
         'uploaded_sftp',
         'sftp_error',
         'file_type_id',
+        'purchase_order_id',
+        'purchase_order_number',
+        'order_reference_id',
+        'order_reference_value',
     ];
 
     // Relation(as son) 
@@ -36,5 +40,15 @@ class SupportFile extends Model
     public function service(): BelongsTo
     {
         return $this->belongsTo(Service::class, 'service_id');
+    }
+
+    public function purchase_order(): BelongsTo
+    {
+        return $this->belongsTo(PurchaseOrder::class, 'purchase_order_id');
+    }
+
+    public function order_reference(): BelongsTo
+    {
+        return $this->belongsTo(OrderReference::class, 'order_reference_id');
     }
 }

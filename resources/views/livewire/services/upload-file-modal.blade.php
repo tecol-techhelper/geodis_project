@@ -9,10 +9,56 @@ use App\Services\SharePointUploader;
 new class extends Component {
     use WithFileUploads;
     public UploadFileForm $form;
+    public array $cniOptions = [];
+    public array $coiOptions = [];
 
     public function mount(Service $service): void
     {
         $this->form->service_id = $service->id;
+        $service->loadMissing('purchase_orders.order_references.reference_type');
+
+        $this->cniOptions = $service->purchase_orders
+            ->map(function ($purchaseOrder) {
+                $number = trim((string) ($purchaseOrder->purchase_order_number ?? ''));
+
+                return $number !== '' ? [
+                    'id' => $purchaseOrder->id,
+                    'value' => $number,
+                ] : null;
+            })
+            ->filter()
+            ->unique('value')
+            ->values()
+            ->all();
+
+        $this->coiOptions = $service->purchase_orders
+            ->flatMap(fn($purchaseOrder) => $purchaseOrder->order_references ?? collect())
+            ->filter(function ($reference) {
+                return strtoupper(trim((string) ($reference->reference_type?->reference_type_code ?? ''))) === 'COI';
+            })
+            ->map(function ($reference) {
+                $value = trim((string) ($reference->order_reference_value ?? ''));
+                $value = trim(explode('/', $value, 2)[0] ?? '');
+
+                return $value !== '' ? [
+                    'id' => $reference->id,
+                    'value' => $value,
+                ] : null;
+            })
+            ->filter()
+            ->unique('value')
+            ->values()
+            ->all();
+
+        if (count($this->cniOptions) === 1) {
+            $this->form->purchase_order_id = (int) $this->cniOptions[0]['id'];
+            $this->form->purchase_order_number = $this->cniOptions[0]['value'];
+        }
+
+        if (count($this->coiOptions) === 1) {
+            $this->form->order_reference_id = (int) $this->coiOptions[0]['id'];
+            $this->form->order_reference_value = $this->coiOptions[0]['value'];
+        }
     }
 
     public function uploadFiles(): void
@@ -42,10 +88,10 @@ new class extends Component {
 
 {{-- @section('title', 'Cargar Soportes') --}}
 {{-- @if (Auth::user()->hasRole('admin') || Auth::user()->hasRole('coord')) --}}
-<div x-data="{ modalIsOpen: false, confirmClear: false }" x-effect="if (!modalIsOpen) { $refs.openSupportBtn?.blur() }">
+<div x-data="{ modalIsOpen: false, confirmClear: false, uploadClientError: '' }" x-effect="if (!modalIsOpen) { $refs.openSupportBtn?.blur() }">
     <x-primary-button x-ref="openSupportBtn" x-on:click="modalIsOpen = true; $nextTick(() => $refs.openSupportBtn.blur())"
         type="button" class="w-full sm:w-auto space-x-1">
-        <span>Cargar Soportes</span>
+        <span>Cargar soportes</span>
     </x-primary-button>
 
     <div x-cloak x-show="modalIsOpen" x-transition.opacity.duration.200ms x-trap.inert.noscroll="modalIsOpen"
@@ -56,16 +102,17 @@ new class extends Component {
         <div x-show="modalIsOpen"
             x-transition:enter="transition ease-out duration-200 delay-100 motion-reduce:transition-opacity"
             x-transition:enter-start="opacity-0 scale-50" x-transition:enter-end="opacity-100 scale-100"
-            class="flex max-w-lg overflow-auto max-h-[90vh] flex-col my-4 gap-4 rounded-md border border-neutral-300 bg-white text-neutral-600 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300">
+            class="my-4 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-auto rounded-xl border border-gray-200 bg-white text-gray-700 shadow-xl">
             <!-- Dialog Header -->
             <div
-                class="flex items-center justify-between border-b border-neutral-300 bg-neutral-50/60 p-4 dark:border-neutral-700 dark:bg-neutral-950/20">
-                <h3 id="defaultModalTitle" class="font-semibold tracking-wide text-neutral-900 dark:text-white">
-                    Cargue de Soportes
+                class="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-5 py-4">
+                <h3 id="defaultModalTitle" class="text-base font-semibold text-gray-900">
+                    Cargue de soportes
                 </h3>
 
                 <button type="button" x-on:click="modalIsOpen = false; $nextTick(() => $el.blur())"
-                    aria-label="close modal">
+                    aria-label="Cerrar modal"
+                    class="rounded-md p-1 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" stroke="currentColor"
                         fill="none" stroke-width="1.4" class="w-5 h-5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -74,70 +121,99 @@ new class extends Component {
             </div>
 
             <!-- Dialog Body -->
-            <div class="px-4 py-2">
+            <div class="space-y-4 px-5 py-5">
                 <div class="space-y-1">
-                    <x-input-label for="file_type">Tipo de Soporte</x-input-label>
+                    <x-input-label for="file_type">Tipo de soporte</x-input-label>
                     <select id="file_type" wire:model="form.file_type"
-                        class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+                        class="h-11 w-full cursor-pointer rounded-md border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                         <option selected value="">Seleccione un tipo</option>
-                        <option value="CLI">Cumplido</option>
-                        <option value="CLP">Check List Preoperacional</option>
-                        <option value="IC">Informe de Cargue</option>
-                        <option value="IF">Informe final (Registro Fotográfico)</option>
-                        <option value="RO">Reporte OnSite</option>
-                        <option value="RT">Remesa de Transporte</option>
-                        <option value="ID">Informe de Descargue</option>
-                        <option value="TRC">Tirilla de Retiro de Contenedores</option>
-                        <option value="TDC">Tirilla de Devolución de Contenedores</option>
-                        <option value="GABF301">Formato de inspección de contenedores y unidades de carga para
-                            importación y exportación</option>
-                        <option value="PDR">Plan de Ruta Contenedores – Impo // Expo</option>
-                        <option value="GPS">Reporte de GPS – Impo // Expo</option>
-                        <option value="RP">Reempaques</option>
+                        <option value="CLI">CUMPLIDO</option>
+                        <option value="CLP">CHECK LIST PREOPERACIONAL</option>
+                        <option value="GABF301">CONTAINER AND CARGO UNIT INSPECTION FORMAT FOR IMPORT AND EXPORT</option>
+                        <option value="GPS">REPORTE DE GPS - IMPO // EXPO</option>
+                        <option value="IC">INFORME DE CARGUE (REGISTRO FOTOGRÁFICO)</option>
+                        <option value="ID">INFORME DE DESCARGUE</option>
+                        <option value="IF">INFORME FINAL</option>
+                        <option value="PDR">PLAN DE RUTA CONTENEDORES - IMPO // EXPO</option>
+                        <option value="RP">REEMPAQUES</option>
+                        <option value="RT">REMESA DE TRANSPORTE</option>
+                        <option value="TDC">TIRILLA DE DEVOLUCION DE CONTENEDORES</option>
+                        <option value="TRC">TIRILLA DE RETIRO DE CONTENEDORES</option>
                     </select>
                     <x-input-error :messages="$errors->get('form.file_type')" class="mt-2" />
                 </div>
 
+                <div class="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2">
+                    <div class="space-y-1">
+                        <x-input-label for="cni_value">CNI</x-input-label>
+                        <select id="cni_value" wire:model="form.purchase_order_id"
+                            class="h-11 w-full cursor-pointer rounded-md border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(count($cniOptions) <= 1)>
+                            @if (count($cniOptions) !== 1)
+                                <option value="">Seleccione CNI</option>
+                            @endif
+                            @forelse ($cniOptions as $cniOption)
+                                <option value="{{ $cniOption['id'] }}">{{ $cniOption['value'] }}</option>
+                            @empty
+                                <option value="">Sin CNI</option>
+                            @endforelse
+                        </select>
+                    </div>
+
+                    <div class="space-y-1">
+                        <x-input-label for="coi_value">COI</x-input-label>
+                        <select id="coi_value" wire:model="form.order_reference_id"
+                            class="h-11 w-full cursor-pointer rounded-md border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(count($coiOptions) <= 1)>
+                            @if (count($coiOptions) !== 1)
+                                <option value="">Seleccione COI</option>
+                            @endif
+                            @forelse ($coiOptions as $coiOption)
+                                <option value="{{ $coiOption['id'] }}">{{ $coiOption['value'] }}</option>
+                            @empty
+                                <option value="">Sin COI</option>
+                            @endforelse
+                        </select>
+                    </div>
+                </div>
+
                 <div class="pt-3">
-                    <x-input-label for="free_text">Texto Libre:</x-input-label>
+                    <x-input-label for="free_text">Texto libre</x-input-label>
                     <x-text-input type="text" id="free_text" wire:model.defer="form.free_text" class="w-full" />
                     <x-input-error :messages="$errors->get('form.free_text')" class="mt-2" />
                 </div>
 
-                <div class="py-4">
+                <div class="space-y-2">
                     <!-- CLAVE: el input debe apuntar a form.files -->
                     <input multiple wire:model="form.files" type="file"
-                        class="w-full text-slate-500 font-medium text-sm bg-gray-100 file:cursor-pointer cursor-pointer file:border-0 file:py-2 file:px-4 file:mr-4 file:bg-gray-800 file:hover:bg-gray-700 file:text-white rounded" />
+                        x-on:change="uploadClientError = ''"
+                        x-on:livewire-upload-error="uploadClientError = 'No se pudo cargar el archivo temporal. Verifique que el formato sea permitido y que no supere 10 MB.'"
+                        class="block w-full cursor-pointer rounded-md border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:cursor-pointer file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1" />
 
-                    @error('form.files')
-                        <span class="text-red-500 text-xs">{{ $message }}</span>
-                    @enderror
-
-                    {{-- Opcional: errores por archivo --}}
-                    @error('form.files.*')
-                        <span class="text-red-500 text-xs">{{ $message }}</span>
-                    @enderror
+                    <p x-cloak x-show="uploadClientError" x-text="uploadClientError" class="text-xs text-red-600"></p>
+                    <x-input-error :messages="$errors->get('form.files')" class="text-xs" />
+                    <x-input-error :messages="$errors->get('form.files.*')" class="text-xs" />
 
                     <!-- CLAVE: target correcto -->
-                    <div wire:loading wire:target="form.files" class="text-xs text-blue-600 mt-2">
+                    <div wire:loading wire:target="form.files" class="text-xs font-medium text-indigo-600">
                         Subiendo archivo(s) temporalmente...
                     </div>
                 </div>
 
                 <div>
-                    <x-input-label>Archivos Cargados</x-input-label>
+                    <x-input-label>Archivos cargados</x-input-label>
                     <ul
-                        class="mt-2 space-y-1 text-sm text-gray-700 dark:text-gray-300 border-2 border-dashed px-4 py-4 rounded-md">
+                        class="mt-2 divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white text-sm text-gray-700">
                         @forelse ($form->tempFiles as $index => $file)
-                            <li class="flex items-center justify-between">
-                                <span>{{ $file['fileName'] }}</span>
+                            <li class="flex items-center justify-between gap-3 px-4 py-3">
+                                <span class="min-w-0 truncate">{{ $file['fileName'] }}</span>
                                 <button type="button" wire:click="removeTempFiles({{ $index }})"
-                                    class="text-red-500 hover:underline">
+                                    class="shrink-0 text-sm font-medium text-red-600 hover:text-red-700 hover:underline">
                                     Eliminar
                                 </button>
                             </li>
                         @empty
-                            <li class="text-xs text-gray-500">
+                            <li class="px-4 py-4 text-xs text-gray-500">
                                 No hay archivos cargados.
                             </li>
                         @endforelse
@@ -147,7 +223,7 @@ new class extends Component {
 
             <!-- Dialog Footer -->
             <div
-                class="flex flex-col-reverse justify-end gap-2 border-t border-neutral-300 bg-neutral-50/60 p-4 dark:border-neutral-700 dark:bg-neutral-950/20 sm:flex-row sm:items-center md:justify-end">
+                class="flex flex-col-reverse justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-4 sm:flex-row sm:items-center md:justify-end">
                 <x-danger-button
                     x-on:click="
                         $wire.form.tempFiles.length > 0
@@ -169,13 +245,13 @@ new class extends Component {
 
                 <div x-cloak x-show="confirmClear" x-transition.opacity
                     x-on:keydown.escape.window="confirmClear = false" x-on:click.self="confirmClear = false"
-                    class="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-                    <div class="bg-white dark:bg-neutral-800 rounded-md shadow-xl p-6 w-full max-w-md space-y-4">
-                        <h2 class="text-lg font-semibold text-gray-800 dark:text-white">
+                    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+                    <div class="w-full max-w-md space-y-4 rounded-xl border border-gray-200 bg-white p-6 shadow-xl">
+                        <h2 class="text-lg font-semibold text-gray-900">
                             ¿Está seguro que desea salir?
                         </h2>
-                        <p class="text-sm text-gray-600 dark:text-gray-300">
-                            Existen archivos pendiente por guardar
+                        <p class="text-sm text-gray-600">
+                            Existen archivos pendientes por guardar.
                         </p>
 
                         <div class="flex justify-end gap-2">
@@ -193,7 +269,8 @@ new class extends Component {
                 </div>
 
                 <x-primary-button wire:click.prevent="uploadFiles" wire:loading.attr="disabled"
-                    wire:target="form.files,uploadFiles" x-on:click="$nextTick(() => $el.blur())" type="button"
+                    wire:target="form.files,uploadFiles" type="button"
+                    x-on:click="uploadClientError = ''; $nextTick(() => $el.blur())"
                     class="space-x-1">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"

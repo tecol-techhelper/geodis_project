@@ -24,7 +24,9 @@ return new class extends Migration
                 ->update(['service_id' => $firstServiceId]);
         }
 
-        DB::statement('ALTER TABLE support_files MODIFY service_id BIGINT UNSIGNED NOT NULL');
+        if (DB::connection()->getDriverName() !== 'sqlite') {
+            DB::statement('ALTER TABLE support_files MODIFY service_id BIGINT UNSIGNED NOT NULL');
+        }
     }
 
     /**
@@ -32,6 +34,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        DB::statement('ALTER TABLE support_files MODIFY service_id BIGINT UNSIGNED NULL');
+        if (DB::connection()->getDriverName() !== 'sqlite') {
+            DB::statement('ALTER TABLE support_files MODIFY service_id BIGINT UNSIGNED NULL');
+        }
     }
 };

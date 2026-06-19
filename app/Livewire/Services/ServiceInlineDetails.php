@@ -10,6 +10,8 @@ class ServiceInlineDetails extends Component
 {
     public ?Service $service = null;
 
+    public bool $hiddenForTrash = false;
+
     #[On('service-preview-selected')]
     public function loadService(int $serviceId): void
     {
@@ -21,6 +23,13 @@ class ServiceInlineDetails extends Component
                 'service_contacts.service_contact_details',
             ])
             ->find($serviceId);
+    }
+
+    #[On('service-list-mode-changed')]
+    public function clearService(bool $showTrash = false): void
+    {
+        $this->service = null;
+        $this->hiddenForTrash = $showTrash;
     }
 
     public function render()

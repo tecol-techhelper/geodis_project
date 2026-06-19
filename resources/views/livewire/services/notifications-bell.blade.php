@@ -1,9 +1,8 @@
 <div wire:poll.10s wire:key="notifications-bell" class="relative justify-center" x-data="{ open: false }">
     {{-- Botón de campana --}}
-    <button @click="open = !open" class="button"
-        class="relative flex items-center justify-center bg-black-400 border-full
-        relative w-6 md:w-10 h-auto flex items-center justify-center focus:outline-none">
-        <svg viewBox="0 0 448 512" class="bell">
+    <button @click="open = !open" type="button" class="button focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+        aria-label="Ver notificaciones" :aria-expanded="open.toString()">
+        <svg viewBox="0 0 448 512" class="bell" aria-hidden="true">
             <path
                 d="M224 0c-17.7 0-32 14.3-32 32V49.9C119.5 61.4 64 124.2 64 200v33.4c0 45.4-15.5 89.5-43.8 124.9L5.3 377c-5.8 7.2-6.9 17.1-2.9 25.4S14.8 416 24 416H424c9.2 0 17.6-5.3 21.6-13.6s2.9-18.2-2.9-25.4l-14.9-18.6C399.5 322.9 384 278.8 384 233.4V200c0-75.8-55.5-138.6-128-150.1V32c0-17.7-14.3-32-32-32zm0 96h8c57.4 0 104 46.6 104 104v33.4c0 47.9 13.9 94.6 39.7 134.6H72.3C98.1 328 112 281.3 112 233.4V200c0-57.4 46.6-104 104-104h8zm64 352H224 160c0 17 6.7 33.3 18.7 45.3s28.3 18.7 45.3 18.7s33.3-6.7 45.3-18.7s18.7-28.3 18.7-45.3z">
             </path>
@@ -17,7 +16,7 @@
 
     {{-- Dropdown --}}
     <div x-show="open" @click.outside="open = false"
-        class="absolute right-0 z-10 mt-2 bg-white border rounded shadow w-64">
+        class="absolute right-0 z-40 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg w-72 overflow-hidden">
         <ul class="max-h-60 overflow-y-auto p-2">
             @forelse ($notifications as $notif)
                 <li class="border-b py-1 text-sm cursor-pointer hover:bg-gray-100"
@@ -32,7 +31,7 @@
         </ul>
 
         @if ($unreadCount > 0)
-            <button wire:click="markAllAsRead" class="w-full text-blue-600 py-1 hover:bg-gray-100">
+            <button wire:click="markAllAsRead" class="w-full text-blue-600 py-2 text-sm hover:bg-gray-100">
                 Marcar todas como leídas
             </button>
         @endif
