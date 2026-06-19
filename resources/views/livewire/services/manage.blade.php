@@ -4,10 +4,12 @@ use App\Models\Service;
 use App\Models\Status;
 use App\Models\EdifactFile;
 use App\Models\Resource;
+use App\Models\ServiceStatusReport;
 use App\Models\StatusPurpose;
 use App\Jobs\UploadEdifactToSftpJob;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\Services\Edi\GenerateIftstaPayloadService;
 use Livewire\Attributes\Layout;
 use Livewire\Volt\Component;
@@ -71,11 +73,41 @@ new #[Layout('layouts.app')] class extends Component {
     public function save(): void
     {
         $dirtyPurchaseOrderIds = $this->form->update();
+        $updateChanges = $this->form->last_update_changes;
+        $onlyRemovedResources = ($updateChanges['resource_removed'] ?? false)
+            && !($updateChanges['resource_added'] ?? false)
+            && !($updateChanges['status_changed'] ?? false);
 
         try {
             $service = Service::query()
-                ->with('status:id,status_name,edifact_code')
+                ->with(['status:id,status_name,edifact_code', 'resources', 'purchase_orders:id,service_id'])
                 ->findOrFail((int) $this->form->id);
+
+            $resources = $service->resources ?? collect();
+            $hasResources = $resources->isNotEmpty();
+            $reportedPivotIdsForStatus = $service->status_id !== null
+                ? DB::table('service_resource_status_reports')
+                    ->join('service_status_reports', 'service_status_reports.id', '=', 'service_resource_status_reports.service_status_report_id')
+                    ->where('service_status_reports.service_id', $service->id)
+                    ->where('service_status_reports.status_id', $service->status_id)
+                    ->pluck('service_resource_status_reports.service_resource_id')
+                    ->map(fn($id) => (int) $id)
+                    ->all()
+                : [];
+            $unreportedResources = $resources
+                ->filter(function ($res) use ($reportedPivotIdsForStatus) {
+                    $pivotId = $res->pivot?->id !== null ? (int) $res->pivot->id : null;
+
+                    return $pivotId !== null && !in_array($pivotId, $reportedPivotIdsForStatus, true);
+                })
+                ->values();
+
+            if (!$onlyRemovedResources && count($dirtyPurchaseOrderIds) === 0 && $unreportedResources->isNotEmpty()) {
+                $dirtyPurchaseOrderIds = $service->purchase_orders
+                    ?->pluck('id')
+                    ->map(fn($id) => (int) $id)
+                    ->all() ?? [];
+            }
 
             if (count($dirtyPurchaseOrderIds) > 0) {
                 $this->validate([
@@ -84,14 +116,6 @@ new #[Layout('layouts.app')] class extends Component {
 
                 /** @var GenerateIftstaPayloadService $iftsta */
                 $iftsta = app(GenerateIftstaPayloadService::class);
-
-                $resources = $service->resources ?? collect();
-                $hasResources = $resources->isNotEmpty();
-                $unreportedResources = $resources
-                    ->filter(function ($res) {
-                        return $res->pivot?->last_reported_at === null;
-                    })
-                    ->values();
 
                 if ($hasResources && $unreportedResources->isEmpty()) {
                     Log::info('No hay recursos nuevos por reportar en IFTSTA', [
@@ -107,6 +131,7 @@ new #[Layout('layouts.app')] class extends Component {
 
                 $statusReportedAt = $this->status_reported_at ? \Carbon\Carbon::parse($this->status_reported_at) : null;
                 $reportedStatusName = $service->status?->status_name;
+                $statusReport = null;
 
                 foreach ($resourceIdList as $resourceItem) {
                     $resourceId = is_string($resourceItem) ? trim($resourceItem) : (is_object($resourceItem) ? trim((string) ($resourceItem->resource_id ?? '')) : null);
@@ -140,6 +165,11 @@ new #[Layout('layouts.app')] class extends Component {
                     ]);
 
                     UploadEdifactToSftpJob::dispatchSync(edifactFileId: (int) $edifactFile->id, payload: $payload);
+                    $edifactFile->refresh();
+
+                    if ($edifactFile->status !== EdifactFile::STATUS_SENT) {
+                        throw new \RuntimeException("El IFTSTA #{$edifactFile->id} no quedo enviado por SFTP.");
+                    }
 
                     Log::info('IFTSTA generado y job de envio despachado', [
                         'service_id' => $service->id,
@@ -149,9 +179,20 @@ new #[Layout('layouts.app')] class extends Component {
                         'resource_id' => $resourceId,
                     ]);
 
-                    if ($resourceItem && is_object($resourceItem) && $resourceItem->pivot?->id) {
+                    if (!$statusReport) {
+                        $statusReport = $this->persistServiceStatusReport($service, $statusReportedAt);
+                    }
+
+                    if ($statusReport && $resourceItem && is_object($resourceItem) && $resourceItem->pivot?->id) {
                         $reportedAt = $statusReportedAt ?? now();
-                        \Illuminate\Support\Facades\DB::table('service_resource')
+                        DB::table('service_resource_status_reports')->insertOrIgnore([
+                            'service_resource_id' => (int) $resourceItem->pivot->id,
+                            'service_status_report_id' => $statusReport->id,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+
+                        DB::table('service_resource')
                             ->where('id', (int) $resourceItem->pivot->id)
                             ->update([
                                 'last_reported_at' => $reportedAt,
@@ -221,6 +262,25 @@ new #[Layout('layouts.app')] class extends Component {
     public function back(): void
     {
         $this->redirect(route('services.index'));
+    }
+
+    private function persistServiceStatusReport(Service $service, ?\Carbon\Carbon $reportedAt): ?ServiceStatusReport
+    {
+        if ($service->status_id === null || !$service->status) {
+            return null;
+        }
+
+        return ServiceStatusReport::query()->updateOrCreate(
+            [
+                'service_id' => $service->id,
+                'status_id' => $service->status_id,
+            ],
+            [
+                'reported_at' => $reportedAt ?? now(),
+                'status_name_snapshot' => $service->status->status_name,
+                'edifact_code_snapshot' => $service->status->edifact_code,
+            ],
+        );
     }
 
     // Diccionario para unit_identifier_type
@@ -547,9 +607,18 @@ new #[Layout('layouts.app')] class extends Component {
                 @php
                     $resourceGroups = $resources?->groupBy('resource_operation') ?? collect();
                     $resourceLookup = $resources?->keyBy('id') ?? collect();
-                    $serviceResourcePivotLookup = collect($form->service?->resources ?? [])
-                        ->filter(fn($resource) => (int) data_get($resource, 'pivot.id', 0) > 0)
-                        ->keyBy(fn($resource) => (int) data_get($resource, 'pivot.id'));
+                    $serviceStatusReports = collect($form->service?->service_status_reports ?? [])
+                        ->sortBy(function ($statusReport) {
+                            $edifactCode = $statusReport->status?->edifact_code
+                                ?? $statusReport->edifact_code_snapshot
+                                ?? null;
+
+                            return [
+                                is_numeric($edifactCode) ? (int) $edifactCode : PHP_INT_MAX,
+                                (int) ($statusReport->status_id ?? PHP_INT_MAX),
+                            ];
+                        })
+                        ->values();
 
                     $formatReportedAt = function ($value): string {
                         if ($value === null || trim((string) $value) === '') {
@@ -563,14 +632,51 @@ new #[Layout('layouts.app')] class extends Component {
                         }
                     };
 
+                    $resourceStatusLinks = $serviceStatusReports
+                        ->flatMap(function ($statusReport) {
+                            $statusName = $statusReport->status?->status_name
+                                ?? $statusReport->status_name_snapshot
+                                ?? ('Estado #' . $statusReport->status_id);
+
+                            return collect($statusReport->resourceStatusReports ?? [])->map(fn($resourceStatusReport) => [
+                                'service_resource_id' => (int) $resourceStatusReport->service_resource_id,
+                                'status_name' => $statusName,
+                            ]);
+                        })
+                        ->values();
+
+                    $reportedStatusesByPivotId = $resourceStatusLinks
+                        ->groupBy('service_resource_id')
+                        ->map(fn($rows) => $rows->pluck('status_name')->filter()->unique()->implode(', '));
+
+                    $statusReportRows = $serviceStatusReports
+                        ->map(function ($statusReport) use ($formatReportedAt) {
+                            $resourceReports = collect($statusReport->resourceStatusReports ?? []);
+                            $resourceNames = $resourceReports
+                                ->map(fn($resourceStatusReport) => $resourceStatusReport->serviceResource?->resource?->resource_name)
+                                ->filter()
+                                ->unique()
+                                ->values();
+
+                            return [
+                                'status_name' => collect([
+                                    $statusReport->status?->status_name
+                                    ?? $statusReport->status_name_snapshot
+                                    ?? ('Estado #' . $statusReport->status_id),
+                                    $statusReport->status?->status_description,
+                                ])->filter(fn($value) => trim((string) $value) !== '')->implode(' - '),
+                                'reported_at' => $formatReportedAt($statusReport->reported_at),
+                                'resource_count' => $resourceReports->pluck('service_resource_id')->unique()->count(),
+                                'resource_names' => $resourceNames->isNotEmpty() ? $resourceNames->implode(', ') : '-',
+                            ];
+                        })
+                        ->values();
+
                     $selectedResources = collect($form->service_resource_rows ?? [])
                         ->values()
-                        ->map(function ($row, $index) use ($resourceLookup, $serviceResourcePivotLookup, $formatReportedAt) {
+                        ->map(function ($row, $index) use ($resourceLookup, $reportedStatusesByPivotId) {
                             $resource = $resourceLookup->get((int) data_get($row, 'resource_id'));
                             $pivotId = (int) data_get($row, 'pivot_id', 0);
-                            $pivotResource = $pivotId > 0 ? $serviceResourcePivotLookup->get($pivotId) : null;
-                            $lastReportedAt = $pivotResource?->pivot?->last_reported_at;
-                            $statusName = $pivotResource?->pivot?->status_name;
 
                             if (!$resource) {
                                 return null;
@@ -579,8 +685,7 @@ new #[Layout('layouts.app')] class extends Component {
                             return [
                                 'index' => $index,
                                 'resource' => $resource,
-                                'last_reported_at' => $formatReportedAt($lastReportedAt),
-                                'status_name' => (is_string($statusName) && trim($statusName) !== '') ? trim($statusName) : '-',
+                                'status_names' => $reportedStatusesByPivotId->get($pivotId, '-'),
                             ];
                         })
                         ->filter()
@@ -640,7 +745,7 @@ new #[Layout('layouts.app')] class extends Component {
                         </label>
                         <input type="datetime-local" id="status_reported_at" wire:model.defer="status_reported_at"
                             class="w-full h-12 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            required @disabled(!$form->canEdit) />
+                            @disabled(!$form->canEdit) />
                     </div>
 
                     @error('form.service_resource_id')
@@ -648,18 +753,15 @@ new #[Layout('layouts.app')] class extends Component {
                     @enderror
                 </div>
 
-                @if ($selectedResources->isNotEmpty())
-                    <div class="md:col-span-3 mt-1 overflow-x-auto border border-gray-200 rounded-lg bg-white">
+                @if ($selectedResources->isNotEmpty() || $statusReportRows->isNotEmpty())
+                    <div class="md:col-span-3 grid grid-cols-1 lg:grid-cols-2 items-start gap-6 mt-1">
+                    <div class="min-w-0 max-h-80 overflow-auto border border-gray-200 rounded-lg bg-white">
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50">
                                 <tr>
                                     <th
                                         class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Recurso
-                                    </th>
-                                    <th
-                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Fecha Reporte
                                     </th>
                                     <th
                                         class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -678,10 +780,7 @@ new #[Layout('layouts.app')] class extends Component {
                                             {{ $selectedResource['resource']->resource_name }}
                                         </td>
                                         <td class="px-4 py-3 text-sm text-gray-700">
-                                            {{ $selectedResource['last_reported_at'] }}
-                                        </td>
-                                        <td class="px-4 py-3 text-sm text-gray-700">
-                                            {{ $selectedResource['status_name'] }}
+                                            {{ $selectedResource['status_names'] }}
                                         </td>
                                         <td class="px-4 py-3 text-center">
                                             @if ($form->canEdit)
@@ -698,6 +797,35 @@ new #[Layout('layouts.app')] class extends Component {
                                 @endforeach
                             </tbody>
                         </table>
+                    </div>
+                    <div class="min-w-0 max-h-80 overflow-auto border border-gray-200 rounded-lg bg-white">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Estado
+                                    </th>
+                                    <th
+                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Fecha de Reporte
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                @foreach ($statusReportRows as $statusReportRow)
+                                    <tr class="hover:bg-gray-50 transition-colors">
+                                        <td class="px-4 py-3 text-sm text-gray-900">
+                                            {{ $statusReportRow['status_name'] }}
+                                        </td>
+                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                            {{ $statusReportRow['reported_at'] }}
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
                     </div>
                 @endif
             </div>

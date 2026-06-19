@@ -42,4 +42,9 @@ class Status extends Model
     {
         return $this->belongsTo(StatusPurpose::class, 'status_purpose_id');
     }
+
+    public function service_status_reports(): HasMany
+    {
+        return $this->hasMany(ServiceStatusReport::class, 'status_id');
+    }
 }
