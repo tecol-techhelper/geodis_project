@@ -17,7 +17,6 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function register(): void
     {
-        // dd('Entró al save');
         $user = $this->form->save();
 
         Log::info('Usuario guardado: ' . $user->id);
@@ -33,15 +32,15 @@ new #[Layout('layouts.app')] class extends Component {
         ['label' => 'Registro Usuario', 'icon' => 'user-plus'],
     ]"></x-breadcrums>
 
-    <form wire:submit="register" class="border-2 border-gray-200 shadow-2xl rounded-2xl bg-white">
+    <form wire:submit="register" class="border border-gray-200 shadow-sm rounded-xl bg-white">
         {{-- Contenedor tipo split: izquierda formulario, derecha imagen fija --}}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             {{-- Columna izquierda (formulario completo) --}}
-            <div class="flex flex-col justify-center md:col-span-2 px-12 py-10 space-y-6 md:px-24 md:py-12 md:space-y-6">
+            <div class="flex flex-col justify-center md:col-span-2 px-6 py-8 space-y-5 md:px-12 lg:px-16">
                 <div>
-                    <h1 class="flex items-center text-5xl font-extrabold dark:text-white space-x-4">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24"
+                    <h1 class="flex items-center text-2xl sm:text-3xl font-bold text-gray-900 space-x-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"
                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                             stroke-linejoin="round" class="lucide lucide-user-round-plus-icon lucide-user-round-plus">
                             <path d="M2 21a8 8 0 0 1 13.292-6" />
@@ -49,7 +48,7 @@ new #[Layout('layouts.app')] class extends Component {
                             <path d="M19 16v6" />
                             <path d="M22 19h-6" />
                         </svg>
-                        <span>Registro de Usuario</span>
+                        <span>Registro de usuario</span>
                     </h1>
                 </div>
                 <div>
@@ -64,44 +63,44 @@ new #[Layout('layouts.app')] class extends Component {
                         </div>
                         <input type="file" id="user_icon" wire:model="form.user_icon"
                             accept="image/jpg, image/jpeg, image/png, image/webp"
-                            class="block w-full text-sm text-gray-900 border border-gray-300 rounded-sm cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400" />
+                            class="block w-full cursor-pointer rounded-md border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1" />
                     </div>
                     <x-input-error :messages="$errors->get('form.user_icon')" class="mt-2" />
                 </div>
                 <div>
-                    <x-input-label for="username">Usuario:</x-input-label>
+                    <x-input-label for="username">Usuario</x-input-label>
                     <x-text-input type="text" id="username" wire:model.defer="form.username" class="w-full" />
                     <x-input-error :messages="$errors->get('form.username')" class="mt-2" />
                 </div>
                 <div>
-                    <x-input-label for="first_name">Nombre(s):</x-input-label>
+                    <x-input-label for="first_name">Nombre(s)</x-input-label>
                     <x-text-input type="text" id="first_name" wire:model.defer="form.first_name" class="w-full" />
                     <x-input-error :messages="$errors->get('form.first_name')" class="mt-2" />
                 </div>
                 <div>
-                    <x-input-label for="last_name">Apellido(s):</x-input-label>
+                    <x-input-label for="last_name">Apellido(s)</x-input-label>
                     <x-text-input type="text" id="last_name" wire:model.defer="form.last_name" class="w-full" />
                     <x-input-error :messages="$errors->get('form.last_name')" class="mt-2" />
                 </div>
                 <div>
-                    <x-input-label for="email">Email</x-input-label>
+                    <x-input-label for="email">Correo</x-input-label>
                     <x-text-input type="email" id="email" wire:model.defer="form.email" class="w-full" />
                     <x-input-error :messages="$errors->get('form.email')" class="mt-2" />
                 </div>
                 <div>
-                    <x-input-label for="password">Password</x-input-label>
+                    <x-input-label for="password">Contraseña</x-input-label>
                     <x-text-input type="password" id="password" wire:model.defer="form.password" class="w-full" />
                     <x-input-error :messages="$errors->get('form.password')" class="mt-2" />
                 </div>
                 <div>
-                    <x-input-label for="password_confirmation">Confirm Password</x-input-label>
+                    <x-input-label for="password_confirmation">Confirmar contraseña</x-input-label>
                     <x-text-input type="password" id="password_confirmation"
                         wire:model.defer="form.password_confirmation" class="w-full" />
                 </div>
                 <div>
                     <x-input-label for="role_id">Rol</x-input-label>
                     <select id="role_id" wire:model.defer="form.role_id"
-                        class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+                        class="w-full rounded-md border-gray-300 bg-white text-sm text-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                         @foreach (App\Enums\Rol::cases() as $rol)
                             <option value="{{ $rol->value }}">{{ $rol->label() }}</option>
                         @endforeach
@@ -111,7 +110,7 @@ new #[Layout('layouts.app')] class extends Component {
                 <div>
                     <x-input-label for="is_active">Estado</x-input-label>
                     <select id="is_active" wire:model.defer="form.is_active"
-                        class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+                        class="w-full rounded-md border-gray-300 bg-white text-sm text-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                         @foreach (App\Enums\UserStatus::cases() as $status)
                             <option value="{{ $status->value }}">{{ $status->label() }}</option>
                         @endforeach
@@ -123,7 +122,7 @@ new #[Layout('layouts.app')] class extends Component {
                 </div>
             </div>
             {{-- Columna derecha (solo tu imagen fija con overlay rojo) --}}
-            <div class="relative w-full h-full border-l-2 border-black hidden md:block">
+            <div class="relative w-full h-full border-l border-gray-200 hidden md:block">
                 <img src="{{ asset('images/logos/userFormsImage.jpg') }}" alt="Imagen lateral"
                     class="w-full h-full object-cover shadow-md rounded-r-2xl">
                 <div class="absolute inset-0 bg-red-600 opacity-40 rounded-r-2xl"></div>

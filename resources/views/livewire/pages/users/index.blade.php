@@ -11,9 +11,9 @@ new #[Layout('layouts.app')] class extends Component {};
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Usuarios', 'icon' => 'users'],
     ]"></x-breadcrums>
-    <div class="py-6 px-6 border-2 rounded-lg shadow-lg bg-white dark:bg-white">
+    <div class="py-6 px-6 border border-gray-200 rounded-lg shadow-sm bg-white">
         <a href="{{ route('user.create') }}"
-            class="space-x-2 inline-flex items-center justify-between px-4 py-2 bg-white dark:bg-white border-[1px] border-blue-700 rounded-md font-semibold text-xs text-blue-700 dark:text-blue-700 uppercase tracking-widest hover:bg-blue-700 hover:shadow-lg hover:text-white dark:hover:text-white dark:hover:bg-white focus:bg-blue-700 dark:focus:bg-white active:bg-blue-900 dark:active:bg-blue-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 dark:focus:ring-offset-blue-800 transition ease-in-out duration-150">
+            class="space-x-2 inline-flex items-center justify-between px-4 py-2 bg-white border border-blue-700 rounded-md font-semibold text-xs text-blue-700 uppercase tracking-widest hover:bg-blue-700 hover:text-white focus:bg-blue-700 focus:text-white active:bg-blue-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition ease-in-out duration-150">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
                 class="lucide lucide-user-plus-icon lucide-user-plus">
