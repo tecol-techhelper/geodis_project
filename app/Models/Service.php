@@ -28,6 +28,8 @@ class Service extends Model
         'remittance_invoice_value',
         'remittance_value',
         'invoice_date',
+        'positioning_date',
+        'arrival_date',
         'record_number',
         'payment_approval',
         'odp',
@@ -44,6 +46,8 @@ class Service extends Model
         'supplier_invoice_number' => 'integer',
         'remittance_invoice_value' => 'decimal:2',
         'invoice_date' => 'date',
+        'positioning_date' => 'datetime',
+        'arrival_date' => 'datetime',
         'payment_approval' => 'boolean',
         'odp' => 'integer',
         'odp_value' => 'decimal:2',
@@ -145,5 +149,20 @@ class Service extends Model
         return $this->belongsToMany(Resource::class, 'service_resource', 'service_id', 'resource_id')
             ->withPivot('id', 'last_reported_at', 'status_name')
             ->withTimestamps();
+    }
+
+    public function service_resource_rows(): HasMany
+    {
+        return $this->hasMany(ServiceResource::class);
+    }
+
+    public function service_resource_reports(): HasMany
+    {
+        return $this->hasMany(ServiceResourceReport::class);
+    }
+
+    public function service_status_reports(): HasMany
+    {
+        return $this->hasMany(ServiceStatusReport::class);
     }
 }

@@ -21,15 +21,34 @@ class UploadFileForm extends Form
 {
     use WithFileUploads;
 
+    private const ALLOWED_FILE_TYPES = ['CLI', 'CLP', 'IC', 'IF', 'RT', 'ID', 'TRC', 'TDC', 'GABF301', 'PDR', 'GPS', 'RP'];
+    private const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'avi', 'wmv', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
+    private const ALLOWED_MIME_TYPES = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'video/mp4',
+        'video/quicktime',
+        'video/x-msvideo',
+        'video/x-ms-wmv',
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/zip',
+        'application/octet-stream',
+    ];
+
     #[Validate([
         'files' => 'array|nullable',
         'files.*' => 'file|max:10240|mimes:jpg,jpeg,png,webp,mp4,mov,avi,wmv,pdf,doc,docx,xls,xlsx',
-    ])]
+    ], onUpdate: false)]
     public array $files = [];
 
     public array $tempFiles = [];
 
-    #[Validate('string|in:CLI,CLP,IC,IF,RT,ID,TRC,TDC,GABF301,PDR,GPS,RP')]
+    #[Validate('string|in:CLI,CLP,IC,IF,RT,ID,TRC,TDC,GABF301,PDR,GPS,RP', onUpdate: false)]
     public ?string $file_type = null;
 
     public ?string $free_text = null;
@@ -62,6 +81,9 @@ class UploadFileForm extends Form
             return;
         }
 
+        $this->resetErrorBag('form.files');
+        $this->resetErrorBag('form.file_type');
+
         // $this->files siempre será array por la declaración, pero igual lo normalizamos.
         $incomingFiles = is_array($this->files) ? $this->files : array_filter([$this->files]);
 
@@ -84,16 +106,28 @@ class UploadFileForm extends Form
             return;
         }
 
+        if (!$this->isAllowedFileType($this->file_type)) {
+            $this->addError('form.file_type', 'El tipo de soporte seleccionado no es permitido.');
+            Log::warning('UploadFileForm@uploadFiles:invalid_file_type', [
+                'file_type' => $this->file_type,
+            ]);
+            return;
+        }
+
         $purchaseOrderContext = $this->selectedPurchaseOrderContext();
         $orderReferenceContext = $this->selectedOrderReferenceContext();
+        $hadFileErrors = false;
 
         try {
             foreach ($incomingFiles as $file) {
-                $extension = strtolower((string) $file->getClientOriginalExtension());
-                if (!$this->isAllowedExtension($extension)) {
-                    $this->addError('form.files', "Extensión no permitida: .{$extension}");
+                $fileValidationError = $this->fileValidationError($file);
+                if ($fileValidationError) {
+                    $this->addError('form.files', $fileValidationError);
+                    $hadFileErrors = true;
                     continue;
                 }
+
+                $extension = strtolower((string) $file->getClientOriginalExtension());
                 $freeText = trim((string) $this->free_text);
                 $safeFreeText = $freeText !== '' ? preg_replace('/[^A-Za-z0-9_-]/', '_', $freeText) : 'SIN_TEXTO';
 
@@ -122,8 +156,10 @@ class UploadFileForm extends Form
             return;
         }
 
-        // Limpieza correcta del error bag
-        $this->resetErrorBag('form.files');
+        if (!$hadFileErrors) {
+            $this->resetErrorBag('form.files');
+        }
+
         $this->files = [];
 
         Log::info('UploadFileForm@uploadFiles:done', [
@@ -301,17 +337,17 @@ class UploadFileForm extends Form
 
     private function ensureRemoteDirectory(string $remoteDir): void
     {
-        if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
-            Storage::disk('sftp_geodis')->makeDirectory($remoteDir);
+        if (!Storage::disk('sftp')->exists($remoteDir)) {
+            Storage::disk('sftp')->makeDirectory($remoteDir);
         }
 
         $attempts = 0;
-        while ($attempts < 5 && !Storage::disk('sftp_geodis')->exists($remoteDir)) {
+        while ($attempts < 5 && !Storage::disk('sftp')->exists($remoteDir)) {
             usleep(300000 * ($attempts + 1));
             $attempts++;
         }
 
-        if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
+        if (!Storage::disk('sftp')->exists($remoteDir)) {
             throw new \RuntimeException("No se pudo confirmar la creacion del directorio remoto {$remoteDir} por latencia.");
         }
     }
@@ -375,7 +411,7 @@ class UploadFileForm extends Form
 
         while ($attempts < 5) {
             try {
-                $result = Storage::disk('sftp_geodis')->putFileAs(
+                $result = Storage::disk('sftp')->putFileAs(
                     $remoteDir,
                     new \Illuminate\Http\File($localPath),
                     $remoteFileName
@@ -386,12 +422,12 @@ class UploadFileForm extends Form
                 }
 
                 $verifyTries = 0;
-                while ($verifyTries < 5 && !Storage::disk('sftp_geodis')->exists($remotePath)) {
+                while ($verifyTries < 5 && !Storage::disk('sftp')->exists($remotePath)) {
                     usleep(300000 * ($verifyTries + 1));
                     $verifyTries++;
                 }
 
-                if (!Storage::disk('sftp_geodis')->exists($remotePath)) {
+                if (!Storage::disk('sftp')->exists($remotePath)) {
                     Log::warning("Subida SFTP sin verificacion inmediata por latencia: {$remotePath}");
                 }
 
@@ -409,8 +445,41 @@ class UploadFileForm extends Form
 
     private function isAllowedExtension(string $extension): bool
     {
-        $allowed = ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'avi', 'wmv', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
-        return in_array($extension, $allowed, true);
+        return in_array($extension, self::ALLOWED_EXTENSIONS, true);
+    }
+
+    private function isAllowedFileType(string $fileType): bool
+    {
+        return in_array($fileType, self::ALLOWED_FILE_TYPES, true);
+    }
+
+    private function isAllowedMimeType(string $mimeType): bool
+    {
+        return in_array(strtolower($mimeType), self::ALLOWED_MIME_TYPES, true);
+    }
+
+    private function fileValidationError($file): ?string
+    {
+        if (!is_object($file) || !method_exists($file, 'getClientOriginalExtension')) {
+            return 'El archivo seleccionado no es válido.';
+        }
+
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+        if (!$this->isAllowedExtension($extension)) {
+            return "Extensión no permitida: .{$extension}.";
+        }
+
+        $size = method_exists($file, 'getSize') ? (int) $file->getSize() : 0;
+        if ($size > 10 * 1024 * 1024) {
+            return 'El archivo supera el tamaño máximo permitido de 10 MB.';
+        }
+
+        $mimeType = method_exists($file, 'getMimeType') ? (string) $file->getMimeType() : '';
+        if ($mimeType !== '' && !$this->isAllowedMimeType($mimeType)) {
+            return "Tipo de archivo no permitido: {$mimeType}.";
+        }
+
+        return null;
     }
 
     private function isTempPathSafe(string $tempPath): bool

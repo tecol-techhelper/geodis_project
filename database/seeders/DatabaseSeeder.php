@@ -41,6 +41,8 @@ class DatabaseSeeder extends Seeder
             DeliveryTermCatalogSeeder::class,
             PartyTypeSeeder::class,
             ResourceSeeder::class,
+            PersonnelRoleSeeder::class,
+            ResourcePersonnelRequirementSeeder::class,
         ]);
     }
 }

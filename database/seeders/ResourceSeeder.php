@@ -2,8 +2,10 @@
 
 namespace Database\Seeders;
 
+use App\Models\Resource;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 class ResourceSeeder extends Seeder
 {
@@ -151,10 +153,164 @@ class ResourceSeeder extends Seeder
             return $row;
         }, $rows);
 
-        DB::table('resources')->upsert(
-            $rows,
-            ['resource_id'],
-            ['resource_name', 'resource_operation', 'updated_at']
-        );
+        $reportMasks = $this->reportMasks();
+        $resourceCodes = array_column($rows, 'resource_id');
+        $missingMasks = array_values(array_diff($resourceCodes, array_keys($reportMasks)));
+        $unknownMasks = array_values(array_diff(array_keys($reportMasks), $resourceCodes));
+
+        if ($missingMasks !== [] || $unknownMasks !== []) {
+            throw new RuntimeException(sprintf(
+                'ResourceSeeder required_report_mask mismatch. Missing: [%s]. Unknown: [%s].',
+                implode(', ', $missingMasks),
+                implode(', ', $unknownMasks),
+            ));
+        }
+
+        $rows = array_map(function (array $row) use ($reportMasks) {
+            $row['required_report_mask'] = $reportMasks[$row['resource_id']];
+            return $row;
+        }, $rows);
+
+        foreach ($rows as $row) {
+            DB::table('resources')->updateOrInsert(
+                ['resource_id' => $row['resource_id']],
+                $row,
+            );
+        }
+    }
+
+    /**
+     * Values derived from "Maestro de Recursos.xlsx", Hoja1.
+     *
+     * NOMBRE COMPLETO and IDENTIFICACIÓN both map to REQUIRES_PERSONNEL.
+     *
+     * @return array<string, int>
+     */
+    private function reportMasks(): array
+    {
+        return [
+            'O_SDMI00' => 0,
+            'O_ACOME0' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_AGCEIA' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_AACCCB' => Resource::REQUIRES_REMITTANCE,
+            'O_AACCCI' => Resource::REQUIRES_REMITTANCE,
+            'O_AACCCA' => Resource::REQUIRES_REMITTANCE,
+            'O_AACCBI' => Resource::REQUIRES_REMITTANCE,
+            'O_AADCYD' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_BPITYM' => 0,
+            'T_CTCM22' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CTCM35' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CTCMMM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'I_CGTP10' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CGTP15' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CGTP20' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_COC4X2' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_COS4X2' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_REMITTANCE,
+            'O_COC4X4' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_COS4X4' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_REMITTANCE,
+            'T_CC4700' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'I_CTC10T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CTC7TO' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'T_CC700K' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CBTI30' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CBT230' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CBT340' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CBT440' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CBT540' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CBT450' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CGTPV0' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CGTC10' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CGTC15' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_CGTC20' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'I_CH100T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CH200T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_CDAD00' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_CPO20P' => 0,
+            'O_CPO40P' => 0,
+            'O_DCNT20' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'O_DCNT40' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'O_GCNT20' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'O_GSDT40' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'T_EELDM0' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_EQEV00' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_EM1X1M' => Resource::REQUIRES_REMITTANCE,
+            'O_EM1X1N' => Resource::REQUIRES_REMITTANCE,
+            'O_EM1X1B' => Resource::REQUIRES_REMITTANCE,
+            'I_GTP35T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GO120T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GOA20T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GO200T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GOA40T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GOA70T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GOA90T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_IPCDV0' => Resource::REQUIRES_PERSONNEL,
+            'O_IHSE00' => Resource::REQUIRES_PERSONNEL,
+            'I_MCO10T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MCO35T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MCO05T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MCO07T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_MDC55G' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_AACDP0' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_PMCT44' => Resource::REQUIRES_REMITTANCE,
+            'O_PMCT66' => Resource::REQUIRES_REMITTANCE,
+            'T_SEGH8T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_SEN8T0' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'O_SLZVP0' => Resource::REQUIRES_PERSONNEL,
+            'O_SPVCM0' => Resource::REQUIRES_PERSONNEL,
+            'T_TCC10G' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCC9GL' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCC30T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCC35T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCE25T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCM17T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCM22T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCP30T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TCP35T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'I_TLHCO0' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'O_TCV20A' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'O_TCV20B' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'O_TCV40C' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'O_TCV40A' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE | Resource::REQUIRES_CONTAINER,
+            'T_TEGH2T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TEGH4T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TUR01T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TUR02T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TUR03T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'T_TUR04T' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL | Resource::REQUIRES_REMITTANCE,
+            'I_CGT10M' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CGT15M' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CGT20M' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CT10TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_CTC7TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_C100TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_C200TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GT35TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_G120TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GA20TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_G200TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GA40TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GA70TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_GA90TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MC10TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MC35TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MC05TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_MC07TM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'I_TLHCOM' => Resource::REQUIRES_VEHICLE | Resource::REQUIRES_PERSONNEL,
+            'CA_EEPMT' => 0,
+            'CA_AETTC' => 0,
+            'CA_ECDTC' => 0,
+            'CA_IODCC' => 0,
+            'CA_REASS' => 0,
+            'CA_ETIOT' => 0,
+            'CA_DETCE' => 0,
+            'CA_TFFMN' => 0,
+            'CA_STCSR' => 0,
+            'CA_SCPTO' => 0,
+            'CA_EAOSF' => 0,
+            'CA_TACDC' => 0,
+            'CA_EADPO' => 0,
+            'CA_EACEO' => 0,
+            'CA_PVESV' => 0,
+        ];
     }
 }

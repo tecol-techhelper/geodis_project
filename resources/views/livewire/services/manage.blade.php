@@ -4,10 +4,13 @@ use App\Models\Service;
 use App\Models\Status;
 use App\Models\EdifactFile;
 use App\Models\Resource;
+use App\Models\ServiceStatusReport;
 use App\Models\StatusPurpose;
 use App\Jobs\UploadEdifactToSftpJob;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use App\Services\Edi\GenerateIftstaPayloadService;
 use Livewire\Attributes\Layout;
 use Livewire\Volt\Component;
@@ -16,6 +19,8 @@ use App\Livewire\Forms\Services\ManageForm;
 new #[Layout('layouts.app')] class extends Component {
     public ManageForm $form;
     public ?string $status_reported_at = null;
+    /** @var array<int, int|string> */
+    public array $resource_status_update_pivot_ids = [];
 
     /** @var \Illuminate\Support\Collection<int, \App\Models\Status> */
     public $statuses;
@@ -62,7 +67,7 @@ new #[Layout('layouts.app')] class extends Component {
         }
 
         $this->resources = Resource::query()
-            ->select(['id', 'resource_id', 'resource_name', 'resource_operation'])
+            ->select(['id', 'resource_id', 'resource_name', 'resource_operation', 'required_report_mask'])
             ->orderBy('resource_operation')
             ->orderBy('resource_name')
             ->get();
@@ -70,46 +75,99 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function save(): void
     {
-        $dirtyPurchaseOrderIds = $this->form->update();
+        $this->validateStatusReportedAtIfIftstaRequired();
+
+        try {
+            $dirtyPurchaseOrderIds = $this->form->update();
+        } catch (ValidationException $exception) {
+            foreach (array_keys($exception->errors()) as $errorKey) {
+                if (preg_match('/additional_information\.([^\.]+)\./', $errorKey, $matches)) {
+                    $this->form->active_resource_row_key = $matches[1];
+                    break;
+                }
+            }
+
+            throw $exception;
+        }
+
+        $updateChanges = $this->form->last_update_changes;
+        $onlyRemovedResources = ($updateChanges['resource_removed'] ?? false)
+            && !($updateChanges['resource_added'] ?? false)
+            && !($updateChanges['status_changed'] ?? false);
+        $selectedStatusUpdatePivotIds = $this->selectedResourceStatusUpdatePivotIds();
 
         try {
             $service = Service::query()
-                ->with('status:id,status_name,edifact_code')
+                ->with(['status:id,status_name,edifact_code', 'resources', 'purchase_orders:id,service_id'])
                 ->findOrFail((int) $this->form->id);
+
+            $resources = $service->resources ?? collect();
+            $newlyAddedPivotIds = collect($this->form->last_added_service_resource_ids)
+                ->map(fn($id) => (int) $id)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            $newResourceReports = $resources
+                ->filter(function ($res) use ($newlyAddedPivotIds) {
+                    $pivotId = $res->pivot?->id !== null ? (int) $res->pivot->id : null;
+
+                    return $pivotId !== null && in_array($pivotId, $newlyAddedPivotIds, true);
+                })
+                ->values();
+
+            $selectedExistingResourceReports = $resources
+                ->filter(function ($res) use ($selectedStatusUpdatePivotIds, $newlyAddedPivotIds) {
+                    $pivotId = $res->pivot?->id !== null ? (int) $res->pivot->id : null;
+
+                    return $pivotId !== null
+                        && in_array($pivotId, $selectedStatusUpdatePivotIds, true)
+                        && !in_array($pivotId, $newlyAddedPivotIds, true);
+                })
+                ->values();
+
+            $statusReportedAt = $this->status_reported_at ? \Carbon\Carbon::parse($this->status_reported_at) : null;
+            $reportedStatusName = $service->status?->status_name;
+            $statusReport = null;
 
             if (count($dirtyPurchaseOrderIds) > 0) {
                 $this->validate([
                     'status_reported_at' => ['required', 'date'],
+                ], [
+                    'status_reported_at.required' => 'La fecha de reporte es obligatoria.',
+                    'status_reported_at.date' => 'La fecha de reporte no tiene un formato válido.',
                 ]);
 
                 /** @var GenerateIftstaPayloadService $iftsta */
                 $iftsta = app(GenerateIftstaPayloadService::class);
 
-                $resources = $service->resources ?? collect();
-                $hasResources = $resources->isNotEmpty();
-                $unreportedResources = $resources
-                    ->filter(function ($res) {
-                        return $res->pivot?->last_reported_at === null;
-                    })
-                    ->values();
+                $reportTasks = $newResourceReports
+                    ->map(fn($resourceItem) => [
+                        'resource' => $resourceItem,
+                        'resource_id' => trim((string) ($resourceItem->resource_id ?? '')),
+                    ])
+                    ->values()
+                    ->all();
 
-                if ($hasResources && $unreportedResources->isEmpty()) {
-                    Log::info('No hay recursos nuevos por reportar en IFTSTA', [
+                $statusOnlyRequired = ($updateChanges['status_changed'] ?? false) && $newResourceReports->isEmpty();
+
+                if ($statusOnlyRequired) {
+                    $reportTasks[] = [
+                        'resource' => null,
+                        'resource_id' => null,
+                    ];
+                }
+
+                if ($reportTasks === []) {
+                    Log::info('No hay recursos nuevos ni actualizaciones de recurso por reportar en IFTSTA', [
                         'service_id' => $service->id,
                         'purchase_orders' => $dirtyPurchaseOrderIds,
                     ]);
-                    $resourceIdList = [];
-                } elseif ($hasResources) {
-                    $resourceIdList = $unreportedResources->all();
-                } else {
-                    $resourceIdList = [null];
                 }
 
-                $statusReportedAt = $this->status_reported_at ? \Carbon\Carbon::parse($this->status_reported_at) : null;
-                $reportedStatusName = $service->status?->status_name;
-
-                foreach ($resourceIdList as $resourceItem) {
-                    $resourceId = is_string($resourceItem) ? trim($resourceItem) : (is_object($resourceItem) ? trim((string) ($resourceItem->resource_id ?? '')) : null);
+                foreach ($reportTasks as $reportTask) {
+                    $resourceId = $reportTask['resource_id'];
 
                     $result = $iftsta->generate($service, $dirtyPurchaseOrderIds, $resourceId, $statusReportedAt);
 
@@ -140,6 +198,11 @@ new #[Layout('layouts.app')] class extends Component {
                     ]);
 
                     UploadEdifactToSftpJob::dispatchSync(edifactFileId: (int) $edifactFile->id, payload: $payload);
+                    $edifactFile->refresh();
+
+                    if ($edifactFile->status !== EdifactFile::STATUS_SENT) {
+                        throw new \RuntimeException("El IFTSTA #{$edifactFile->id} no quedo enviado por SFTP.");
+                    }
 
                     Log::info('IFTSTA generado y job de envio despachado', [
                         'service_id' => $service->id,
@@ -149,22 +212,30 @@ new #[Layout('layouts.app')] class extends Component {
                         'resource_id' => $resourceId,
                     ]);
 
-                    if ($resourceItem && is_object($resourceItem) && $resourceItem->pivot?->id) {
-                        $reportedAt = $statusReportedAt ?? now();
-                        \Illuminate\Support\Facades\DB::table('service_resource')
-                            ->where('id', (int) $resourceItem->pivot->id)
-                            ->update([
-                                'last_reported_at' => $reportedAt,
-                                'status_name' => $reportedStatusName,
-                                'updated_at' => now(),
-                            ]);
+                    if (!$statusReport) {
+                        $statusReport = $this->persistServiceStatusReport($service, $statusReportedAt);
                     }
+
+                }
+
+                if ($statusReport) {
+                    $this->markResourcesWithStatus($statusReport, $newResourceReports, $statusReportedAt, $reportedStatusName);
                 }
             } else {
                 Log::info('Servicio actualizado sin cambios de estado en purchase_orders', [
                     'service_id' => $service->id,
                 ]);
             }
+
+            if ($selectedExistingResourceReports->isNotEmpty()) {
+                $statusReport ??= $this->persistServiceStatusReport($service, $statusReportedAt);
+
+                if ($statusReport) {
+                    $this->markResourcesWithStatus($statusReport, $selectedExistingResourceReports, $statusReportedAt, $reportedStatusName);
+                }
+            }
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
         } catch (\Throwable $e) {
             Log::error('Error al generar/despachar IFTSTA desde manage.save', [
                 'service_id' => $this->form->id,
@@ -177,6 +248,7 @@ new #[Layout('layouts.app')] class extends Component {
 
         $this->form->mount($service);
         $this->status_reported_at = null;
+        $this->resource_status_update_pivot_ids = [];
 
         flash()->title('Servicio actualizado')->success('Servicio actualizado exitosamente.');
         // Resetear el dropdown del recurso luego de enviar
@@ -196,7 +268,170 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function removeServiceResource(int $resourceIndex): void
     {
+        $pivotId = data_get($this->form->service_resource_rows, "{$resourceIndex}.pivot_id");
         $this->form->removeServiceResource($resourceIndex);
+
+        if ($pivotId !== null) {
+            $pivotId = (int) $pivotId;
+            $this->resource_status_update_pivot_ids = array_values(array_filter(
+                $this->resource_status_update_pivot_ids,
+                fn($selectedPivotId) => (int) $selectedPivotId !== $pivotId,
+            ));
+        }
+    }
+
+    public function updateAdditionalInformation(): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateAdditionalInformation($rowKey);
+
+        flash()
+            ->title('Información actualizada')
+            ->success('La información adicional se actualizó correctamente.');
+    }
+
+    public function searchPersonnel(string $lookupKey): void
+    {
+        $parts = explode(':', $lookupKey);
+        abort_unless(count($parts) === 3, 404, 'Búsqueda de persona inválida.');
+
+        [$rowKey, $roleId, $personnelIndex] = $parts;
+        $roleId = (int) $roleId;
+        $personnelIndex = (int) $personnelIndex;
+        $found = $this->form->fillPersonnelFromOperator($rowKey, $roleId, $personnelIndex);
+
+        $this->dispatch(
+            'personnel-lookup-result',
+            lookupKey: $lookupKey,
+            rowKey: $rowKey,
+            roleId: $roleId,
+            personnelIndex: $personnelIndex,
+            found: $found,
+        );
+    }
+
+    public function openAdditionalInformation(string $rowKey): void
+    {
+        $this->form->openAdditionalInformation($rowKey);
+    }
+
+    public function closeAdditionalInformation(): void
+    {
+        $this->form->closeAdditionalInformation();
+    }
+
+    public function clearAdditionalInformation(string $rowKey): void
+    {
+        $this->form->clearAdditionalInformation($rowKey);
+    }
+
+    private function validateStatusReportedAtIfIftstaRequired(): void
+    {
+        if (!$this->iftstaRequiresStatusReportedAt()) {
+            return;
+        }
+
+        $rules = [
+            'status_reported_at' => ['required', 'date'],
+        ];
+
+        if ($this->selectedResourceStatusUpdatePivotIds() !== []) {
+            $rules['form.service_status_id'] = ['required', 'integer', 'exists:statuses,id'];
+        }
+
+        $this->validate(
+            $rules,
+            [
+                'status_reported_at.required' => 'La fecha de reporta es obligatoria cuando se reporta un estado.',
+                'form.service_status_id.required' => 'El estado del servicio es obligatorio para actualizar recursos.',
+                'form.service_status_id.exists' => 'El estado del servicio seleccionado no es valido.',
+                'status_reported_at.date' => 'La fecha de reporte debe ser una fecha válida.',
+            ],
+            [
+                'status_reported_at' => 'fecha de reporte',
+                'form.service_status_id' => 'estado del servicio',
+            ],
+        );
+    }
+
+    private function iftstaRequiresStatusReportedAt(): bool
+    {
+        if (!$this->form->canEdit || !$this->form->service?->purchase_orders?->isNotEmpty()) {
+            return false;
+        }
+
+        $newStatusId = $this->form->service_status_id !== null ? (int) $this->form->service_status_id : null;
+        $oldStatusId = $this->form->original_service_status_id !== null ? (int) $this->form->original_service_status_id : null;
+        $statusChanged = $newStatusId !== $oldStatusId;
+
+        $newResourceRows = $this->normalizedResourceRows($this->form->service_resource_rows);
+        $oldResourceRows = $this->normalizedResourceRows($this->form->original_service_resource_rows);
+
+        $pivotIdsToKeep = array_values(array_filter(array_map(
+            fn($row) => $row['pivot_id'],
+            $newResourceRows,
+        )));
+
+        $pivotIdsToDelete = array_values(array_filter(array_map(
+            fn($row) => $row['pivot_id'],
+            $oldResourceRows,
+        ), fn($pivotId) => !in_array($pivotId, $pivotIdsToKeep, true)));
+
+        $hasRemovedResources = $pivotIdsToDelete !== [];
+        $hasAddedResources = collect($newResourceRows)->contains(fn($row) => $row['pivot_id'] === null);
+        $onlyRemovedResources = $hasRemovedResources && !$hasAddedResources && !$statusChanged;
+
+        if ($onlyRemovedResources) {
+            return false;
+        }
+
+        if ($this->selectedResourceStatusUpdatePivotIds() !== []) {
+            return true;
+        }
+
+        if ($statusChanged || $hasAddedResources) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function selectedResourceStatusUpdatePivotIds(): array
+    {
+        $currentPivotIds = collect($this->form->service_resource_rows)
+            ->pluck('pivot_id')
+            ->filter()
+            ->map(fn($id) => (int) $id)
+            ->values()
+            ->all();
+
+        return collect($this->resource_status_update_pivot_ids)
+            ->map(fn($id) => (int) $id)
+            ->filter(fn($id) => $id > 0 && in_array($id, $currentPivotIds, true))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function normalizedResourceRows(array $rows): array
+    {
+        return array_values(array_filter(array_map(function ($row) {
+            $resourceId = (int) data_get($row, 'resource_id', 0);
+
+            if ($resourceId <= 0) {
+                return null;
+            }
+
+            $pivotId = data_get($row, 'pivot_id');
+
+            return [
+                'pivot_id' => $pivotId !== null ? (int) $pivotId : null,
+                'resource_id' => $resourceId,
+            ];
+        }, $rows)));
     }
 
     private function uniqueOutgoingTransmissionId(string $seed): string
@@ -218,9 +453,57 @@ new #[Layout('layouts.app')] class extends Component {
         return "ECOPETROL_TRANSTECOL_IFTSTA_{$timestamp}_{$consecutive}.edi";
     }
 
+    private function markResourcesWithStatus(
+        ServiceStatusReport $statusReport,
+        \Illuminate\Support\Collection $resources,
+        ?\Carbon\Carbon $reportedAt,
+        ?string $reportedStatusName,
+    ): void {
+        $reportedAt ??= now();
+
+        $resources
+            ->filter(fn($resourceItem) => $resourceItem->pivot?->id)
+            ->unique(fn($resourceItem) => (int) $resourceItem->pivot->id)
+            ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName) {
+                DB::table('service_resource_status_reports')->insertOrIgnore([
+                    'service_resource_id' => (int) $resourceItem->pivot->id,
+                    'service_status_report_id' => $statusReport->id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                DB::table('service_resource')
+                    ->where('id', (int) $resourceItem->pivot->id)
+                    ->update([
+                        'last_reported_at' => $reportedAt,
+                        'status_name' => $reportedStatusName,
+                        'updated_at' => now(),
+                    ]);
+            });
+    }
+
     public function back(): void
     {
         $this->redirect(route('services.index'));
+    }
+
+    private function persistServiceStatusReport(Service $service, ?\Carbon\Carbon $reportedAt): ?ServiceStatusReport
+    {
+        if ($service->status_id === null || !$service->status) {
+            return null;
+        }
+
+        return ServiceStatusReport::query()->updateOrCreate(
+            [
+                'service_id' => $service->id,
+                'status_id' => $service->status_id,
+            ],
+            [
+                'reported_at' => $reportedAt ?? now(),
+                'status_name_snapshot' => $service->status->status_name,
+                'edifact_code_snapshot' => $service->status->edifact_code,
+            ],
+        );
     }
 
     // Diccionario para unit_identifier_type
@@ -252,7 +535,8 @@ new #[Layout('layouts.app')] class extends Component {
 };
 ?>
 @section('title', 'Servicio')
-<div class="space-y-6 pb-8" x-data x-on:support-files-saved.window="setTimeout(() => window.location.reload(), 3200)">
+<div class="space-y-6 pb-8" x-data="{ resourceToRemove: null }"
+    x-on:support-files-saved.window="setTimeout(() => window.location.reload(), 3200)">
     <div wire:ignore>
         <x-breadcrums :items="[
             ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
@@ -301,16 +585,17 @@ new #[Layout('layouts.app')] class extends Component {
     @endphp
 
     <form wire:submit.prevent="save"
-        class="px-4 sm:px-6 py-6 space-y-8 border-2 border-gray-200 bg-white shadow-2xl rounded-2xl">
+        class="space-y-6 rounded-xl border border-gray-200 bg-white px-4 py-6 shadow-sm sm:px-6">
 
         {{-- HEADER DEL SERVICIO --}}
-        <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4 pb-6 border-b-2 border-gray-200">
+        <div class="flex flex-col gap-5 border-b border-gray-200 pb-6 lg:flex-row lg:items-start lg:justify-between">
             <div>
-                <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-900">
+                <p class="text-sm font-medium text-gray-500">Detalle operativo</p>
+                <h1 class="mt-1 text-2xl font-bold text-gray-900 sm:text-3xl">
                     Servicio N° {{ $form->consecutive ?? '-' }}
                 </h1>
                 @if ($form->item)
-                    <p class="text-sm text-gray-600 mt-2">Item: <span class="font-semibold">{{ $form->item }}</span>
+                    <p class="mt-2 text-sm text-gray-600">Item: <span class="font-semibold">{{ $form->item }}</span>
                     </p>
                 @endif
             </div>
@@ -357,29 +642,34 @@ new #[Layout('layouts.app')] class extends Component {
                     ->values();
             @endphp
 
-            <div class="w-full lg:w-96" wire:ignore>
-                <label for="bulk_status" class="block text-sm font-medium text-gray-700 mb-1">
-                    Estado de la Orden
+            <div class="w-full lg:max-w-xl">
+                <label for="bulk_status" class="mb-1 block text-sm font-medium text-gray-700">
+                    Estado del Servicio
                 </label>
-                <select id="bulk_status" wire:model.defer="form.service_status_id"
-                    class="w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
-                    data-placeholder="" data-current-value="{{ $form->service_status_id ?? '' }}"
-                    data-livewire-model="form.service_status_id" style="white-space: normal;"
-                    @disabled(!$form->canEdit)>
-                    @foreach ($bulkStatuses as $st)
-                        @php
-                            $stateCode = is_numeric($st->edifact_code ?? null) ? (int) $st->edifact_code : null;
-                            $stateCodeLabel = ($stateCode !== null && $stateCode !== 0) ? " ({$stateCode})" : '';
-                        @endphp
-                        <option value="{{ $st->id }}" style="white-space: normal;" @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
-                            {{ $stateCodeLabel . ' ' . $statusLabel($st) . ' - ' . $st->status_description }}</option>
-                    @endforeach
-                </select>
+                <div wire:ignore>
+                    <select id="bulk_status" wire:model.defer="form.service_status_id"
+                        class="js-status-select w-full whitespace-normal rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                        data-placeholder="" data-current-value="{{ $form->service_status_id ?? '' }}"
+                        data-livewire-model="form.service_status_id" style="white-space: normal;"
+                        @disabled(!$form->canEdit)>
+                        @foreach ($bulkStatuses as $st)
+                            @php
+                                $stateCode = is_numeric($st->edifact_code ?? null) ? (int) $st->edifact_code : null;
+                                $stateCodeLabel = ($stateCode !== null && $stateCode !== 0) ? " ({$stateCode})" : '';
+                            @endphp
+                            <option value="{{ $st->id }}" style="white-space: normal;" @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
+                                {{ $stateCodeLabel . ' ' . $statusLabel($st) . ' - ' . $st->status_description }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                @error('form.service_status_id')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
             </div>
         </div>
 
         {{-- BOTONES DE ACCIÓN --}}
-        <div class="flex flex-col sm:flex-row gap-3">
+        <div class="flex flex-col gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-center">
             <x-danger-button type="button" wire:click="back" x-on:click="setTimeout(() => $el.blur(), 100)"
                 class="w-full sm:w-auto">
                 Volver
@@ -391,8 +681,8 @@ new #[Layout('layouts.app')] class extends Component {
                         <livewire:services.upload-file-modal :service="$form->service" :key="'upload-files-' . $form->service->id" />
                     @else
                         <x-primary-button type="button" disabled
-                            class="w-full sm:w-auto opacity-60 cursor-not-allowed">
-                            Cargar Soportes
+                            class="w-full cursor-not-allowed opacity-60 sm:w-auto">
+                            Cargar soportes
                         </x-primary-button>
                     @endif
                 </div>
@@ -407,12 +697,12 @@ new #[Layout('layouts.app')] class extends Component {
 
         {{-- INFORMACIÓN PRINCIPAL DEL SERVICIO (SOLO ITEM Y CONSECUTIVO) --}}
         <div>
-            <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Información General
+                Información general
             </h2>
 
             @php
@@ -457,53 +747,53 @@ new #[Layout('layouts.app')] class extends Component {
                 }
             @endphp
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
-                    <label for="item" class="block text-sm font-medium text-gray-700 mb-1">Item</label>
+                    <label for="item" class="mb-1 block text-sm font-medium text-gray-700">Item</label>
                     <div
-                        class="relative flex h-12 items-stretch rounded-lg border border-gray-300 shadow-sm focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                        class="relative flex h-11 items-stretch rounded-md border border-gray-300 bg-white shadow-sm focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
                         <span
-                            class="flex items-center px-4 bg-gray-100 text-gray-900 font-semibold text-sm rounded-l-lg">
+                            class="flex items-center rounded-l-md bg-gray-100 px-4 text-sm font-semibold text-gray-900">
                             {{ $form->service?->created_at?->format('m') ?? now()->format('m') }}-
                         </span>
                         <input type="text" id="item" wire:model.defer="form.item"
-                            class="w-full h-full rounded-r-lg rounded-l-none border-0 bg-transparent focus:ring-0 disabled:bg-gray-50 disabled:text-gray-500 px-4"
+                            class="h-full w-full rounded-l-none rounded-r-md border-0 bg-transparent px-4 focus:ring-0 disabled:bg-gray-50 disabled:text-gray-500"
                             @disabled(!$form->canEdit) />
                     </div>
                     @error('form.item')
-                        <p class="text-sm text-red-600 mt-1">{{ $message }}</p>
+                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
                     @enderror
 
                     <div class="mt-3">
-                        <label for="service_priority" class="block text-sm font-medium text-gray-700 mb-1">
+                        <label for="service_priority" class="mb-1 block text-sm font-medium text-gray-700">
                             Prioridad
                         </label>
                         <div id="service_priority"
-                            class="w-full h-12 px-4 rounded-lg border border-gray-300 shadow-sm bg-gray-50 flex items-center font-bold {{ $agwPriorityClass }}">
+                            class="flex h-11 w-full items-center rounded-md border border-gray-300 bg-gray-50 px-4 font-semibold shadow-sm {{ $agwPriorityClass }}">
                             {{ $agwPriorityLabel ?? '-' }}
                         </div>
                     </div>
                 </div>
 
                 <div>
-                    <label for="consecutive" class="block text-sm font-medium text-gray-700 mb-1">Consecutivo</label>
+                    <label for="consecutive" class="mb-1 block text-sm font-medium text-gray-700">Consecutivo</label>
                     <input type="text" id="consecutive" wire:model.defer="form.consecutive"
-                        class="w-full h-12 rounded-lg border-gray-300 shadow-sm bg-gray-50 text-gray-500 cursor-not-allowed"
+                        class="h-11 w-full cursor-not-allowed rounded-md border-gray-300 bg-gray-50 text-gray-500 shadow-sm"
                         disabled />
 
                     <div class="mt-3">
-                        <label for="consolidated_number" class="block text-sm font-medium text-gray-700 mb-1">
+                        <label for="consolidated_number" class="mb-1 block text-sm font-medium text-gray-700">
                             N&uacute;mero de Consolidado
                         </label>
                         <input type="text" id="consolidated_number"
                             value="{{ $agwConsolidatedNumber ?? '-' }}"
-                            class="w-full h-12 rounded-lg border-gray-300 shadow-sm bg-gray-50 text-gray-600 cursor-not-allowed"
+                            class="h-11 w-full cursor-not-allowed rounded-md border-gray-300 bg-gray-50 text-gray-600 shadow-sm"
                             disabled />
                     </div>
                 </div>
 
                 @php
-                    // Resolver el Tipo de Servicio a partir del RFF+ACD de la primera purchase order
+                    // Resolver el Tipo de servicio a partir del RFF+ACD de la primera purchase order
                     $serviceTypePurpose = null;
                     foreach ($form->service?->purchase_orders ?? [] as $_po) {
                         $acdRef = $_po->order_references?->first(function ($_ref) {
@@ -522,9 +812,9 @@ new #[Layout('layouts.app')] class extends Component {
                 @endphp
 
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Servicio</label>
+                    <label class="mb-1 block text-sm font-medium text-gray-700">Tipo de servicio</label>
                     <div
-                        class="w-full h-12 flex items-center px-4 rounded-lg border border-gray-300 shadow-sm bg-gray-50 text-gray-700 text-sm">
+                        class="flex h-11 w-full items-center rounded-md border border-gray-300 bg-gray-50 px-4 text-sm text-gray-700 shadow-sm">
                         @if ($serviceTypePurpose)
                             <span class="font-semibold text-indigo-700">{{ $serviceTypePurpose['name'] }}</span>
                             <span class="ml-1 text-gray-500">({{ $serviceTypePurpose['subcode'] }})</span>
@@ -534,13 +824,49 @@ new #[Layout('layouts.app')] class extends Component {
                     </div>
                 </div>
 
-                <div class="md:col-span-3 mt-2">
-                    <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
-                        <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="mt-2 md:col-span-3">
+                    <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900">
+                        <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z" />
+                        </svg>
+                        Fechas Estimadas del Servicio
+                    </h3>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 md:col-span-3 md:grid-cols-2">
+                    <div>
+                        <label for="positioning_date" class="mb-1 block text-sm font-medium text-gray-700">
+                            Fecha estimada de cargue (Posicionamiento)
+                        </label>
+                        <input type="datetime-local" id="positioning_date" wire:model.defer="form.positioning_date"
+                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(!$form->canEdit) />
+                        @error('form.positioning_date')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+
+                    <div>
+                        <label for="arrival_date" class="mb-1 block text-sm font-medium text-gray-700">
+                            Fecha estimada de descargue (Arribo)
+                        </label>
+                        <input type="datetime-local" id="arrival_date" wire:model.defer="form.arrival_date"
+                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(!$form->canEdit) />
+                        @error('form.arrival_date')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="mt-2 md:col-span-3">
+                    <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900">
+                        <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M3 7h18M5 7v10a2 2 0 002 2h10a2 2 0 002-2V7" />
                         </svg>
-                        Recurso(s) Utilizado(s)
+                        Recurso(s) utilizado(s)
                     </h3>
                 </div>
 
@@ -550,6 +876,18 @@ new #[Layout('layouts.app')] class extends Component {
                     $serviceResourcePivotLookup = collect($form->service?->resources ?? [])
                         ->filter(fn($resource) => (int) data_get($resource, 'pivot.id', 0) > 0)
                         ->keyBy(fn($resource) => (int) data_get($resource, 'pivot.id'));
+                    $serviceStatusReports = collect($form->service?->service_status_reports ?? [])
+                        ->sortBy(function ($statusReport) {
+                            $edifactCode = $statusReport->status?->edifact_code
+                                ?? $statusReport->edifact_code_snapshot
+                                ?? null;
+
+                            return [
+                                is_numeric($edifactCode) ? (int) $edifactCode : PHP_INT_MAX,
+                                (int) ($statusReport->status_id ?? PHP_INT_MAX),
+                            ];
+                        })
+                        ->values();
 
                     $formatReportedAt = function ($value): string {
                         if ($value === null || trim((string) $value) === '') {
@@ -563,11 +901,52 @@ new #[Layout('layouts.app')] class extends Component {
                         }
                     };
 
+                    $resourceStatusLinks = $serviceStatusReports
+                        ->flatMap(function ($statusReport) {
+                            $statusName = $statusReport->status?->status_name
+                                ?? $statusReport->status_name_snapshot
+                                ?? ('Estado #' . $statusReport->status_id);
+
+                            return collect($statusReport->resourceStatusReports ?? [])->map(fn($resourceStatusReport) => [
+                                'service_resource_id' => (int) $resourceStatusReport->service_resource_id,
+                                'status_name' => $statusName,
+                            ]);
+                        })
+                        ->values();
+
+                    $reportedStatusesByPivotId = $resourceStatusLinks
+                        ->groupBy('service_resource_id')
+                        ->map(fn($rows) => $rows->pluck('status_name')->filter()->unique()->implode(', '));
+
+                    $statusReportRows = $serviceStatusReports
+                        ->map(function ($statusReport) use ($formatReportedAt) {
+                            $resourceReports = collect($statusReport->resourceStatusReports ?? []);
+                            $resourceNames = $resourceReports
+                                ->map(fn($resourceStatusReport) => $resourceStatusReport->serviceResource?->resource?->resource_name)
+                                ->filter()
+                                ->unique()
+                                ->values();
+
+                            return [
+                                'status_name' => collect([
+                                    $statusReport->status?->status_name
+                                    ?? $statusReport->status_name_snapshot
+                                    ?? ('Estado #' . $statusReport->status_id),
+                                    $statusReport->status?->status_description,
+                                ])->filter(fn($value) => trim((string) $value) !== '')->implode(' - '),
+                                'reported_at' => $formatReportedAt($statusReport->reported_at),
+                                'resource_count' => $resourceReports->pluck('service_resource_id')->unique()->count(),
+                                'resource_names' => $resourceNames->isNotEmpty() ? $resourceNames->implode(', ') : '-',
+                            ];
+                        })
+                        ->values();
+
                     $selectedResources = collect($form->service_resource_rows ?? [])
                         ->values()
-                        ->map(function ($row, $index) use ($resourceLookup, $serviceResourcePivotLookup, $formatReportedAt) {
+                        ->map(function ($row, $index) use ($resourceLookup, $serviceResourcePivotLookup, $formatReportedAt, $form, $reportedStatusesByPivotId) {
                             $resource = $resourceLookup->get((int) data_get($row, 'resource_id'));
                             $pivotId = (int) data_get($row, 'pivot_id', 0);
+                            $rowKey = (string) data_get($row, 'row_key');
                             $pivotResource = $pivotId > 0 ? $serviceResourcePivotLookup->get($pivotId) : null;
                             $lastReportedAt = $pivotResource?->pivot?->last_reported_at;
                             $statusName = $pivotResource?->pivot?->status_name;
@@ -578,23 +957,27 @@ new #[Layout('layouts.app')] class extends Component {
 
                             return [
                                 'index' => $index,
+                                'row_key' => $rowKey,
+                                'pivot_id' => $pivotId > 0 ? $pivotId : null,
                                 'resource' => $resource,
                                 'last_reported_at' => $formatReportedAt($lastReportedAt),
                                 'status_name' => (is_string($statusName) && trim($statusName) !== '') ? trim($statusName) : '-',
+                                'status_names' => $reportedStatusesByPivotId->get($pivotId, '-'),
+                                'additional_status' => $form->additionalInformationStatus($rowKey),
                             ];
                         })
                         ->filter()
                         ->values();
                 @endphp
-                <div class="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 gap-4 md:col-span-3 md:grid-cols-2">
                     <div>
-                        <label for="service_resource" class="block text-sm font-medium text-gray-700 mb-1">
+                        <label for="service_resource" class="mb-1 block text-sm font-medium text-gray-700">
                             Recurso(s)
                         </label>
                         <div class="flex items-stretch gap-2">
-                            <div class="flex-1 min-w-0" wire:ignore>
+                            <div class="min-w-0 flex-1" wire:ignore>
                                 <select id="service_resource" wire:model="form.service_resource_id"
-                                    class="w-full h-12 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed whitespace-normal js-status-select"
+                                    class="js-status-select h-11 w-full whitespace-normal rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
                                     data-placeholder="Seleccione un recurso"
                                     data-current-value=""
                                     data-livewire-model="form.service_resource_id"
@@ -628,19 +1011,22 @@ new #[Layout('layouts.app')] class extends Component {
                                         }
                                     });
                                 "
-                                class="flex items-center justify-center gap-2 w-12 h-12 shrink-0 focus:outline-none focus:ring-0">
+                                class="flex h-11 w-11 shrink-0 items-center justify-center gap-2 focus:outline-none focus:ring-0">
                                 <span class="text-lg leading-none">+</span>
                             </x-primary-button>
                         </div>
                     </div>
 
                     <div>
-                        <label for="status_reported_at" class="block text-sm font-medium text-gray-700 mb-1">
-                            Fecha de Reporte
+                        <label for="status_reported_at" class="mb-1 block text-sm font-medium text-gray-700">
+                            Fecha de reporte
                         </label>
                         <input type="datetime-local" id="status_reported_at" wire:model.defer="status_reported_at"
-                            class="w-full h-12 rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
-                            required @disabled(!$form->canEdit) />
+                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(!$form->canEdit) />
+                        @error('status_reported_at')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
                     </div>
 
                     @error('form.service_resource_id')
@@ -648,25 +1034,37 @@ new #[Layout('layouts.app')] class extends Component {
                     @enderror
                 </div>
 
-                @if ($selectedResources->isNotEmpty())
-                    <div class="md:col-span-3 mt-1 overflow-x-auto border border-gray-200 rounded-lg bg-white">
+                @if ($selectedResources->isNotEmpty() || $statusReportRows->isNotEmpty())
+                    <div class="mt-1 grid grid-cols-1 items-start gap-4 md:col-span-3 lg:grid-cols-2">
+                    <div class="min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
+                        <div class="border-b border-gray-200 bg-gray-50 px-4 py-2">
+                            <h4 class="text-sm font-semibold text-gray-900">Recursos asignados</h4>
+                        </div>
+                        <div class="max-h-80 overflow-auto">
                         <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50">
+                            <thead class="bg-gray-50/80">
                                 <tr>
+                                    <th class="w-10 px-3 py-2 text-center">
+                                        <span class="sr-only">Actualizar estado</span>
+                                    </th>
                                     <th
-                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Recurso
                                     </th>
                                     <th
-                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Fecha Reporte
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Estados reportados
                                     </th>
                                     <th
-                                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Estado
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Último estado
                                     </th>
                                     <th
-                                        class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        class="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Información adicional
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Acción
                                     </th>
                                 </tr>
@@ -674,21 +1072,111 @@ new #[Layout('layouts.app')] class extends Component {
                             <tbody class="bg-white divide-y divide-gray-200">
                                 @foreach ($selectedResources as $selectedResource)
                                     <tr class="hover:bg-gray-50 transition-colors">
-                                        <td class="px-4 py-3 text-sm text-gray-900">
+                                        <td class="px-3 py-2 text-center">
+                                            @if ($selectedResource['pivot_id'])
+                                                <input type="checkbox"
+                                                    value="{{ $selectedResource['pivot_id'] }}"
+                                                    wire:model.defer="resource_status_update_pivot_ids"
+                                                    title="Actualizar este recurso al estado seleccionado del servicio"
+                                                    aria-label="Actualizar {{ $selectedResource['resource']->resource_name }} al estado seleccionado del servicio"
+                                                    class="h-4 w-4 rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    @disabled(!$form->canEdit) />
+                                            @else
+                                                <span class="text-sm text-gray-400">-</span>
+                                            @endif
+                                        </td>
+                                        <td class="px-4 py-2 text-sm text-gray-900">
                                             {{ $selectedResource['resource']->resource_name }}
                                         </td>
-                                        <td class="px-4 py-3 text-sm text-gray-700">
-                                            {{ $selectedResource['last_reported_at'] }}
+                                        <td class="px-4 py-2 text-sm text-gray-700">
+                                            {{ $selectedResource['status_names'] }}
                                         </td>
-                                        <td class="px-4 py-3 text-sm text-gray-700">
+                                        <td class="px-4 py-2 text-sm text-gray-700">
                                             {{ $selectedResource['status_name'] }}
                                         </td>
-                                        <td class="px-4 py-3 text-center">
+                                        <td class="px-4 py-2 text-center">
+                                            @php
+                                                $additionalStatus = $selectedResource['additional_status'];
+                                                $additionalStatusIcon = match ($additionalStatus) {
+                                                    'registered', 'complete' => 'circle-check',
+                                                    'pending' => 'circle-plus',
+                                                    default => 'circle-minus',
+                                                };
+                                                $additionalStatusClass = match ($additionalStatus) {
+                                                    'registered', 'complete' => 'border-green-300 bg-green-50 text-green-700 hover:bg-green-100',
+                                                    'pending' => 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100',
+                                                    default => 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400',
+                                                };
+                                                $additionalStatusTitle = match ($additionalStatus) {
+                                                    'registered' => 'Información adicional registrada.',
+                                                    'complete' => 'Información adicional completa, pendiente de guardar.',
+                                                    'pending' => 'Información adicional pendiente.',
+                                                    default => 'Este recurso no requiere información adicional para ser reportado.',
+                                                };
+                                                $requiresAdditionalInformation = $form->requiresAdditionalInformationForRow(
+                                                    $selectedResource['row_key'],
+                                                );
+                                            @endphp
+
+                                            <button type="button"
+                                                @if ($requiresAdditionalInformation)
+                                                    wire:click="openAdditionalInformation('{{ $selectedResource['row_key'] }}')"
+                                                @else
+                                                    disabled
+                                                @endif
+                                                title="{{ $additionalStatusTitle }}"
+                                                aria-label="{{ $additionalStatusTitle }}"
+                                                class="inline-flex h-9 w-9 items-center justify-center rounded-lg border transition {{ $additionalStatusClass }}">
+                                                @switch($additionalStatusIcon)
+                                                    @case('circle-check')
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                            class="h-5 w-5" aria-hidden="true">
+                                                            <circle cx="12" cy="12" r="10" />
+                                                            <path d="m9 12 2 2 4-4" />
+                                                        </svg>
+                                                    @break
+
+                                                    @case('circle-plus')
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                            class="h-5 w-5" aria-hidden="true">
+                                                            <circle cx="12" cy="12" r="10" />
+                                                            <path d="M8 12h8" />
+                                                            <path d="M12 8v8" />
+                                                        </svg>
+                                                    @break
+
+                                                    @default
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                            class="h-5 w-5" aria-hidden="true">
+                                                            <circle cx="12" cy="12" r="10" />
+                                                            <path d="M8 12h8" />
+                                                        </svg>
+                                                @endswitch
+                                            </button>
+                                        </td>
+                                        <td class="px-4 py-2 text-center">
                                             @if ($form->canEdit)
                                                 <button type="button"
-                                                    wire:click="removeServiceResource({{ $selectedResource['index'] }})"
-                                                    class="text-red-600 hover:text-red-700 text-sm font-semibold">
-                                                    X
+                                                    x-on:click="resourceToRemove = {{ $selectedResource['index'] }}"
+                                                    title="Eliminar recurso"
+                                                    aria-label="Eliminar {{ $selectedResource['resource']->resource_name }}"
+                                                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-red-600 transition hover:bg-red-50 hover:text-red-700">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                                        viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                                        class="h-4 w-4" aria-hidden="true">
+                                                        <path d="M3 6h18" />
+                                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                                        <path d="M19 6l-1 14c0 1-1 2-2 2H8c-1 0-2-1-2-2L5 6" />
+                                                        <path d="M10 11v6" />
+                                                        <path d="M14 11v6" />
+                                                    </svg>
                                                 </button>
                                             @else
                                                 <span class="text-sm text-gray-400">-</span>
@@ -698,6 +1186,324 @@ new #[Layout('layouts.app')] class extends Component {
                                 @endforeach
                             </tbody>
                         </table>
+                        </div>
+                    </div>
+                    <div class="min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
+                        <div class="border-b border-gray-200 bg-gray-50 px-4 py-2">
+                            <h4 class="text-sm font-semibold text-gray-900">Estados Reportados</h4>
+                        </div>
+                        <div class="max-h-80 overflow-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50/80">
+                                <tr>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Estado
+                                    </th>
+                                    <th
+                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                        Fecha de reporte
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                @foreach ($statusReportRows as $statusReportRow)
+                                    <tr class="hover:bg-gray-50 transition-colors">
+                                        <td class="px-4 py-2 text-sm text-gray-900">
+                                            {{ $statusReportRow['status_name'] }}
+                                        </td>
+                                        <td class="px-4 py-2 text-sm text-gray-700">
+                                            {{ $statusReportRow['reported_at'] }}
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+                    </div>
+                @endif
+
+                <div x-cloak x-show="resourceToRemove !== null" x-transition.opacity
+                    x-on:keydown.escape.window="resourceToRemove = null"
+                    class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+                    role="dialog" aria-modal="true" aria-labelledby="removeResourceTitle">
+                    <div x-on:click.outside="resourceToRemove = null"
+                        class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+                        <h3 id="removeResourceTitle" class="text-lg font-semibold text-gray-900">
+                            Eliminar recurso del servicio
+                        </h3>
+                        <p class="mt-2 text-sm text-gray-600">
+                            Esta acción también eliminará información asociada al recurso. El cambio será definitivo
+                            al pulsar Enviar.
+                        </p>
+                        <div class="mt-6 flex justify-end gap-3">
+                            <x-secondary-button type="button" x-on:click="resourceToRemove = null">
+                                Cancelar
+                            </x-secondary-button>
+                            <x-danger-button type="button"
+                                x-on:click="$wire.removeServiceResource(resourceToRemove); resourceToRemove = null">
+                                Sí, eliminar
+                            </x-danger-button>
+                        </div>
+                    </div>
+                </div>
+
+                @php
+                    $activeResourceRow = $selectedResources->firstWhere('row_key', $form->active_resource_row_key);
+                    $activeRowKey = $activeResourceRow['row_key'] ?? null;
+                    $activeRequirements = $activeRowKey ? $form->requirementsForRow($activeRowKey) : [];
+                    $activePersonnelRequirements = $activeRowKey ? $form->personnelRequirementsForRow($activeRowKey) : [];
+                    $activeHasRegisteredInformation = $activeRowKey
+                        && filled(data_get($form->additional_information, "{$activeRowKey}.report_id"));
+                @endphp
+
+                @if ($activeResourceRow && $activeRowKey)
+                    <div x-data="{ confirmClear: false }" x-on:keydown.escape.window="$wire.closeAdditionalInformation()"
+                        class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-8 backdrop-blur-sm"
+                        role="dialog" aria-modal="true" aria-labelledby="additionalInformationTitle">
+                        <div class="my-4 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
+                            <div class="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50 px-5 py-4">
+                                <div>
+                                    <h3 id="additionalInformationTitle" class="font-semibold text-gray-900">
+                                        Información adicional
+                                    </h3>
+                                    <p class="mt-1 text-sm text-gray-600">
+                                        {{ $activeResourceRow['resource']->resource_name }}
+                                    </p>
+                                </div>
+                                <button type="button" wire:click="closeAdditionalInformation"
+                                    class="rounded-md p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-700"
+                                    aria-label="Cerrar modal">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                                        viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                                        class="h-5 w-5" aria-hidden="true">
+                                        <path d="M18 6 6 18" />
+                                        <path d="m6 6 12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            <div class="space-y-5 overflow-y-auto px-5 py-5">
+                                @if (!$form->canEdit)
+                                    <div class="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                                        Tienes acceso de solo lectura a esta información.
+                                    </div>
+                                @else
+                                    <p class="text-sm text-gray-600">
+                                        Los campos marcados con <span class="font-semibold text-red-600">*</span> son
+                                        obligatorios. Cerrar este modal conserva la información.
+                                        @if ($activeHasRegisteredInformation)
+                                            Usa Actualizar para guardar únicamente los cambios de este recurso.
+                                        @else
+                                            El registro inicial se guarda al pulsar Enviar en el servicio.
+                                        @endif
+                                    </p>
+                                @endif
+                                @if (($activeRequirements['vehicle'] ?? false) || ($activeRequirements['remittance'] ?? false) || ($activeRequirements['container'] ?? false))
+                                    <section class="rounded-xl border border-gray-200 bg-white p-4">
+                                        <div class="space-y-4">
+                                            @if ($activeRequirements['vehicle'] ?? false)
+                                                <div>
+                                                    <x-input-label for="additional_vehicle_plate">
+                                                        Placa del vehículo <span class="text-red-600">*</span>
+                                                    </x-input-label>
+                                                    <x-text-input id="additional_vehicle_plate" type="text"
+                                                        wire:model.defer="form.additional_information.{{ $activeRowKey }}.vehicle_plate"
+                                                        class="mt-1 w-full uppercase" maxlength="32"
+                                                        placeholder="Ej. ABC123" :disabled="!$form->canEdit" />
+                                                    @error('form.additional_information.' . $activeRowKey . '.vehicle_plate')
+                                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                    @enderror
+                                                </div>
+                                            @endif
+
+                                            @if ($activeRequirements['remittance'] ?? false)
+                                                <div>
+                                                    <x-input-label for="additional_remittance">
+                                                        Remesa de transporte <span class="text-red-600">*</span>
+                                                    </x-input-label>
+                                                    <x-text-input id="additional_remittance" type="text"
+                                                        wire:model.defer="form.additional_information.{{ $activeRowKey }}.remesa_transporte"
+                                                        class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                    @error('form.additional_information.' . $activeRowKey . '.remesa_transporte')
+                                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                    @enderror
+                                                </div>
+                                            @endif
+
+                                            @if ($activeRequirements['container'] ?? false)
+                                                <div>
+                                                    <x-input-label for="additional_container_number">
+                                                        Número de contenedor <span class="text-red-600">*</span>
+                                                    </x-input-label>
+                                                    <x-text-input id="additional_container_number" type="text"
+                                                        wire:model.defer="form.additional_information.{{ $activeRowKey }}.container_number"
+                                                        class="mt-1 w-full uppercase" maxlength="64"
+                                                        :disabled="!$form->canEdit" />
+                                                    @error('form.additional_information.' . $activeRowKey . '.container_number')
+                                                        <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                    @enderror
+                                                </div>
+                                            @endif
+                                        </div>
+                                    </section>
+                                @endif
+
+                                @if ($activeRequirements['personnel'] ?? false)
+                                    <section class="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                                        <div class="space-y-4">
+                                            @foreach ($activePersonnelRequirements as $personnelRequirement)
+                                                @php
+                                                    $roleId = (int) $personnelRequirement['role_id'];
+                                                    $roleName = (string) $personnelRequirement['role_name'];
+                                                    $quantityRequired = (int) $personnelRequirement['quantity_required'];
+                                                @endphp
+
+                                                @for ($personnelIndex = 0; $personnelIndex < $quantityRequired; $personnelIndex++)
+                                                    @php
+                                                        $entryLabel = $quantityRequired > 1 ? ' ' . ($personnelIndex + 1) : '';
+                                                        $fieldIdPrefix = "additional_personnel_{$roleId}_{$personnelIndex}";
+                                                        $fieldPrefix = 'form.additional_information.' . $activeRowKey . '.personnel.' . $roleId . '.' . $personnelIndex;
+                                                        $lookupKey = "{$activeRowKey}:{$roleId}:{$personnelIndex}";
+                                                        $searchPersonnelAction = "searchPersonnel('{$lookupKey}')";
+                                                    @endphp
+
+                                                    <fieldset class="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
+                                                        <legend class="px-2 text-sm font-semibold text-gray-800">
+                                                            {{ $roleName }}{{ $entryLabel }}
+                                                        </legend>
+
+                                                        <div x-data="{ lookupStatus: 'idle', lookupKey: @js($lookupKey) }"
+                                                            x-on:personnel-lookup-result.window="
+                                                                if ($event.detail.lookupKey === lookupKey) {
+                                                                    lookupStatus = $event.detail.found ? 'found' : 'not_found';
+                                                                    setTimeout(() => lookupStatus = 'idle', 2500);
+                                                                }
+                                                            ">
+                                                            <x-input-label for="{{ $fieldIdPrefix }}_identification">
+                                                                Identificación del {{ $roleName }} <span class="text-red-600">*</span>
+                                                            </x-input-label>
+                                                            <div class="mt-1 flex">
+                                                                <x-text-input id="{{ $fieldIdPrefix }}_identification" type="text"
+                                                                    wire:model.defer="{{ $fieldPrefix }}.identification"
+                                                                    class="w-full rounded-r-none" maxlength="64" :disabled="!$form->canEdit" />
+                                                                @if ($form->canEdit)
+                                                                    <button type="button"
+                                                                        wire:click="{{ $searchPersonnelAction }}"
+                                                                        wire:loading.attr="disabled" wire:target="{{ $searchPersonnelAction }}"
+                                                                        x-bind:title="lookupStatus === 'not_found'
+                                                                            ? 'No existe una persona con esta identificación.'
+                                                                            : (lookupStatus === 'found'
+                                                                                ? 'Persona encontrada.'
+                                                                                : 'Buscar persona por identificación.')"
+                                                                        x-bind:aria-label="lookupStatus === 'not_found'
+                                                                            ? 'No existe una persona con esta identificación.'
+                                                                            : (lookupStatus === 'found'
+                                                                                ? 'Persona encontrada.'
+                                                                                : 'Buscar persona por identificación.')"
+                                                                        x-bind:class="{
+                                                                            'border-red-700 bg-red-700 hover:bg-red-800': lookupStatus === 'not_found',
+                                                                            'border-green-700 bg-green-700 hover:bg-green-800': lookupStatus === 'found',
+                                                                            'border-blue-700 bg-blue-700 hover:bg-blue-800': lookupStatus === 'idle'
+                                                                        }"
+                                                                        class="-ml-px inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-r-xl border text-white transition ease-in-out duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60">
+                                                                        <svg xmlns="http://www.w3.org/2000/svg"
+                                                                            viewBox="0 0 24 24" fill="none"
+                                                                            stroke="currentColor" stroke-width="2"
+                                                                            stroke-linecap="round" stroke-linejoin="round"
+                                                                            class="h-5 w-5" aria-hidden="true">
+                                                                            <circle cx="11" cy="11" r="8" />
+                                                                            <path d="m21 21-4.3-4.3" />
+                                                                        </svg>
+                                                                    </button>
+                                                                @endif
+                                                            </div>
+                                                            <p x-cloak x-show="lookupStatus === 'not_found'"
+                                                                x-transition.opacity
+                                                                class="mt-1 text-sm text-red-600">
+                                                                No existe una persona con esta identificación.
+                                                            </p>
+                                                            @error($fieldPrefix . '.identification')
+                                                                <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                            @enderror
+                                                        </div>
+
+                                                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                                            <div>
+                                                                <x-input-label for="{{ $fieldIdPrefix }}_first_name">
+                                                                    Nombre(s) del {{ $roleName }} <span class="text-red-600">*</span>
+                                                                </x-input-label>
+                                                                <x-text-input id="{{ $fieldIdPrefix }}_first_name" type="text"
+                                                                    wire:model.defer="{{ $fieldPrefix }}.first_name"
+                                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                                @error($fieldPrefix . '.first_name')
+                                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </div>
+                                                            <div>
+                                                                <x-input-label for="{{ $fieldIdPrefix }}_last_name">
+                                                                    Apellido(s) del {{ $roleName }} <span class="text-red-600">*</span>
+                                                                </x-input-label>
+                                                                <x-text-input id="{{ $fieldIdPrefix }}_last_name" type="text"
+                                                                    wire:model.defer="{{ $fieldPrefix }}.last_name"
+                                                                    class="mt-1 w-full" maxlength="128" :disabled="!$form->canEdit" />
+                                                                @error($fieldPrefix . '.last_name')
+                                                                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </div>
+                                                        </div>
+                                                    </fieldset>
+                                                @endfor
+                                            @endforeach
+                                        </div>
+                                    </section>
+                                @endif
+
+                            </div>
+
+                            <div class="flex flex-col-reverse gap-3 border-t border-gray-200 bg-gray-50 px-5 py-4 sm:flex-row sm:justify-end">
+                                @if ($form->canEdit)
+                                    <x-danger-button type="button" x-on:click="confirmClear = true"
+                                        title="Eliminará toda la información registrada o relacionada con este recurso.">
+                                        Limpiar
+                                    </x-danger-button>
+
+                                    @if ($activeHasRegisteredInformation)
+                                        <x-success-button type="button" wire:click="updateAdditionalInformation"
+                                            wire:loading.attr="disabled" wire:target="updateAdditionalInformation">
+                                            Actualizar
+                                        </x-success-button>
+                                    @endif
+                                @endif
+
+                                <x-primary-button type="button" wire:click="closeAdditionalInformation">
+                                    Cerrar
+                                </x-primary-button>
+                            </div>
+                        </div>
+
+                        <div x-cloak x-show="confirmClear" x-transition.opacity
+                            class="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+                            <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+                                <h4 class="text-lg font-semibold text-gray-900">Eliminar Datos</h4>
+                                <p class="mt-2 text-sm text-gray-600">
+                                    ¿Está seguro de eliminar la información registrada? Estos datos son de obligatorio
+                                    diligenciamiento; si no se completan nuevamente, será necesario eliminar el recurso
+                                    antes de enviar el servicio.
+                                </p>
+                                <div class="mt-6 flex justify-end gap-3">
+                                    <x-secondary-button type="button" x-on:click="confirmClear = false">
+                                        Cancelar
+                                    </x-secondary-button>
+                                    <x-danger-button type="button"
+                                        x-on:click="$wire.clearAdditionalInformation('{{ $activeRowKey }}'); confirmClear = false">
+                                        Sí, eliminar
+                                    </x-danger-button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 @endif
             </div>
@@ -717,45 +1523,45 @@ new #[Layout('layouts.app')] class extends Component {
         @endphp
         @if ($serviceParties?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
                     </svg>
-                    Partes del Servicio
+                    Partes del servicio
                 </h2>
 
-                <div class="overflow-x-auto border rounded-xl shadow-sm">
+                <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Tipo</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Nombre</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Dirección</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Ciudad</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    Código Postal</th>
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Código postal</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
                             @foreach ($serviceParties as $party)
                                 <tr class="hover:bg-gray-50 transition-colors">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                                    <td class="px-4 py-2 whitespace-nowrap text-sm">
                                         {{ $party->party_type ? $form->catalogLabel($party->party_type) : '-' }}
                                     </td>
-                                    <td class="px-4 py-3 text-sm">{{ $party->party_name ?? '-' }}</td>
-                                    <td class="px-4 py-3 text-sm">{{ $party->party_street ?? '-' }}</td>
-                                    <td class="px-4 py-3 text-sm">{{ $party->party_city ?? '-' }}</td>
-                                    <td class="px-4 py-3 text-sm">{{ $party->party_region ?? '-' }}</td>
+                                    <td class="px-4 py-2 text-sm">{{ $party->party_name ?? '-' }}</td>
+                                    <td class="px-4 py-2 text-sm">{{ $party->party_street ?? '-' }}</td>
+                                    <td class="px-4 py-2 text-sm">{{ $party->party_city ?? '-' }}</td>
+                                    <td class="px-4 py-2 text-sm">{{ $party->party_region ?? '-' }}</td>
                                 </tr>
                             @endforeach
                         </tbody>
@@ -777,37 +1583,37 @@ new #[Layout('layouts.app')] class extends Component {
         @endphp
         @if ($serviceContacts?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                     </svg>
-                    Contactos del Servicio
+                    Contactos del servicio
                 </h2>
 
-                <div class="overflow-x-auto border rounded-xl shadow-sm">
+                <div class="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Tipo</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Nombre</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Detalles</th>
                             </tr>
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
                             @foreach ($serviceContacts as $contact)
                                 <tr class="hover:bg-gray-50 transition-colors">
-                                    <td class="px-4 py-3 whitespace-nowrap text-sm">
+                                    <td class="px-4 py-2 whitespace-nowrap text-sm">
                                         {{ $contact->contact_type ? $form->catalogLabel($contact->contact_type) : '-' }}
                                     </td>
-                                    <td class="px-4 py-3 text-sm">{{ $contact->contact_name ?? '-' }}</td>
-                                    <td class="px-4 py-3 text-sm">
+                                    <td class="px-4 py-2 text-sm">{{ $contact->contact_name ?? '-' }}</td>
+                                    <td class="px-4 py-2 text-sm">
                                         @php
                                             $contactDetails = $contact->service_contact_details?->filter(function (
                                                 $detail,
@@ -848,21 +1654,21 @@ new #[Layout('layouts.app')] class extends Component {
         @endphp
         @if ($serviceDates?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
-                    Fechas del Servicio
+                    Fechas del servicio
                 </h2>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                     @foreach ($serviceDates as $date)
-                        <div class="p-4 border border-gray-200 rounded-lg bg-gray-50">
-                            <div class="text-sm font-medium text-gray-700 mb-1">
+                        <div class="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                            <div class="mb-1 text-sm font-medium text-gray-700">
                                 {{ $date->date_type ? $form->catalogLabel($date->date_type) : 'Fecha' }}
                             </div>
-                            <div class="text-lg font-semibold text-gray-900">
+                            <div class="text-base font-semibold text-gray-900">
                                 {{ $date->service_date ? \Carbon\Carbon::parse($date->service_date)->format('d/m/Y') : '-' }}
                             </div>
                         </div>
@@ -878,7 +1684,7 @@ new #[Layout('layouts.app')] class extends Component {
                 aria-labelledby="purchase-orders-title">
                 <div class="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                     <h2 id="purchase-orders-title"
-                        class="flex items-center gap-2 text-xl font-bold text-gray-900">
+                        class="flex items-center gap-2 text-lg font-semibold text-gray-900">
                         <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor"
                             viewBox="0 0 24 24" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -892,8 +1698,8 @@ new #[Layout('layouts.app')] class extends Component {
                     </p>
                 </div>
 
-                <div class="grid grid-cols-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-0">
-                    <nav class="rounded-xl border border-gray-200 bg-white shadow-sm lg:rounded-r-none"
+                <div class="grid grid-cols-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start">
+                    <nav class="rounded-xl border border-gray-200 bg-white shadow-sm"
                         aria-label="Órdenes de compra del servicio">
                         <div class="border-b border-gray-200 px-4 py-3">
                             <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Seleccionar orden</p>
@@ -905,7 +1711,7 @@ new #[Layout('layouts.app')] class extends Component {
                                     x-on:click="selectedPurchaseOrder = {{ (int) $po->id }}"
                                     x-bind:aria-current="selectedPurchaseOrder === {{ (int) $po->id }} ? 'true' : 'false'"
                                     x-bind:class="selectedPurchaseOrder === {{ (int) $po->id }}
-                                        ? 'border-indigo-600 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-600'
+                                        ? 'border-indigo-600 bg-indigo-50 text-indigo-900 shadow-sm'
                                         : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-gray-50'"
                                     class="min-w-[14rem] rounded-lg border px-4 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 lg:min-w-0 lg:w-full">
                                     <span class="block truncate text-sm font-semibold">
@@ -922,8 +1728,8 @@ new #[Layout('layouts.app')] class extends Component {
                                 x-transition.opacity.duration.150ms
                                 aria-labelledby="purchase-order-{{ $po->id }}-title"
                                 style="display: none;"
-                                class="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 shadow-sm sm:p-5 lg:rounded-l-none">
-                        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-3">
+                                class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+                        <div class="mb-4 flex flex-col gap-3 border-b border-gray-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
                             <h3 id="purchase-order-{{ $po->id }}-title"
                                 class="text-lg font-semibold text-gray-900">
                                 Orden #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
@@ -968,25 +1774,25 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poParties?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Partes de la Orden</h4>
-                                <div class="overflow-x-auto border rounded-lg shadow-sm">
-                                    <table class="min-w-full divide-y divide-gray-200">
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Partes de la Orden</h4>
+                                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                                    <table class="min-w-full divide-y divide-gray-200 text-sm">
                                         <thead class="bg-gray-50">
                                             <tr>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Tipo</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Ubicación</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Dirección</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Ciudad</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Código Postal</th>
                                             </tr>
                                         </thead>
@@ -1026,19 +1832,19 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poContacts?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Contactos de la Orden</h4>
-                                <div class="overflow-x-auto border rounded-lg shadow-sm">
-                                    <table class="min-w-full divide-y divide-gray-200">
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Contactos de la Orden</h4>
+                                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                                    <table class="min-w-full divide-y divide-gray-200 text-sm">
                                         <thead class="bg-gray-50">
                                             <tr>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Tipo</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Nombre</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Detalles</th>
                                             </tr>
                                         </thead>
@@ -1108,7 +1914,7 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poNotes?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Especificaciones de la Orden</h4>
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Especificaciones de la Orden</h4>
                                 <div class="space-y-2">
                                     @foreach ($poNotes as $note)
                                         <div class="p-3 border border-gray-200 rounded-lg bg-white">
@@ -1134,16 +1940,16 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poMeasurements?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Mediciones de la Orden</h4>
-                                <div class="overflow-x-auto border rounded-lg shadow-sm">
-                                    <table class="min-w-full divide-y divide-gray-200">
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Mediciones de la Orden</h4>
+                                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                                    <table class="min-w-full divide-y divide-gray-200 text-sm">
                                         <thead class="bg-gray-50">
                                             <tr>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Tipo</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Valor/Unidad</th>
                                             </tr>
                                         </thead>
@@ -1178,7 +1984,7 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poRequirements?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Requerimientos de la Orden</h4>
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Requerimientos de la Orden</h4>
                                 <div class="space-y-2">
                                     @foreach ($poRequirements as $requirement)
                                         <div class="p-3 border border-gray-200 rounded-lg bg-white">
@@ -1204,7 +2010,7 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poDeliveryTerms?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Términos de Entrega</h4>
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Términos de Entrega</h4>
                                 <div class="space-y-2">
                                     @foreach ($poDeliveryTerms as $term)
                                         <div class="p-3 border border-gray-200 rounded-lg bg-white">
@@ -1236,22 +2042,22 @@ new #[Layout('layouts.app')] class extends Component {
                         @endphp
                         @if ($poTransportCharges?->isNotEmpty())
                             <div class="mt-4">
-                                <h4 class="text-md font-semibold text-gray-800 mb-2">Cargos de Transporte</h4>
-                                <div class="overflow-x-auto border rounded-lg shadow-sm">
-                                    <table class="min-w-full divide-y divide-gray-200">
+                                <h4 class="mb-2 text-sm font-semibold text-gray-900">Cargos de Transporte</h4>
+                                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                                    <table class="min-w-full divide-y divide-gray-200 text-sm">
                                         <thead class="bg-gray-50">
                                             <tr>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Tipo de Cargo</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Precio Declarado</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Precio Unitario</th>
                                                 <th
-                                                    class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">
+                                                    class="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     Base</th>
                                             </tr>
                                         </thead>
@@ -1337,7 +2143,7 @@ new #[Layout('layouts.app')] class extends Component {
                         @if ($poItems?->isNotEmpty())
                             <div class="mt-4" x-data="{ itemSearch: '', expandedItem: null }">
                                 <div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                    <h4 class="text-md font-semibold text-gray-800">Items de la Orden</h4>
+                                    <h4 class="text-sm font-semibold text-gray-900">Items de la Orden</h4>
 
                                     <label class="relative block w-full sm:max-w-xs">
                                         <span class="sr-only">Buscar Item</span>
@@ -1541,7 +2347,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                         <button type="button"
                                                             x-on:click="expandedItem = expandedItem === {{ (int) $item->id }} ? null : {{ (int) $item->id }}"
                                                             x-bind:aria-expanded="expandedItem === {{ (int) $item->id }}"
-                                                            class="font-semibold text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                                                            class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm transition hover:border-indigo-300 hover:text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
                                                             <span x-text="expandedItem === {{ (int) $item->id }} ? 'Ocultar' : 'Ver detalle'"></span>
                                                         </button>
                                                     </td>
@@ -1549,9 +2355,9 @@ new #[Layout('layouts.app')] class extends Component {
 
                                                 <tr x-show="expandedItem === {{ (int) $item->id }} && (itemSearch === '' || @js($itemSearchText).includes(itemSearch.toLowerCase()))"
                                                     x-cloak style="display: none;">
-                                                    <td colspan="8" class="bg-purple-50/30 p-4 sm:p-5">
-                                                        <div class="rounded-lg border border-purple-200 bg-white p-4">
-                                                            <h5 class="mb-3 text-sm font-bold text-gray-900">
+                                                    <td colspan="8" class="bg-gray-50 p-4 sm:p-5">
+                                                        <div class="rounded-lg border border-gray-200 bg-white p-4">
+                                                            <h5 class="mb-3 text-sm font-semibold text-gray-900">
                                                                 Detalle del Item #{{ $itemNumber }}
                                                             </h5>
 
@@ -1588,11 +2394,11 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endphp
                                         @if ($itemNotes?->isNotEmpty())
                                             <div class="mt-3">
-                                                <div class="text-xs font-semibold text-gray-700 mb-1">Descripción</div>
+                                                <div class="mb-1 text-xs font-semibold text-gray-700">Descripción</div>
                                                 <div class="space-y-1">
                                                     @foreach ($itemNotes as $itemNote)
                                                         <div
-                                                            class="p-2 bg-white border border-gray-200 rounded text-xs">
+                                                            class="rounded border border-gray-200 bg-white p-2 text-xs">
                                                             <span
                                                                 class="text-gray-900">{{ $itemNote->note_text ?? '-' }}</span>
                                                         </div>
@@ -1621,10 +2427,10 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endphp
                                         @if ($itemMeasures?->isNotEmpty())
                                             <div class="mt-3">
-                                                <div class="text-xs font-semibold text-gray-700 mb-1">Medidas</div>
-                                                <div class="overflow-x-auto border rounded-lg">
+                                                <div class="mb-1 text-xs font-semibold text-gray-700">Medidas</div>
+                                                <div class="overflow-x-auto rounded-lg border border-gray-200">
                                                     <table class="min-w-full text-xs">
-                                                        <thead class="bg-gray-100">
+                                                        <thead class="bg-gray-50">
                                                             <tr>
                                                                 <th class="px-2 py-1 text-left">Tipo de Medida</th>
                                                                 <th class="px-2 py-1 text-left">Valor/Unidad</th>
@@ -1683,10 +2489,10 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endphp
                                         @if ($itemDimensions?->isNotEmpty())
                                             <div class="mt-3">
-                                                <div class="text-xs font-semibold text-gray-700 mb-1">Dimensiones</div>
-                                                <div class="overflow-x-auto border rounded-lg">
+                                                <div class="mb-1 text-xs font-semibold text-gray-700">Dimensiones</div>
+                                                <div class="overflow-x-auto rounded-lg border border-gray-200">
                                                     <table class="min-w-full text-xs">
-                                                        <thead class="bg-gray-100">
+                                                        <thead class="bg-gray-50">
                                                             <tr>
                                                                 <th class="px-2 py-1 text-left">Tipo</th>
                                                                 <th class="px-2 py-1 text-left">Largo</th>
@@ -1732,7 +2538,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                 <div class="space-y-1">
                                                     @foreach ($itemContainers as $container)
                                                         <div
-                                                            class="p-2 bg-white border border-gray-200 rounded text-xs">
+                                                            class="rounded border border-gray-200 bg-white p-2 text-xs">
                                                             <span class="font-medium text-gray-600">
                                                                 {{ $container->identifier_type ? $form->catalogLabel($container->identifier_type) : 'Tipo' }}:
                                                             </span>
@@ -1759,9 +2565,9 @@ new #[Layout('layouts.app')] class extends Component {
                                             <div class="mt-3">
                                                 <div class="text-xs font-semibold text-gray-700 mb-1">Identificadores
                                                     de Producto</div>
-                                                <div class="overflow-x-auto border rounded-lg">
+                                                <div class="overflow-x-auto rounded-lg border border-gray-200">
                                                     <table class="min-w-full text-xs">
-                                                        <thead class="bg-gray-100">
+                                                        <thead class="bg-gray-50">
                                                             <tr>
                                                                 <th class="px-2 py-1 text-left">Rol</th>
                                                                 <th class="px-2 py-1 text-left">Tipo</th>
@@ -1806,7 +2612,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                 <div class="space-y-1">
                                                     @foreach ($itemUnitIds as $unitId)
                                                         <div
-                                                            class="p-2 bg-white border border-gray-200 rounded text-xs">
+                                                            class="rounded border border-gray-200 bg-white p-2 text-xs">
                                                             <span class="font-medium text-gray-600">
                                                                 {{ $this->getUnitIdentifierLabel($unitId->unit_identifier_type ?? '') }}:
                                                             </span>
@@ -1841,8 +2647,8 @@ new #[Layout('layouts.app')] class extends Component {
         @endphp
         @if ($locationDetails?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -1851,10 +2657,10 @@ new #[Layout('layouts.app')] class extends Component {
                     Detalles de Ubicación
                 </h2>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
                     @foreach ($locationDetails as $location)
-                        <div class="p-4 border border-gray-200 rounded-lg bg-gray-50">
-                            <div class="text-sm font-medium text-gray-700 mb-2">
+                        <div class="rounded-lg border border-gray-200 bg-white p-4">
+                            <div class="mb-2 text-sm font-medium text-gray-700">
                                 {{ $location->location_code ? $form->catalogLabel($location->location_code) : 'Ubicación' }}
                             </div>
                             <div class="text-base font-semibold text-gray-900">
@@ -1877,26 +2683,26 @@ new #[Layout('layouts.app')] class extends Component {
         @endphp
         @if ($transportDetails?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                     Detalles de Transporte
                 </h2>
 
-                <div class="overflow-x-auto border rounded-xl shadow-sm">
-                    <table class="min-w-full divide-y divide-gray-200">
+                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                    <table class="min-w-full divide-y divide-gray-200 text-sm">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     Etapa</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     Modo</th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     Detalles del Vehículo</th>
                             </tr>
                         </thead>
@@ -1931,25 +2737,25 @@ new #[Layout('layouts.app')] class extends Component {
         @endphp
         @if ($serviceEquipments?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                     </svg>
                     Equipos
                 </h2>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                     @foreach ($serviceEquipments as $equipment)
-                        <div class="p-4 border border-gray-200 rounded-lg bg-gray-50">
-                            <div class="text-sm font-medium text-gray-700 mb-1">
+                        <div class="rounded-lg border border-gray-200 bg-white p-4">
+                            <div class="mb-1 text-sm font-medium text-gray-700">
                                 {{ $equipment->equipment_type ? $form->catalogLabel($equipment->equipment_type) : 'Equipo' }}
                             </div>
                             <div class="text-base font-semibold text-gray-900">
                                 {{ $equipment->equipment_identification ?? '-' }}
                             </div>
                             @if ($equipment->equipment_size_type)
-                                <div class="text-xs text-gray-600 mt-1">Tamaño: {{ $equipment->equipment_size_type }}
+                                <div class="mt-1 text-xs text-gray-600">Tamaño: {{ $equipment->equipment_size_type }}
                                 </div>
                             @endif
                         </div>
@@ -1961,24 +2767,24 @@ new #[Layout('layouts.app')] class extends Component {
         {{-- ARCHIVOS CARGADOS DEL SERVICIO --}}
         @if ($form->service?->support_files?->isNotEmpty())
             <div>
-                <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
+                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     Soportes Cargados
                 </h2>
 
-                <div class="overflow-x-auto border rounded-xl shadow-sm">
-                    <table class="min-w-full divide-y divide-gray-200">
+                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                    <table class="min-w-full divide-y divide-gray-200 text-sm">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     Nombre del Archivo
                                 </th>
                                 <th
-                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     Tipo
                                 </th>
                             </tr>
@@ -1989,7 +2795,7 @@ new #[Layout('layouts.app')] class extends Component {
                                     <td class="px-4 py-3 text-sm">
                                         @if ($file->file_url)
                                             <a href="{{ $file->file_url }}" target="_blank"
-                                                rel="noopener noreferrer" class="text-blue-600 hover:underline">
+                                                rel="noopener noreferrer" class="font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
                                                 {{ $file->file_name ?? '-' }}
                                             </a>
                                         @else

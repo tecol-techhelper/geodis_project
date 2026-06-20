@@ -155,14 +155,6 @@ class GenerateIftstaPayloadService
                     $resourceId = $resourceId !== null ? trim((string) $resourceId) : null;
                     if ($resourceId !== null && $resourceId !== '') {
                         $segments[] = $this->seg('RFF+FS:' . $resourceId);
-                    } else {
-                        $resourceIds = $service->resources?->pluck('resource_id')->filter()->map(fn ($v) => trim((string) $v))->filter()->values() ?? collect();
-                        foreach ($resourceIds as $rid) {
-                            if ($rid !== '') {
-                                $segments[] = $this->seg('RFF+FS:' . $rid);
-                                break;
-                            }
-                        }
                     }
                 }
             }
@@ -185,6 +177,7 @@ class GenerateIftstaPayloadService
         }
 
         // UNT / UNZ (conteos)
+        $segments = $this->withoutBlankSegments($segments);
         $segments = $this->finalizeWithTrailers($segments, $messageRef, $interchangeRef);
 
         $payload = implode("\n", $segments) . "\n";
@@ -419,7 +412,19 @@ class GenerateIftstaPayloadService
     {
         $s = trim(str_replace(["\r\n", "\r", "\n"], '', $raw));
         $s = rtrim($s, "'");
+        if ($s === '') {
+            return '';
+        }
+
         return $s . "'";
+    }
+
+    protected function withoutBlankSegments(array $segments): array
+    {
+        return array_values(array_filter(
+            $segments,
+            fn($segment) => trim((string) $segment) !== '' && trim((string) $segment) !== "'",
+        ));
     }
 
     protected function shouldOmitSegment(string $tag): bool

@@ -32,20 +32,29 @@ return new class extends Migration
 
         // Backfill: si hay recursos ligados a CNIs, tomar el primero por servicio.
         if (Schema::hasTable('purchase_order_resource')) {
-            DB::statement("
-                INSERT INTO service_resource (service_id, resource_id, created_at, updated_at)
-                SELECT po.service_id, por.resource_id, NOW(), NOW()
-                FROM purchase_order_resource por
-                INNER JOIN purchase_orders po ON po.id = por.purchase_order_id
-                INNER JOIN (
-                    SELECT po2.service_id, MIN(por2.id) AS min_por_id
-                    FROM purchase_order_resource por2
-                    INNER JOIN purchase_orders po2 ON po2.id = por2.purchase_order_id
-                    GROUP BY po2.service_id
-                ) x ON x.min_por_id = por.id
-                WHERE po.service_id IS NOT NULL
-                ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)
-            ");
+            $firstResourcePerService = DB::table('purchase_order_resource as por2')
+                ->join('purchase_orders as po2', 'po2.id', '=', 'por2.purchase_order_id')
+                ->select('po2.service_id', DB::raw('MIN(por2.id) AS min_por_id'))
+                ->groupBy('po2.service_id');
+
+            DB::table('purchase_order_resource as por')
+                ->join('purchase_orders as po', 'po.id', '=', 'por.purchase_order_id')
+                ->joinSub($firstResourcePerService, 'x', fn($join) => $join->on('x.min_por_id', '=', 'por.id'))
+                ->whereNotNull('po.service_id')
+                ->select('po.service_id', 'por.resource_id')
+                ->orderBy('po.service_id')
+                ->chunk(500, function ($rows): void {
+                    $now = now();
+
+                    DB::table('service_resource')->insertOrIgnore(
+                        $rows->map(fn($row) => [
+                            'service_id' => (int) $row->service_id,
+                            'resource_id' => (int) $row->resource_id,
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ])->all()
+                    );
+                });
         }
     }
 

@@ -36,18 +36,18 @@ new #[Layout('layouts.app')] class extends Component {
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Usuarios', 'url' => route('user.index'), 'icon' => 'users'],
-        ['label' => 'Edición Usuario', 'icon' => 'user-pen'],
+        ['label' => 'Edición de usuario', 'icon' => 'user-pen'],
     ]"></x-breadcrums>
 
-    <form wire:submit="update" class="border-2 border-gray-200 shadow-2xl rounded-2xl bg-white">
+    <form wire:submit="update" class="border border-gray-200 shadow-sm rounded-xl bg-white">
         {{-- Contenedor tipo split: izquierda formulario, derecha imagen fija --}}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             {{-- Columna izquierda (formulario completo) --}}
-            <div class="flex flex-col justify-center md:col-span-2 px-12 py-10 space-y-6 md:px-24 md:py-12 md:space-y-6">
+            <div class="flex flex-col justify-center md:col-span-2 px-6 py-8 space-y-5 md:px-12 lg:px-16">
                 <div>
-                    <h1 class="flex items-center text-5xl font-extrabold dark:text-white space-x-4">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24"
+                    <h1 class="flex items-center text-2xl sm:text-3xl font-bold text-gray-900 space-x-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24"
                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
                             stroke-linejoin="round" class="lucide lucide-user-pen">
                             <path d="M11.5 15H7a4 4 0 0 0-4 4v2" />
@@ -55,7 +55,7 @@ new #[Layout('layouts.app')] class extends Component {
                                 d="M21.378 16.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z" />
                             <circle cx="10" cy="7" r="4" />
                         </svg>
-                        <span>Edición de Usuario</span>
+                        <span>Edición de usuario</span>
                     </h1>
                 </div>
 
@@ -78,7 +78,7 @@ new #[Layout('layouts.app')] class extends Component {
 
                     <input type="file" id="user_icon" wire:model="form.user_icon"
                         accept="image/jpg, image/jpeg, image/png, image/webp"
-                        class="block w-full text-sm text-gray-900 border border-gray-300 rounded-sm cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400" />
+                        class="block w-full cursor-pointer rounded-md border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1" />
 
                     <x-input-error :messages="$errors->get('form.user_icon')" class="mt-2" />
                 </div>
@@ -115,7 +115,7 @@ new #[Layout('layouts.app')] class extends Component {
                 </div>
 
                 <div>
-                    <x-input-label for="password_confirmation">Confirmar Contraseña</x-input-label>
+                    <x-input-label for="password_confirmation">Confirmar contraseña</x-input-label>
                     <x-text-input type="password" id="password_confirmation"
                         wire:model.defer="form.password_confirmation" class="w-full" />
                 </div>
@@ -124,19 +124,19 @@ new #[Layout('layouts.app')] class extends Component {
                     <x-input-label for="role_id">Rol</x-input-label>
                     <select {{ !Auth::user()->hasRole('admin') ? 'disabled' : '' }} id="role_id"
                         wire:model.defer="form.role_id"
-                        class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+                        class="w-full rounded-md border-gray-300 bg-white text-sm text-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500">
                         @foreach (\App\Models\Role::all() as $rol)
                             <option value="{{ $rol->id }}">{{ $rol->rol_name }}</option>
                         @endforeach
                     </select>
-                    <x-input-error :messages="$errors->get('form.role_id')" class="mt-2"  />
+                    <x-input-error :messages="$errors->get('form.role_id')" class="mt-2" />
                 </div>
 
                 @if (Auth::user()->hasRole('admin'))
                     <div>
                         <x-input-label for="is_active">Estado</x-input-label>
                         <select id="is_active" wire:model.defer="form.is_active"
-                            class="w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 dark:text-gray-400 focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:placeholder-gray-400">
+                            class="w-full rounded-md border-gray-300 bg-white text-sm text-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                             @foreach (App\Enums\UserStatus::cases() as $status)
                                 <option value="{{ $status->value }}">{{ $status->label() }}</option>
                             @endforeach
@@ -147,12 +147,12 @@ new #[Layout('layouts.app')] class extends Component {
 
                 {{-- Botón --}}
                 <div class="flex justify-end pt-6">
-                    <x-success-button type="submit" class="px-6 py-3 text-lg">Guardar</x-success-button>
+                    <x-success-button type="submit">Guardar</x-success-button>
                 </div>
             </div>
 
             {{-- Columna derecha (solo tu imagen fija con overlay rojo) --}}
-            <div class="relative w-full h-full border-l-2 border-black hidden md:block">
+            <div class="relative w-full h-full border-l border-gray-200 hidden md:block">
                 <img src="{{ asset('images/logos/userFormsImage.jpg') }}" alt="Imagen lateral"
                     class="w-full h-full object-cover shadow-md rounded-r-2xl">
                 <div class="absolute inset-0 bg-red-600 opacity-40 rounded-r-2xl"></div>

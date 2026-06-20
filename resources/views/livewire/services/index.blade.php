@@ -11,9 +11,9 @@ new #[Layout('layouts.app')] class extends Component {};
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
         ['label' => 'Servicios', 'icon' => 'package'],
     ]"></x-breadcrums>
-    <div class="py-6 px-6 border-2 rounded-lg shadow-lg bg-white dark:bg-white">
-        <h1 class="flex items-center text-5xl font-extrabold dark:text-white space-x-4">
-            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none"
+    <div class="py-6 px-6 border border-gray-200 rounded-lg shadow-sm bg-white">
+        <h1 class="flex items-center text-2xl sm:text-3xl font-bold text-gray-900 space-x-3">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
                 class="lucide lucide-package-icon lucide-package">
                 <path
