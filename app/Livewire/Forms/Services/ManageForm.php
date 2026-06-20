@@ -30,6 +30,8 @@ class ManageForm extends Form
     public $cargo_value = null;
     public ?string $driver = null;
     public $advance_payment = null;
+    public ?string $positioning_date = null;
+    public ?string $arrival_date = null;
 
     /**
      * status del Service
@@ -107,6 +109,13 @@ class ManageForm extends Form
         'resource_added' => false,
         'resource_removed' => false,
     ];
+
+    /**
+     * IDs de la tabla pivote service_resource insertados en el guardado actual.
+     *
+     * @var array<int, int>
+     */
+    public array $last_added_service_resource_ids = [];
 
     public array $omit = [
         'segment_tag',
@@ -209,6 +218,8 @@ class ManageForm extends Form
         $this->cargo_value = $s->cargo_value;
         $this->driver = $s->driver;
         $this->advance_payment = $s->advance_payment;
+        $this->positioning_date = $s->positioning_date?->format('Y-m-d\TH:i');
+        $this->arrival_date = $s->arrival_date?->format('Y-m-d\TH:i');
 
         // Estado del servicio
         $this->service_status_id = $s->status_id !== null ? (int) $s->status_id : null;
@@ -248,6 +259,7 @@ class ManageForm extends Form
 
         // Reset de "dirty" cuando recargas
         $this->dirty_purchase_order_ids = [];
+        $this->last_added_service_resource_ids = [];
     }
 
     public function rules(): array
@@ -259,6 +271,8 @@ class ManageForm extends Form
             'cargo_value' => ['nullable', 'numeric', 'min:0'],
             'driver' => ['nullable', 'string', 'max:64'],
             'advance_payment' => ['nullable', 'numeric', 'min:0'],
+            'positioning_date' => ['nullable', 'date'],
+            'arrival_date' => ['nullable', 'date'],
 
             // Permite "Sin estado" (null). Si eliges un valor, debe existir en statuses.
             'service_status_id' => ['nullable', 'integer', 'exists:statuses,id'],
@@ -472,7 +486,7 @@ class ManageForm extends Form
     public function fillPersonnelFromOperator(string $rowKey, int $roleId, int $index): bool
     {
         $identificationPath = "{$rowKey}.personnel.{$roleId}.{$index}.identification";
-        $identification = Str::upper(trim((string) data_get($this->additional_information, $identificationPath)));
+        $identification = Operator::normalizeIdentification(data_get($this->additional_information, $identificationPath));
 
         if ($identification === '') {
             return false;
@@ -565,13 +579,15 @@ class ManageForm extends Form
         $this->validateAdditionalInformation();
 
         $dirtyIds = [];
+        $insertedServiceResourceIds = [];
         $this->last_update_changes = [
             'status_changed' => false,
             'resource_added' => false,
             'resource_removed' => false,
         ];
+        $this->last_added_service_resource_ids = [];
 
-        DB::transaction(function () use (&$dirtyIds) {
+        DB::transaction(function () use (&$dirtyIds, &$insertedServiceResourceIds) {
             $s = Service::query()->findOrFail($this->id);
 
             $rawItem = trim((string) ($this->item ?? ''));
@@ -590,6 +606,8 @@ class ManageForm extends Form
                 'cargo_value' => $this->cargo_value,
                 'driver' => $this->driver,
                 'advance_payment' => $this->advance_payment,
+                'positioning_date' => $this->positioning_date,
+                'arrival_date' => $this->arrival_date,
             ]);
 
             $s->save();
@@ -676,6 +694,7 @@ class ManageForm extends Form
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
+                    $insertedServiceResourceIds[] = $row['pivot_id'];
                     $insertedResource = true;
                 }
                 unset($row);
@@ -701,6 +720,7 @@ class ManageForm extends Form
             $this->reset_resource_selection = true;
             $this->mount($s);
             $this->dirty_purchase_order_ids = $dirtyIds;
+            $this->last_added_service_resource_ids = array_values(array_unique($insertedServiceResourceIds));
         });
 
         return $dirtyIds;
@@ -736,7 +756,16 @@ class ManageForm extends Form
                         $entryPrefix = "{$prefix}.personnel.{$roleId}.{$index}";
                         $entrySuffix = $quantityRequired > 1 ? ' ' . ($index + 1) : '';
 
-                        $rules["{$entryPrefix}.identification"] = ['required', 'string', 'max:64'];
+                        $rules["{$entryPrefix}.identification"] = [
+                            'required',
+                            'string',
+                            'max:64',
+                            function (string $attribute, mixed $value, \Closure $fail): void {
+                                if (Operator::normalizeIdentification($value) === '') {
+                                    $fail('El campo :attribute debe contener al menos un número o letra.');
+                                }
+                            },
+                        ];
                         $rules["{$entryPrefix}.first_name"] = ['required', 'string', 'max:128'];
                         $rules["{$entryPrefix}.last_name"] = ['required', 'string', 'max:128'];
                         $attributes["{$entryPrefix}.identification"] = "identificación del {$roleName}{$entrySuffix}";
@@ -863,7 +892,7 @@ class ManageForm extends Form
      */
     private function persistOperator(array $entry): int
     {
-        $identification = Str::upper(trim((string) data_get($entry, 'identification')));
+        $identification = Operator::normalizeIdentification(data_get($entry, 'identification'));
         $operator = Operator::withTrashed()->firstOrNew([
             'identification' => $identification,
         ]);

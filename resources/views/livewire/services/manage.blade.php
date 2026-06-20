@@ -19,6 +19,8 @@ use App\Livewire\Forms\Services\ManageForm;
 new #[Layout('layouts.app')] class extends Component {
     public ManageForm $form;
     public ?string $status_reported_at = null;
+    /** @var array<int, int|string> */
+    public array $resource_status_update_pivot_ids = [];
 
     /** @var \Illuminate\Support\Collection<int, \App\Models\Status> */
     public $statuses;
@@ -92,6 +94,7 @@ new #[Layout('layouts.app')] class extends Component {
         $onlyRemovedResources = ($updateChanges['resource_removed'] ?? false)
             && !($updateChanges['resource_added'] ?? false)
             && !($updateChanges['status_changed'] ?? false);
+        $selectedStatusUpdatePivotIds = $this->selectedResourceStatusUpdatePivotIds();
 
         try {
             $service = Service::query()
@@ -99,30 +102,34 @@ new #[Layout('layouts.app')] class extends Component {
                 ->findOrFail((int) $this->form->id);
 
             $resources = $service->resources ?? collect();
-            $hasResources = $resources->isNotEmpty();
-            $reportedPivotIdsForStatus = $service->status_id !== null
-                ? DB::table('service_resource_status_reports')
-                    ->join('service_status_reports', 'service_status_reports.id', '=', 'service_resource_status_reports.service_status_report_id')
-                    ->where('service_status_reports.service_id', $service->id)
-                    ->where('service_status_reports.status_id', $service->status_id)
-                    ->pluck('service_resource_status_reports.service_resource_id')
-                    ->map(fn($id) => (int) $id)
-                    ->all()
-                : [];
-            $unreportedResources = $resources
-                ->filter(function ($res) use ($reportedPivotIdsForStatus) {
+            $newlyAddedPivotIds = collect($this->form->last_added_service_resource_ids)
+                ->map(fn($id) => (int) $id)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            $newResourceReports = $resources
+                ->filter(function ($res) use ($newlyAddedPivotIds) {
                     $pivotId = $res->pivot?->id !== null ? (int) $res->pivot->id : null;
 
-                    return $pivotId !== null && !in_array($pivotId, $reportedPivotIdsForStatus, true);
+                    return $pivotId !== null && in_array($pivotId, $newlyAddedPivotIds, true);
                 })
                 ->values();
 
-            if (!$onlyRemovedResources && count($dirtyPurchaseOrderIds) === 0 && $unreportedResources->isNotEmpty()) {
-                $dirtyPurchaseOrderIds = $service->purchase_orders
-                    ?->pluck('id')
-                    ->map(fn($id) => (int) $id)
-                    ->all() ?? [];
-            }
+            $selectedExistingResourceReports = $resources
+                ->filter(function ($res) use ($selectedStatusUpdatePivotIds, $newlyAddedPivotIds) {
+                    $pivotId = $res->pivot?->id !== null ? (int) $res->pivot->id : null;
+
+                    return $pivotId !== null
+                        && in_array($pivotId, $selectedStatusUpdatePivotIds, true)
+                        && !in_array($pivotId, $newlyAddedPivotIds, true);
+                })
+                ->values();
+
+            $statusReportedAt = $this->status_reported_at ? \Carbon\Carbon::parse($this->status_reported_at) : null;
+            $reportedStatusName = $service->status?->status_name;
+            $statusReport = null;
 
             if (count($dirtyPurchaseOrderIds) > 0) {
                 $this->validate([
@@ -135,24 +142,32 @@ new #[Layout('layouts.app')] class extends Component {
                 /** @var GenerateIftstaPayloadService $iftsta */
                 $iftsta = app(GenerateIftstaPayloadService::class);
 
-                if ($hasResources && $unreportedResources->isEmpty()) {
-                    Log::info('No hay recursos nuevos por reportar en IFTSTA', [
+                $reportTasks = $newResourceReports
+                    ->map(fn($resourceItem) => [
+                        'resource' => $resourceItem,
+                        'resource_id' => trim((string) ($resourceItem->resource_id ?? '')),
+                    ])
+                    ->values()
+                    ->all();
+
+                $statusOnlyRequired = ($updateChanges['status_changed'] ?? false) && $newResourceReports->isEmpty();
+
+                if ($statusOnlyRequired) {
+                    $reportTasks[] = [
+                        'resource' => null,
+                        'resource_id' => null,
+                    ];
+                }
+
+                if ($reportTasks === []) {
+                    Log::info('No hay recursos nuevos ni actualizaciones de recurso por reportar en IFTSTA', [
                         'service_id' => $service->id,
                         'purchase_orders' => $dirtyPurchaseOrderIds,
                     ]);
-                    $resourceIdList = [];
-                } elseif ($hasResources) {
-                    $resourceIdList = $unreportedResources->all();
-                } else {
-                    $resourceIdList = [null];
                 }
 
-                $statusReportedAt = $this->status_reported_at ? \Carbon\Carbon::parse($this->status_reported_at) : null;
-                $reportedStatusName = $service->status?->status_name;
-                $statusReport = null;
-
-                foreach ($resourceIdList as $resourceItem) {
-                    $resourceId = is_string($resourceItem) ? trim($resourceItem) : (is_object($resourceItem) ? trim((string) ($resourceItem->resource_id ?? '')) : null);
+                foreach ($reportTasks as $reportTask) {
+                    $resourceId = $reportTask['resource_id'];
 
                     $result = $iftsta->generate($service, $dirtyPurchaseOrderIds, $resourceId, $statusReportedAt);
 
@@ -201,28 +216,23 @@ new #[Layout('layouts.app')] class extends Component {
                         $statusReport = $this->persistServiceStatusReport($service, $statusReportedAt);
                     }
 
-                    if ($statusReport && $resourceItem && is_object($resourceItem) && $resourceItem->pivot?->id) {
-                        $reportedAt = $statusReportedAt ?? now();
-                        DB::table('service_resource_status_reports')->insertOrIgnore([
-                            'service_resource_id' => (int) $resourceItem->pivot->id,
-                            'service_status_report_id' => $statusReport->id,
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ]);
+                }
 
-                        DB::table('service_resource')
-                            ->where('id', (int) $resourceItem->pivot->id)
-                            ->update([
-                                'last_reported_at' => $reportedAt,
-                                'status_name' => $reportedStatusName,
-                                'updated_at' => now(),
-                            ]);
-                    }
+                if ($statusReport) {
+                    $this->markResourcesWithStatus($statusReport, $newResourceReports, $statusReportedAt, $reportedStatusName);
                 }
             } else {
                 Log::info('Servicio actualizado sin cambios de estado en purchase_orders', [
                     'service_id' => $service->id,
                 ]);
+            }
+
+            if ($selectedExistingResourceReports->isNotEmpty()) {
+                $statusReport ??= $this->persistServiceStatusReport($service, $statusReportedAt);
+
+                if ($statusReport) {
+                    $this->markResourcesWithStatus($statusReport, $selectedExistingResourceReports, $statusReportedAt, $reportedStatusName);
+                }
             }
         } catch (\Illuminate\Validation\ValidationException $e) {
             throw $e;
@@ -238,6 +248,7 @@ new #[Layout('layouts.app')] class extends Component {
 
         $this->form->mount($service);
         $this->status_reported_at = null;
+        $this->resource_status_update_pivot_ids = [];
 
         flash()->title('Servicio actualizado')->success('Servicio actualizado exitosamente.');
         // Resetear el dropdown del recurso luego de enviar
@@ -257,7 +268,16 @@ new #[Layout('layouts.app')] class extends Component {
 
     public function removeServiceResource(int $resourceIndex): void
     {
+        $pivotId = data_get($this->form->service_resource_rows, "{$resourceIndex}.pivot_id");
         $this->form->removeServiceResource($resourceIndex);
+
+        if ($pivotId !== null) {
+            $pivotId = (int) $pivotId;
+            $this->resource_status_update_pivot_ids = array_values(array_filter(
+                $this->resource_status_update_pivot_ids,
+                fn($selectedPivotId) => (int) $selectedPivotId !== $pivotId,
+            ));
+        }
     }
 
     public function updateAdditionalInformation(): void
@@ -314,16 +334,25 @@ new #[Layout('layouts.app')] class extends Component {
             return;
         }
 
+        $rules = [
+            'status_reported_at' => ['required', 'date'],
+        ];
+
+        if ($this->selectedResourceStatusUpdatePivotIds() !== []) {
+            $rules['form.service_status_id'] = ['required', 'integer', 'exists:statuses,id'];
+        }
+
         $this->validate(
-            [
-                'status_reported_at' => ['required', 'date'],
-            ],
+            $rules,
             [
                 'status_reported_at.required' => 'La fecha de reporta es obligatoria cuando se reporta un estado.',
+                'form.service_status_id.required' => 'El estado del servicio es obligatorio para actualizar recursos.',
+                'form.service_status_id.exists' => 'El estado del servicio seleccionado no es valido.',
                 'status_reported_at.date' => 'La fecha de reporte debe ser una fecha válida.',
             ],
             [
                 'status_reported_at' => 'fecha de reporte',
+                'form.service_status_id' => 'estado del servicio',
             ],
         );
     }
@@ -359,32 +388,32 @@ new #[Layout('layouts.app')] class extends Component {
             return false;
         }
 
+        if ($this->selectedResourceStatusUpdatePivotIds() !== []) {
+            return true;
+        }
+
         if ($statusChanged || $hasAddedResources) {
             return true;
         }
 
-        if ($newStatusId === null) {
-            return false;
-        }
+        return false;
+    }
 
-        $existingPivotIds = collect($newResourceRows)
+    private function selectedResourceStatusUpdatePivotIds(): array
+    {
+        $currentPivotIds = collect($this->form->service_resource_rows)
             ->pluck('pivot_id')
             ->filter()
             ->map(fn($id) => (int) $id)
-            ->values();
+            ->values()
+            ->all();
 
-        if ($existingPivotIds->isEmpty()) {
-            return false;
-        }
-
-        $reportedPivotIds = DB::table('service_resource_status_reports')
-            ->join('service_status_reports', 'service_status_reports.id', '=', 'service_resource_status_reports.service_status_report_id')
-            ->where('service_status_reports.service_id', (int) $this->form->id)
-            ->where('service_status_reports.status_id', $newStatusId)
-            ->pluck('service_resource_status_reports.service_resource_id')
-            ->map(fn($id) => (int) $id);
-
-        return $existingPivotIds->diff($reportedPivotIds)->isNotEmpty();
+        return collect($this->resource_status_update_pivot_ids)
+            ->map(fn($id) => (int) $id)
+            ->filter(fn($id) => $id > 0 && in_array($id, $currentPivotIds, true))
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function normalizedResourceRows(array $rows): array
@@ -422,6 +451,35 @@ new #[Layout('layouts.app')] class extends Component {
         $timestamp = now()->format('YmdHis');
         $consecutive = $service->consecutive ?? 'NA';
         return "ECOPETROL_TRANSTECOL_IFTSTA_{$timestamp}_{$consecutive}.edi";
+    }
+
+    private function markResourcesWithStatus(
+        ServiceStatusReport $statusReport,
+        \Illuminate\Support\Collection $resources,
+        ?\Carbon\Carbon $reportedAt,
+        ?string $reportedStatusName,
+    ): void {
+        $reportedAt ??= now();
+
+        $resources
+            ->filter(fn($resourceItem) => $resourceItem->pivot?->id)
+            ->unique(fn($resourceItem) => (int) $resourceItem->pivot->id)
+            ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName) {
+                DB::table('service_resource_status_reports')->insertOrIgnore([
+                    'service_resource_id' => (int) $resourceItem->pivot->id,
+                    'service_status_report_id' => $statusReport->id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                DB::table('service_resource')
+                    ->where('id', (int) $resourceItem->pivot->id)
+                    ->update([
+                        'last_reported_at' => $reportedAt,
+                        'status_name' => $reportedStatusName,
+                        'updated_at' => now(),
+                    ]);
+            });
     }
 
     public function back(): void
@@ -584,24 +642,29 @@ new #[Layout('layouts.app')] class extends Component {
                     ->values();
             @endphp
 
-            <div class="w-full lg:max-w-xl" wire:ignore>
+            <div class="w-full lg:max-w-xl">
                 <label for="bulk_status" class="mb-1 block text-sm font-medium text-gray-700">
-                    Estado de la Orden
+                    Estado del Servicio
                 </label>
-                <select id="bulk_status" wire:model.defer="form.service_status_id"
-                    class="js-status-select w-full whitespace-normal rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
-                    data-placeholder="" data-current-value="{{ $form->service_status_id ?? '' }}"
-                    data-livewire-model="form.service_status_id" style="white-space: normal;"
-                    @disabled(!$form->canEdit)>
-                    @foreach ($bulkStatuses as $st)
-                        @php
-                            $stateCode = is_numeric($st->edifact_code ?? null) ? (int) $st->edifact_code : null;
-                            $stateCodeLabel = ($stateCode !== null && $stateCode !== 0) ? " ({$stateCode})" : '';
-                        @endphp
-                        <option value="{{ $st->id }}" style="white-space: normal;" @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
-                            {{ $stateCodeLabel . ' ' . $statusLabel($st) . ' - ' . $st->status_description }}</option>
-                    @endforeach
-                </select>
+                <div wire:ignore>
+                    <select id="bulk_status" wire:model.defer="form.service_status_id"
+                        class="js-status-select w-full whitespace-normal rounded-lg border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                        data-placeholder="" data-current-value="{{ $form->service_status_id ?? '' }}"
+                        data-livewire-model="form.service_status_id" style="white-space: normal;"
+                        @disabled(!$form->canEdit)>
+                        @foreach ($bulkStatuses as $st)
+                            @php
+                                $stateCode = is_numeric($st->edifact_code ?? null) ? (int) $st->edifact_code : null;
+                                $stateCodeLabel = ($stateCode !== null && $stateCode !== 0) ? " ({$stateCode})" : '';
+                            @endphp
+                            <option value="{{ $st->id }}" style="white-space: normal;" @selected((int) $st->id === (int) ($form->service_status_id ?? 0))>
+                                {{ $stateCodeLabel . ' ' . $statusLabel($st) . ' - ' . $st->status_description }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                @error('form.service_status_id')
+                    <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                @enderror
             </div>
         </div>
 
@@ -765,6 +828,42 @@ new #[Layout('layouts.app')] class extends Component {
                     <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900">
                         <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z" />
+                        </svg>
+                        Fechas Estimadas del Servicio
+                    </h3>
+                </div>
+
+                <div class="grid grid-cols-1 gap-4 md:col-span-3 md:grid-cols-2">
+                    <div>
+                        <label for="positioning_date" class="mb-1 block text-sm font-medium text-gray-700">
+                            Fecha estimada de cargue (Posicionamiento)
+                        </label>
+                        <input type="datetime-local" id="positioning_date" wire:model.defer="form.positioning_date"
+                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(!$form->canEdit) />
+                        @error('form.positioning_date')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+
+                    <div>
+                        <label for="arrival_date" class="mb-1 block text-sm font-medium text-gray-700">
+                            Fecha estimada de descargue (Arribo)
+                        </label>
+                        <input type="datetime-local" id="arrival_date" wire:model.defer="form.arrival_date"
+                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                            @disabled(!$form->canEdit) />
+                        @error('form.arrival_date')
+                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="mt-2 md:col-span-3">
+                    <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900">
+                        <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M3 7h18M5 7v10a2 2 0 002 2h10a2 2 0 002-2V7" />
                         </svg>
                         Recurso(s) utilizado(s)
@@ -774,6 +873,9 @@ new #[Layout('layouts.app')] class extends Component {
                 @php
                     $resourceGroups = $resources?->groupBy('resource_operation') ?? collect();
                     $resourceLookup = $resources?->keyBy('id') ?? collect();
+                    $serviceResourcePivotLookup = collect($form->service?->resources ?? [])
+                        ->filter(fn($resource) => (int) data_get($resource, 'pivot.id', 0) > 0)
+                        ->keyBy(fn($resource) => (int) data_get($resource, 'pivot.id'));
                     $serviceStatusReports = collect($form->service?->service_status_reports ?? [])
                         ->sortBy(function ($statusReport) {
                             $edifactCode = $statusReport->status?->edifact_code
@@ -856,6 +958,7 @@ new #[Layout('layouts.app')] class extends Component {
                             return [
                                 'index' => $index,
                                 'row_key' => $rowKey,
+                                'pivot_id' => $pivotId > 0 ? $pivotId : null,
                                 'resource' => $resource,
                                 'last_reported_at' => $formatReportedAt($lastReportedAt),
                                 'status_name' => (is_string($statusName) && trim($statusName) !== '') ? trim($statusName) : '-',
@@ -941,6 +1044,9 @@ new #[Layout('layouts.app')] class extends Component {
                         <table class="min-w-full divide-y divide-gray-200">
                             <thead class="bg-gray-50/80">
                                 <tr>
+                                    <th class="w-10 px-3 py-2 text-center">
+                                        <span class="sr-only">Actualizar estado</span>
+                                    </th>
                                     <th
                                         class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                         Recurso
@@ -966,6 +1072,19 @@ new #[Layout('layouts.app')] class extends Component {
                             <tbody class="bg-white divide-y divide-gray-200">
                                 @foreach ($selectedResources as $selectedResource)
                                     <tr class="hover:bg-gray-50 transition-colors">
+                                        <td class="px-3 py-2 text-center">
+                                            @if ($selectedResource['pivot_id'])
+                                                <input type="checkbox"
+                                                    value="{{ $selectedResource['pivot_id'] }}"
+                                                    wire:model.defer="resource_status_update_pivot_ids"
+                                                    title="Actualizar este recurso al estado seleccionado del servicio"
+                                                    aria-label="Actualizar {{ $selectedResource['resource']->resource_name }} al estado seleccionado del servicio"
+                                                    class="h-4 w-4 rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                                    @disabled(!$form->canEdit) />
+                                            @else
+                                                <span class="text-sm text-gray-400">-</span>
+                                            @endif
+                                        </td>
                                         <td class="px-4 py-2 text-sm text-gray-900">
                                             {{ $selectedResource['resource']->resource_name }}
                                         </td>
@@ -1045,7 +1164,9 @@ new #[Layout('layouts.app')] class extends Component {
                                             @if ($form->canEdit)
                                                 <button type="button"
                                                     x-on:click="resourceToRemove = {{ $selectedResource['index'] }}"
-                                                    class="inline-flex items-center gap-1 text-sm font-semibold text-red-600 hover:text-red-700">
+                                                    title="Eliminar recurso"
+                                                    aria-label="Eliminar {{ $selectedResource['resource']->resource_name }}"
+                                                    class="inline-flex h-9 w-9 items-center justify-center rounded-lg text-red-600 transition hover:bg-red-50 hover:text-red-700">
                                                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
                                                         viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
@@ -1056,7 +1177,6 @@ new #[Layout('layouts.app')] class extends Component {
                                                         <path d="M10 11v6" />
                                                         <path d="M14 11v6" />
                                                     </svg>
-                                                    <span>Eliminar</span>
                                                 </button>
                                             @else
                                                 <span class="text-sm text-gray-400">-</span>
