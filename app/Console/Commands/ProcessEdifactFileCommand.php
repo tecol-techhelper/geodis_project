@@ -46,7 +46,7 @@ class ProcessEdifactFileCommand extends Command
             $deleteRemote = (bool) ((int) $this->option('delete-remote'));
             $max          = (int) $this->option('max');
 
-            $remote = Storage::disk('sftp');
+            $remote = Storage::disk('sftp_geodis');
 
             // Listar SOLO dentro de /IFCSUM
             $files = $remote->files($remoteDir);
