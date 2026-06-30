@@ -10,11 +10,13 @@ class ServiceResourceStatusReport extends Model
     protected $fillable = [
         'service_resource_id',
         'service_status_report_id',
+        'reported_at',
     ];
 
     protected $casts = [
         'service_resource_id' => 'integer',
         'service_status_report_id' => 'integer',
+        'reported_at' => 'datetime',
     ];
 
     public function serviceResource(): BelongsTo
