@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Core\InternalControllers\AuditController;
+use DateInterval;
 use Illuminate\Auth\SessionGuard;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +12,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\ServiceProvider;
+use Laravel\Passport\Passport;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -27,6 +29,16 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if (class_exists(Passport::class)) {
+            $tokenTtl = now()->add(new DateInterval('PT'.max(1, (int) config('geodis_api.token_ttl', 3600)).'S'));
+
+            Passport::tokensCan([
+                config('geodis_api.scope') => 'Permite consultar expedientes desde la API de GEODIS.',
+            ]);
+            Passport::tokensExpireIn($tokenTtl);
+            Passport::clientCredentialsTokensExpireIn($tokenTtl);
+        }
+
         $slowThresholdMs = (int) env('SLOW_QUERY_MS', 200);
         DB::listen(function ($query) use ($slowThresholdMs): void {
             if ($query->time < $slowThresholdMs) {
