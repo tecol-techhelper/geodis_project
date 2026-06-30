@@ -465,12 +465,29 @@ new #[Layout('layouts.app')] class extends Component {
             ->filter(fn($resourceItem) => $resourceItem->pivot?->id)
             ->unique(fn($resourceItem) => (int) $resourceItem->pivot->id)
             ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName) {
-                DB::table('service_resource_status_reports')->insertOrIgnore([
+                $resourceStatusAttributes = [
                     'service_resource_id' => (int) $resourceItem->pivot->id,
                     'service_status_report_id' => $statusReport->id,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                ];
+
+                $existingResourceStatus = DB::table('service_resource_status_reports')
+                    ->where($resourceStatusAttributes)
+                    ->exists();
+
+                if ($existingResourceStatus) {
+                    DB::table('service_resource_status_reports')
+                        ->where($resourceStatusAttributes)
+                        ->update([
+                            'reported_at' => $reportedAt,
+                            'updated_at' => now(),
+                        ]);
+                } else {
+                    DB::table('service_resource_status_reports')->insert($resourceStatusAttributes + [
+                        'reported_at' => $reportedAt,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
 
                 DB::table('service_resource')
                     ->where('id', (int) $resourceItem->pivot->id)
@@ -902,7 +919,7 @@ new #[Layout('layouts.app')] class extends Component {
                     };
 
                     $resourceStatusLinks = $serviceStatusReports
-                        ->flatMap(function ($statusReport) {
+                        ->flatMap(function ($statusReport) use ($formatReportedAt) {
                             $statusName = $statusReport->status?->status_name
                                 ?? $statusReport->status_name_snapshot
                                 ?? ('Estado #' . $statusReport->status_id);
@@ -910,36 +927,17 @@ new #[Layout('layouts.app')] class extends Component {
                             return collect($statusReport->resourceStatusReports ?? [])->map(fn($resourceStatusReport) => [
                                 'service_resource_id' => (int) $resourceStatusReport->service_resource_id,
                                 'status_name' => $statusName,
+                                'reported_at' => $formatReportedAt($resourceStatusReport->reported_at ?? $statusReport->reported_at),
                             ]);
                         })
                         ->values();
 
                     $reportedStatusesByPivotId = $resourceStatusLinks
                         ->groupBy('service_resource_id')
-                        ->map(fn($rows) => $rows->pluck('status_name')->filter()->unique()->implode(', '));
-
-                    $statusReportRows = $serviceStatusReports
-                        ->map(function ($statusReport) use ($formatReportedAt) {
-                            $resourceReports = collect($statusReport->resourceStatusReports ?? []);
-                            $resourceNames = $resourceReports
-                                ->map(fn($resourceStatusReport) => $resourceStatusReport->serviceResource?->resource?->resource_name)
-                                ->filter()
-                                ->unique()
-                                ->values();
-
-                            return [
-                                'status_name' => collect([
-                                    $statusReport->status?->status_name
-                                    ?? $statusReport->status_name_snapshot
-                                    ?? ('Estado #' . $statusReport->status_id),
-                                    $statusReport->status?->status_description,
-                                ])->filter(fn($value) => trim((string) $value) !== '')->implode(' - '),
-                                'reported_at' => $formatReportedAt($statusReport->reported_at),
-                                'resource_count' => $resourceReports->pluck('service_resource_id')->unique()->count(),
-                                'resource_names' => $resourceNames->isNotEmpty() ? $resourceNames->implode(', ') : '-',
-                            ];
-                        })
-                        ->values();
+                        ->map(fn($rows) => $rows
+                            ->unique(fn($row) => $row['status_name'])
+                            ->values()
+                            ->all());
 
                     $selectedResources = collect($form->service_resource_rows ?? [])
                         ->values()
@@ -962,7 +960,7 @@ new #[Layout('layouts.app')] class extends Component {
                                 'resource' => $resource,
                                 'last_reported_at' => $formatReportedAt($lastReportedAt),
                                 'status_name' => (is_string($statusName) && trim($statusName) !== '') ? trim($statusName) : '-',
-                                'status_names' => $reportedStatusesByPivotId->get($pivotId, '-'),
+                                'status_reports' => $reportedStatusesByPivotId->get($pivotId, []),
                                 'additional_status' => $form->additionalInformationStatus($rowKey),
                             ];
                         })
@@ -1034,11 +1032,11 @@ new #[Layout('layouts.app')] class extends Component {
                     @enderror
                 </div>
 
-                @if ($selectedResources->isNotEmpty() || $statusReportRows->isNotEmpty())
-                    <div class="mt-1 grid grid-cols-1 items-start gap-4 md:col-span-3 lg:grid-cols-2">
+                @if ($selectedResources->isNotEmpty())
+                    <div class="mt-1 md:col-span-3">
                     <div class="min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
                         <div class="border-b border-gray-200 bg-gray-50 px-4 py-2">
-                            <h4 class="text-sm font-semibold text-gray-900">Recursos asignados</h4>
+                            <h4 class="text-sm font-semibold text-gray-900">Recursos asignados y estados reportados</h4>
                         </div>
                         <div class="max-h-80 overflow-auto">
                         <table class="min-w-full divide-y divide-gray-200">
@@ -1053,7 +1051,7 @@ new #[Layout('layouts.app')] class extends Component {
                                     </th>
                                     <th
                                         class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Estados reportados
+                                        Estado reportado con fecha/hora
                                     </th>
                                     <th
                                         class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -1089,7 +1087,18 @@ new #[Layout('layouts.app')] class extends Component {
                                             {{ $selectedResource['resource']->resource_name }}
                                         </td>
                                         <td class="px-4 py-2 text-sm text-gray-700">
-                                            {{ $selectedResource['status_names'] }}
+                                            @if ($selectedResource['status_reports'] === [])
+                                                -
+                                            @else
+                                                <div class="space-y-1">
+                                                    @foreach ($selectedResource['status_reports'] as $statusReport)
+                                                        <div>
+                                                            <span class="font-medium text-gray-900">{{ $statusReport['status_name'] }}</span>
+                                                            <span class="text-gray-500">- {{ $statusReport['reported_at'] }}</span>
+                                                        </div>
+                                                    @endforeach
+                                                </div>
+                                            @endif
                                         </td>
                                         <td class="px-4 py-2 text-sm text-gray-700">
                                             {{ $selectedResource['status_name'] }}
@@ -1181,39 +1190,6 @@ new #[Layout('layouts.app')] class extends Component {
                                             @else
                                                 <span class="text-sm text-gray-400">-</span>
                                             @endif
-                                        </td>
-                                    </tr>
-                                @endforeach
-                            </tbody>
-                        </table>
-                        </div>
-                    </div>
-                    <div class="min-w-0 overflow-hidden rounded-lg border border-gray-200 bg-white">
-                        <div class="border-b border-gray-200 bg-gray-50 px-4 py-2">
-                            <h4 class="text-sm font-semibold text-gray-900">Estados Reportados</h4>
-                        </div>
-                        <div class="max-h-80 overflow-auto">
-                        <table class="min-w-full divide-y divide-gray-200">
-                            <thead class="bg-gray-50/80">
-                                <tr>
-                                    <th
-                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Estado
-                                    </th>
-                                    <th
-                                        class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                        Fecha de reporte
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white divide-y divide-gray-200">
-                                @foreach ($statusReportRows as $statusReportRow)
-                                    <tr class="hover:bg-gray-50 transition-colors">
-                                        <td class="px-4 py-2 text-sm text-gray-900">
-                                            {{ $statusReportRow['status_name'] }}
-                                        </td>
-                                        <td class="px-4 py-2 text-sm text-gray-700">
-                                            {{ $statusReportRow['reported_at'] }}
                                         </td>
                                     </tr>
                                 @endforeach
