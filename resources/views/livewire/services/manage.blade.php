@@ -727,8 +727,30 @@ new #[Layout('layouts.app')] class extends Component {
                 $agwPriorityLabel = null;
                 $agwConsolidatedNumber = null;
                 $agwPriorityClass = 'text-gray-600';
+                $purchaseOrderNumbersFromCoi = [];
 
                 foreach ($form->service?->purchase_orders ?? [] as $_po) {
+                    foreach ($_po->order_references ?? [] as $_ref) {
+                        $referenceCode = strtoupper(trim((string) ($_ref->reference_type?->reference_type_code ?? '')));
+                        if ($referenceCode !== 'COI') {
+                            continue;
+                        }
+
+                        $coiValue = trim((string) ($_ref->order_reference_value ?? ''));
+                        if ($coiValue === '') {
+                            continue;
+                        }
+
+                        $purchaseOrderNumber = trim(explode('/', $coiValue, 2)[0] ?? '');
+                        if ($purchaseOrderNumber !== '') {
+                            $purchaseOrderNumbersFromCoi[] = $purchaseOrderNumber;
+                        }
+                    }
+
+                    if ($agwPriority !== null || $agwConsolidatedNumber !== null) {
+                        continue;
+                    }
+
                     $agwRef = $_po->order_references?->first(function ($_ref) {
                         return strtoupper(trim((string) ($_ref->reference_type?->reference_type_code ?? ''))) ===
                             'AGW';
@@ -760,8 +782,12 @@ new #[Layout('layouts.app')] class extends Component {
                         'STANDARD' => 'text-blue-600',
                         default => 'text-gray-600',
                     };
-                    break;
                 }
+
+                $purchaseOrderNumbersFromCoi = collect($purchaseOrderNumbersFromCoi)
+                    ->filter()
+                    ->unique()
+                    ->values();
             @endphp
 
             <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -838,6 +864,20 @@ new #[Layout('layouts.app')] class extends Component {
                         @else
                             <span class="text-gray-400">-</span>
                         @endif
+                    </div>
+
+                    <div class="mt-3">
+                        <label for="purchase_order_numbers" class="mb-1 block text-sm font-medium text-gray-700">
+                            &Oacute;rdenes de Compra
+                        </label>
+                        <div id="purchase_order_numbers"
+                            class="min-h-11 w-full rounded-md border border-gray-300 bg-gray-50 px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm">
+                            @forelse ($purchaseOrderNumbersFromCoi as $purchaseOrderNumber)
+                                <span class="block leading-6">{{ $purchaseOrderNumber }}</span>
+                            @empty
+                                <span class="text-gray-400">-</span>
+                            @endforelse
+                        </div>
                     </div>
                 </div>
 
@@ -1666,19 +1706,19 @@ new #[Layout('layouts.app')] class extends Component {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        Órdenes de Compra
+                        SHO Asociadas
                     </h2>
                     <p class="text-sm text-gray-500">
                         {{ $form->service->purchase_orders->count() }}
-                        {{ $form->service->purchase_orders->count() === 1 ? 'orden disponible' : 'órdenes disponibles' }}
+                        {{ $form->service->purchase_orders->count() === 1 ? 'SHO disponible' : 'SHO disponibles' }}
                     </p>
                 </div>
 
                 <div class="grid grid-cols-1 gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start">
                     <nav class="rounded-xl border border-gray-200 bg-white shadow-sm"
-                        aria-label="Órdenes de compra del servicio">
+                        aria-label="SHO asociadas al servicio">
                         <div class="border-b border-gray-200 px-4 py-3">
-                            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Seleccionar orden</p>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-gray-500">Seleccionar SHO</p>
                         </div>
 
                         <div class="flex gap-2 overflow-x-auto p-3 lg:max-h-[70vh] lg:flex-col lg:overflow-y-auto">
@@ -1691,7 +1731,7 @@ new #[Layout('layouts.app')] class extends Component {
                                         : 'border-gray-200 bg-white text-gray-700 hover:border-indigo-300 hover:bg-gray-50'"
                                     class="min-w-[14rem] rounded-lg border px-4 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 lg:min-w-0 lg:w-full">
                                     <span class="block truncate text-sm font-semibold">
-                                        Orden {{ $index + 1 }} # {{ $po->purchase_order_number ?? 'Sin número' }}
+                                        SHO {{ $index + 1 }} # {{ $po->purchase_order_number ?? 'Sin número' }}
                                     </span>
                                 </button>
                             @endforeach
@@ -1708,7 +1748,7 @@ new #[Layout('layouts.app')] class extends Component {
                         <div class="mb-4 flex flex-col gap-3 border-b border-gray-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
                             <h3 id="purchase-order-{{ $po->id }}-title"
                                 class="text-lg font-semibold text-gray-900">
-                                Orden #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
+                                SHO #{{ $index + 1 }} - {{ $po->purchase_order_number ?? 'N/A' }}
                             </h3>
 
                             <div class="text-sm text-gray-700">
