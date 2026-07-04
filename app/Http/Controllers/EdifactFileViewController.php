@@ -33,10 +33,29 @@ class EdifactFileViewController extends Controller
             abort(404, 'El archivo no está disponible en el sitio');
         }
 
-        return response($content, 200, [
+        return response($this->formatEdifactContent($content), 200, [
             'Content-Type' => 'text/plain; charset=UTF-8',
             'Content-Disposition' => 'inline; filename="' . $fileName . '"',
             'X-Content-Type-Options' => 'nosniff',
         ]);
+    }
+
+    private function formatEdifactContent(string $content): string
+    {
+        $content = trim(str_replace(["\r\n", "\r"], "\n", $content));
+
+        if ($content === '') {
+            return '';
+        }
+
+        $segments = preg_split("/'\s*/", $content, -1, PREG_SPLIT_NO_EMPTY);
+
+        if (!$segments) {
+            return $content;
+        }
+
+        return collect($segments)
+            ->map(fn(string $segment) => trim($segment) . "'")
+            ->implode("\n") . "\n";
     }
 }
