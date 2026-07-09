@@ -15,11 +15,16 @@ return new class extends Migration
                 ->after('service_status_report_id');
         });
 
-        DB::table('service_resource_status_reports as resource_status')
-            ->join('service_status_reports as status_report', 'status_report.id', '=', 'resource_status.service_status_report_id')
-            ->whereNull('resource_status.reported_at')
+        DB::table('service_resource_status_reports')
+            ->whereNull('reported_at')
+            ->whereNotNull('service_status_report_id')
             ->update([
-                'resource_status.reported_at' => DB::raw('status_report.reported_at'),
+                'reported_at' => DB::raw(
+                    '(SELECT status_report.reported_at
+                        FROM service_status_reports AS status_report
+                        WHERE status_report.id = service_resource_status_reports.service_status_report_id
+                        LIMIT 1)'
+                ),
             ]);
     }
 
