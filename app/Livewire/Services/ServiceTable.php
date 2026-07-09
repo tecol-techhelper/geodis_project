@@ -189,12 +189,7 @@ final class ServiceTable extends PowerGridComponent
                     WHERE ssr.service_id = services.id
                     ORDER BY ssr.reported_at DESC, ssr.id DESC
                     LIMIT 1) as latest_edifact_code"),
-                DB::raw("(SELECT GROUP_CONCAT(DISTINCT COALESCE(ssr.edifact_code_snapshot, st.edifact_code) ORDER BY COALESCE(ssr.edifact_code_snapshot, st.edifact_code) SEPARATOR ',')
-                    FROM service_status_reports ssr
-                    LEFT JOIN statuses st ON st.id = ssr.status_id
-                    WHERE ssr.service_id = services.id
-                      AND COALESCE(ssr.edifact_code_snapshot, st.edifact_code) IS NOT NULL
-                ) as reported_edifact_codes"),
+                DB::raw($this->reportedEdifactCodesSelect()),
                 DB::raw("(SELECT COUNT(*)
                     FROM service_resource sr
                     INNER JOIN resources r ON r.id = sr.resource_id
@@ -592,6 +587,27 @@ final class ServiceTable extends PowerGridComponent
             ->unique()
             ->values()
             ->all();
+    }
+
+    private function reportedEdifactCodesSelect(): string
+    {
+        $statusCodeExpression = 'COALESCE(ssr.edifact_code_snapshot, st.edifact_code)';
+
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return "(SELECT GROUP_CONCAT(DISTINCT {$statusCodeExpression})
+                FROM service_status_reports ssr
+                LEFT JOIN statuses st ON st.id = ssr.status_id
+                WHERE ssr.service_id = services.id
+                  AND {$statusCodeExpression} IS NOT NULL
+            ) as reported_edifact_codes";
+        }
+
+        return "(SELECT GROUP_CONCAT(DISTINCT {$statusCodeExpression} ORDER BY {$statusCodeExpression} SEPARATOR ',')
+            FROM service_status_reports ssr
+            LEFT JOIN statuses st ON st.id = ssr.status_id
+            WHERE ssr.service_id = services.id
+              AND {$statusCodeExpression} IS NOT NULL
+        ) as reported_edifact_codes";
     }
 
     private function detailButtonClass(string $state): string
