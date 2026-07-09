@@ -49,6 +49,7 @@ final class EdifactFileTable extends PowerGridComponent
             ->add('purchase_order')
             ->add('purchase_order_lines', fn(EdifactFile $model) => $this->formatPurchaseOrders($model->purchase_order))
             ->add('received_at_formatted', fn(EdifactFile $model) => $model->received_at ? Carbon::parse($model->received_at)->format('d/m/Y') : '-')
+            ->add('sent_at_formatted', fn(EdifactFile $model) => $model->sent_at ? Carbon::parse($model->sent_at)->format('d/m/Y H:i') : '-')
             ->add('file_actions', function (EdifactFile $file) {
                 $viewUrl = route('edifactfiles.view', ['edifactFile' => $file->id]);
                 $downloadUrl = route('edifactfiles.download', ['edifactFile' => $file->id]);
@@ -83,6 +84,9 @@ final class EdifactFileTable extends PowerGridComponent
                 ->searchable(),
 
             Column::make('Fecha de Recepcion', 'received_at_formatted', 'received_at')
+                ->sortable(),
+
+            Column::make('Fecha de envío', 'sent_at_formatted', 'sent_at')
                 ->sortable(),
 
             Column::make('Acciones', 'file_actions'),
