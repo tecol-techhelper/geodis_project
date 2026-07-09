@@ -18,6 +18,8 @@ class EdifactFileViewController extends Controller
 
         if (!empty($edifactFile->file_path) && File::exists($edifactFile->file_path)) {
             $content = File::get($edifactFile->file_path);
+        } elseif (!empty($edifactFile->file_path) && Storage::disk('public')->exists($edifactFile->file_path)) {
+            $content = Storage::disk('public')->get($edifactFile->file_path);
         } elseif (!empty($edifactFile->file_url) && Str::startsWith($edifactFile->file_url, ['http://', 'https://'])) {
             $response = Http::timeout(15)->get($edifactFile->file_url);
             if ($response->successful()) {
