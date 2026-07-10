@@ -18,6 +18,14 @@ use Throwable;
 
 final class ServiceTable extends PowerGridComponent
 {
+    private const EDIFACT_FLOW_BY_SO_TYPE = [
+        'POST-CARRIAGE' => [13, 29],
+        'DOM-CONSOL' => [35, 74],
+        'EMPTY-CONTAINER' => [79, 82],
+        'DELIVERY-SO' => [13, 74],
+        'ROAD' => [13, 74],
+    ];
+
     public string $tableName = 'service-table-aqh7dc-table';
 
     public bool $showTrash = false;
@@ -69,6 +77,8 @@ final class ServiceTable extends PowerGridComponent
             ->select([
                 'services.id',
                 'services.consecutive',
+                'services.positioning_date',
+                'services.arrival_date',
                 DB::raw("(SELECT UPPER(TRIM(orx.order_reference_value))
                     FROM purchase_orders po
                     INNER JOIN order_references orx ON orx.purchase_order_id = po.id
@@ -172,6 +182,46 @@ final class ServiceTable extends PowerGridComponent
                     INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
                     WHERE po.service_id = services.id AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
                     ORDER BY pop.id DESC LIMIT 1) as dest_party_region"),
+
+                DB::raw("(SELECT COALESCE(ssr.edifact_code_snapshot, st.edifact_code)
+                    FROM service_status_reports ssr
+                    LEFT JOIN statuses st ON st.id = ssr.status_id
+                    WHERE ssr.service_id = services.id
+                    ORDER BY ssr.reported_at DESC, ssr.id DESC
+                    LIMIT 1) as latest_edifact_code"),
+                DB::raw($this->reportedEdifactCodesSelect()),
+                DB::raw("(SELECT COUNT(*)
+                    FROM service_resource sr
+                    INNER JOIN resources r ON r.id = sr.resource_id
+                    LEFT JOIN service_resource_reports srr
+                        ON srr.service_resource_id = sr.id
+                        AND srr.deleted_at IS NULL
+                    WHERE sr.service_id = services.id
+                      AND COALESCE(r.required_report_mask, 0) <> 0
+                      AND r.deleted_at IS NULL
+                      AND (
+                          ((r.required_report_mask & 1) = 1 AND srr.vehicle_id IS NULL)
+                          OR ((r.required_report_mask & 4) = 4 AND TRIM(COALESCE(srr.remesa_transporte, '')) = '')
+                          OR ((r.required_report_mask & 8) = 8 AND srr.container_id IS NULL)
+                          OR (
+                              (r.required_report_mask & 2) = 2
+                              AND EXISTS (
+                                  SELECT 1
+                                  FROM resource_personnel_requirements rpr
+                                  WHERE rpr.resource_id = r.id
+                                    AND rpr.deleted_at IS NULL
+                                    AND rpr.quantity_required > 0
+                                    AND (
+                                        SELECT COUNT(*)
+                                        FROM service_resource_report_personnel srrp
+                                        WHERE srrp.service_resource_report_id = srr.id
+                                          AND srrp.personnel_role_id = rpr.personnel_role_id
+                                          AND srrp.deleted_at IS NULL
+                                    ) < rpr.quantity_required
+                              )
+                          )
+                      )
+                ) as incomplete_required_resource_count"),
             ]);
     }
 
@@ -305,6 +355,8 @@ final class ServiceTable extends PowerGridComponent
             ];
         }
 
+        $progress = $this->serviceProgressIndicator($row);
+
         return [
             Button::add('preview')
                 ->slot('<span>
@@ -333,11 +385,8 @@ final class ServiceTable extends PowerGridComponent
                                      -4.477 0-8.268-2.943-9.542-7z" />
                         </svg>
                     </span>')
-                ->class('inline-flex h-9 w-9 items-center justify-center rounded-full
-                     border border-gray-700 bg-white text-gray-700
-                     hover:bg-gray-800 hover:text-white transition
-                     focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2')
-                ->attributes(['title' => 'Ver detalles', 'aria-label' => 'Ver detalles'])
+                ->class($progress['class'])
+                ->attributes(['title' => $progress['title'], 'aria-label' => $progress['title']])
                 ->route('service.manage', ['service' => $row->id]),
             Button::add('delete')
                 ->slot('<span>
@@ -470,6 +519,106 @@ final class ServiceTable extends PowerGridComponent
         $this->pendingServiceId = null;
         $this->pendingServiceLabel = null;
         $this->pendingDeletionType = null;
+    }
+
+    /**
+     * @return array{title:string,class:string}
+     */
+    private function serviceProgressIndicator(Service $row): array
+    {
+        $latestEdifactCode = $row->latest_edifact_code !== null
+            ? (int) $row->latest_edifact_code
+            : null;
+
+        if ($latestEdifactCode === null) {
+            return [
+                'title' => 'Asignación nueva',
+                'class' => $this->detailButtonClass('new'),
+            ];
+        }
+
+        $requiredEdifactCodes = $this->requiredEdifactCodesForServiceType($row->acd_type_value ?? null);
+        $finalEdifactCode = $requiredEdifactCodes !== []
+            ? $requiredEdifactCodes[array_key_last($requiredEdifactCodes)]
+            : null;
+        $hasCompleteStatusFlow = $requiredEdifactCodes !== []
+            && array_diff($requiredEdifactCodes, $this->reportedEdifactCodes($row)) === [];
+        $hasCompleteRequiredData = (int) ($row->incomplete_required_resource_count ?? 0) === 0;
+        $hasEstimatedServiceDates = filled($row->positioning_date) && filled($row->arrival_date);
+
+        if (
+            $finalEdifactCode !== null
+            && $latestEdifactCode === $finalEdifactCode
+            && $hasCompleteStatusFlow
+            && $hasCompleteRequiredData
+            && $hasEstimatedServiceDates
+        ) {
+            return [
+                'title' => 'Terminado (Se recomienda revisar antes de dar por cerrado)',
+                'class' => $this->detailButtonClass('done'),
+            ];
+        }
+
+        return [
+            'title' => 'En proceso',
+            'class' => $this->detailButtonClass('process'),
+        ];
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function requiredEdifactCodesForServiceType($acdValue): array
+    {
+        $type = str_replace(['_', ' '], '-', strtoupper(trim((string) ($acdValue ?? ''))));
+
+        return self::EDIFACT_FLOW_BY_SO_TYPE[$type] ?? [];
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function reportedEdifactCodes(Service $row): array
+    {
+        return collect(explode(',', (string) ($row->reported_edifact_codes ?? '')))
+            ->map(fn ($code) => trim($code))
+            ->filter(fn ($code) => $code !== '')
+            ->map(fn ($code) => (int) $code)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function reportedEdifactCodesSelect(): string
+    {
+        $statusCodeExpression = 'COALESCE(ssr.edifact_code_snapshot, st.edifact_code)';
+
+        if (DB::connection()->getDriverName() === 'sqlite') {
+            return "(SELECT GROUP_CONCAT(DISTINCT {$statusCodeExpression})
+                FROM service_status_reports ssr
+                LEFT JOIN statuses st ON st.id = ssr.status_id
+                WHERE ssr.service_id = services.id
+                  AND {$statusCodeExpression} IS NOT NULL
+            ) as reported_edifact_codes";
+        }
+
+        return "(SELECT GROUP_CONCAT(DISTINCT {$statusCodeExpression} ORDER BY {$statusCodeExpression} SEPARATOR ',')
+            FROM service_status_reports ssr
+            LEFT JOIN statuses st ON st.id = ssr.status_id
+            WHERE ssr.service_id = services.id
+              AND {$statusCodeExpression} IS NOT NULL
+        ) as reported_edifact_codes";
+    }
+
+    private function detailButtonClass(string $state): string
+    {
+        $base = 'inline-flex h-9 w-9 items-center justify-center rounded-full transition focus:outline-none focus:ring-2 focus:ring-offset-2';
+
+        return match ($state) {
+            'done' => "{$base} border border-emerald-600 bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white focus:ring-emerald-500",
+            'process' => "{$base} border border-amber-500 bg-amber-50 text-amber-700 hover:bg-amber-500 hover:text-white focus:ring-amber-500",
+            default => "{$base} border border-gray-700 bg-white text-gray-700 hover:bg-gray-800 hover:text-white focus:ring-gray-500",
+        };
     }
 
     protected function fmtServiceType($acdValue): string

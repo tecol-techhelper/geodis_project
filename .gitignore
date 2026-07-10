@@ -46,4 +46,5 @@ public/error_log
 /*_attempt*.log
 .agents
 AGENTS.md
-docs/
+/docs
+/tests

@@ -8,12 +8,14 @@ namespace App\Models;
 use App\Models\Concerns\OptionalPassportHasApiTokens;
 use App\Enums\UserStatus;
 use App\Mail\CustomResetPassword;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 
 class User extends Authenticatable
@@ -26,6 +28,7 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
+        'name',
         'first_name',
         'last_name',
         'username',
@@ -61,11 +64,28 @@ class User extends Authenticatable
     }
 
     // Hashing password
-    public function setPasswordAttribute($value)
+    public function setPasswordAttribute($value): void
     {
         if ($value) {
-            $this->attributes['password'] = bcrypt($value);
+            $this->attributes['password'] = Hash::needsRehash($value)
+                ? Hash::make($value)
+                : $value;
         }
+    }
+
+    protected function name(): Attribute
+    {
+        return Attribute::make(
+            get: fn () => trim((string) $this->first_name . ' ' . (string) $this->last_name),
+            set: function ($value): array {
+                $parts = preg_split('/\s+/', trim((string) $value), 2);
+
+                return [
+                    'first_name' => $parts[0] ?? null,
+                    'last_name' => $parts[1] ?? null,
+                ];
+            },
+        );
     }
 
     public function isActive()
