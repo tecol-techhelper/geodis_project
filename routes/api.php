@@ -1,13 +1,14 @@
 <?php
 
 use App\Http\Controllers\Api\Geodis\ExpedienteController;
-use App\Http\Middleware\EnsureGeodisApiHttps;
 use App\Http\Middleware\EnsurePassportClientCredentialsAreAvailable;
+use App\Http\Middleware\GeodisApiAudit;
 use Illuminate\Support\Facades\Route;
 use Laravel\Passport\Http\Middleware\CheckToken;
 
 $geodisMiddleware = [
-    EnsureGeodisApiHttps::class,
+    GeodisApiAudit::class,
+    'throttle:geodis-api',
     class_exists(CheckToken::class)
         ? 'client:expedientes.read'
         : EnsurePassportClientCredentialsAreAvailable::class,

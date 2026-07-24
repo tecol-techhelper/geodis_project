@@ -2,6 +2,8 @@
 
 use App\Http\Middleware\BlockedIpMiddleware;
 use App\Http\Middleware\CheckUserIsActive;
+use App\Http\Middleware\EnsureGeodisApiHttps;
+use App\Http\Middleware\GeodisApiSecurityHeaders;
 use App\Http\Middleware\RoleMiddleware;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -26,9 +28,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        $middleware->trustProxies(env('GEODIS_TRUSTED_PROXIES') ?: null);
+        $middleware->append(GeodisApiSecurityHeaders::class);
+        $middleware->append(EnsureGeodisApiHttps::class);
+
         $aliases = [
-            'role'=>RoleMiddleware::class,
-            'blocked'=> BlockedIpMiddleware::class,
+            'role' => RoleMiddleware::class,
+            'blocked' => BlockedIpMiddleware::class,
             'is_active' => CheckUserIsActive::class,
         ];
 
@@ -49,7 +55,7 @@ return Application::configure(basePath: dirname(__DIR__))
         );
 
         $exceptions->render(function (ValidationException $exception, Request $request) use ($isApiRequest, $json) {
-            if (!$isApiRequest($request)) {
+            if (! $isApiRequest($request)) {
                 return null;
             }
 
@@ -59,7 +65,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (AuthenticationException $exception, Request $request) use ($isApiRequest, $json) {
-            if (!$isApiRequest($request)) {
+            if (! $isApiRequest($request)) {
                 return null;
             }
 
@@ -71,7 +77,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (AuthorizationException $exception, Request $request) use ($isApiRequest, $json) {
-            if (!$isApiRequest($request)) {
+            if (! $isApiRequest($request)) {
                 return null;
             }
 
@@ -79,7 +85,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (NotFoundHttpException $exception, Request $request) use ($isApiRequest, $json) {
-            if (!$isApiRequest($request)) {
+            if (! $isApiRequest($request)) {
                 return null;
             }
 
@@ -87,7 +93,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (MethodNotAllowedHttpException $exception, Request $request) use ($isApiRequest, $json) {
-            if (!$isApiRequest($request)) {
+            if (! $isApiRequest($request)) {
                 return null;
             }
 
@@ -95,7 +101,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->render(function (\Throwable $exception, Request $request) use ($isApiRequest, $json) {
-            if (!$isApiRequest($request)) {
+            if (! $isApiRequest($request)) {
                 return null;
             }
 

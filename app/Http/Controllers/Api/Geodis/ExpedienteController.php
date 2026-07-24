@@ -4,21 +4,25 @@ namespace App\Http\Controllers\Api\Geodis;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\Geodis\ExpedienteIndexRequest;
+use App\Http\Resources\Api\Geodis\ExpedienteResource;
+use App\Services\Geodis\ExpedienteQueryService;
 use Illuminate\Http\JsonResponse;
 
 class ExpedienteController extends Controller
 {
-    public function index(ExpedienteIndexRequest $request): JsonResponse
-    {
-        $filters = $request->normalizedFilters();
+    public function index(
+        ExpedienteIndexRequest $request,
+        ExpedienteQueryService $queryService,
+    ): JsonResponse {
+        $paginator = $queryService->paginate($request->normalizedFilters());
 
         return response()->json([
-            'data' => [],
+            'data' => ExpedienteResource::collection($paginator->getCollection())->resolve($request),
             'meta' => [
-                'current_page' => $filters['page'],
-                'per_page' => $filters['per_page'],
-                'total' => 0,
-                'last_page' => 1,
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
             ],
         ]);
     }

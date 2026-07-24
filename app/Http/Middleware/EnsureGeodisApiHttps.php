@@ -11,17 +11,22 @@ class EnsureGeodisApiHttps
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (!$this->shouldEnforceHttps()) {
+        if (! $this->shouldProtectRequest($request) || ! $this->shouldEnforceHttps()) {
             return $next($request);
         }
 
-        if ($request->isSecure() || strtolower((string) $request->header('X-Forwarded-Proto')) === 'https') {
+        if ($request->isSecure()) {
             return $next($request);
         }
 
         return new JsonResponse([
             'message' => 'Las solicitudes a esta API deben realizarse sobre HTTPS.',
         ], 400);
+    }
+
+    private function shouldProtectRequest(Request $request): bool
+    {
+        return $request->is('api/*') || $request->is('oauth/token');
     }
 
     private function shouldEnforceHttps(): bool

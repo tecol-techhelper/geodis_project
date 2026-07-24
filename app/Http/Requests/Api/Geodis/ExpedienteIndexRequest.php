@@ -19,6 +19,8 @@ class ExpedienteIndexRequest extends FormRequest
 
         $this->merge([
             'so' => $so ?? $srn,
+            'srn' => $srn,
+            'consolidado' => $this->normalizedStringInput('consolidado'),
             'page' => $this->input('page', 1),
             'per_page' => $this->input('per_page', 100),
         ]);
@@ -66,7 +68,6 @@ class ExpedienteIndexRequest extends FormRequest
 
         return [
             'so' => $validated['so'] ?? null,
-            'srn' => $validated['srn'] ?? null,
             'fecha_inicio' => $validated['fecha_inicio'] ?? null,
             'fecha_fin' => $validated['fecha_fin'] ?? null,
             'consolidado' => $validated['consolidado'] ?? null,
@@ -75,12 +76,12 @@ class ExpedienteIndexRequest extends FormRequest
         ];
     }
 
-    private function normalizedStringInput(string $key): ?string
+    private function normalizedStringInput(string $key): mixed
     {
         $value = $this->input($key);
 
-        if (!is_string($value)) {
-            return null;
+        if (! is_string($value)) {
+            return $value;
         }
 
         $value = trim($value);
