@@ -3,14 +3,19 @@
 namespace App\Providers;
 
 use App\Core\InternalControllers\AuditController;
+use DateInterval;
 use Illuminate\Auth\SessionGuard;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
+use Laravel\Passport\Passport;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -27,6 +32,21 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        RateLimiter::for('geodis-api', function (Request $request): Limit {
+            return Limit::perMinute(max(1, (int) config('geodis_api.rate_limit_per_minute', 60)))
+                ->by('geodis-api:ip:'.($request->ip() ?: 'unknown'));
+        });
+
+        if (class_exists(Passport::class)) {
+            $tokenTtl = now()->add(new DateInterval('PT'.max(1, (int) config('geodis_api.token_ttl', 3600)).'S'));
+
+            Passport::tokensCan([
+                config('geodis_api.scope') => 'Permite consultar expedientes desde la API de GEODIS.',
+            ]);
+            Passport::tokensExpireIn($tokenTtl);
+            Passport::clientCredentialsTokensExpireIn($tokenTtl);
+        }
+
         $slowThresholdMs = (int) env('SLOW_QUERY_MS', 200);
         DB::listen(function ($query) use ($slowThresholdMs): void {
             if ($query->time < $slowThresholdMs) {
@@ -55,23 +75,23 @@ class AppServiceProvider extends ServiceProvider
             'eloquent.deleted: *',
         ], function (string $eventName, array $data): void {
             $model = $data[0] ?? null;
-            if (!$model instanceof Model) {
+            if (! $model instanceof Model) {
                 return;
             }
 
-            if (!$this->shouldAuditModel($model)) {
+            if (! $this->shouldAuditModel($model)) {
                 return;
             }
 
             $user = Auth::user();
-            if (!$user) {
+            if (! $user) {
                 return;
             }
 
             $action = Str::contains($eventName, 'created') ? 'CREATED'
                 : (Str::contains($eventName, 'updated') ? 'UPDATED' : 'DELETED');
 
-            (new AuditController())->log(
+            (new AuditController)->log(
                 model: $model,
                 userId: $user->id,
                 username: $user->username,
@@ -93,6 +113,6 @@ class AppServiceProvider extends ServiceProvider
             'sessions',
         ];
 
-        return !in_array($table, $skip, true);
+        return ! in_array($table, $skip, true);
     }
 }
