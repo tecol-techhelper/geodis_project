@@ -7,36 +7,36 @@ use Livewire\Component;
 
 class NotificationsBell extends Component
 {
+    private const VISIBLE_NOTIFICATIONS_LIMIT = 20;
 
-    // Marking notifications as readed
-    public function markAllAsRead():void
+    public function markAllAsRead(): void
     {
-        Notification::where('is_read',false)->update(['is_read'=>true]);
-        // $this->loadNotifications();
+        Notification::query()
+            ->where('is_read', false)
+            ->update(['is_read' => true]);
     }
 
-    // Mark an specific notific as readed
-    public function markAsRead($notificationId):void
+    public function markAsRead(int $notificationId): void
     {
-        $notIf = Notification::where('id',$notificationId)->first();
+        $notification = Notification::query()->find($notificationId);
 
-        // For avoing no existing and readed notifications
-        if($notIf && !$notIf->is_read){
-            $notIf->is_read = true;
-            $notIf->save();
-            // $this->loadNotifications();
+        if ($notification && ! $notification->is_read) {
+            $notification->update(['is_read' => true]);
         }
     }
-
-
 
     public function render()
     {
         return view('livewire.services.notifications-bell', [
-        'unreadCount' => Notification::where('is_read', false)->count(),
-        'notifications' => Notification::where('is_read', false)
-            ->latest()
-            ->get(),
-    ]);
+            'unreadCount' => Notification::query()
+                ->where('is_read', false)
+                ->count(),
+            'notifications' => Notification::query()
+                ->select(['id', 'title', 'message', 'purchase_order'])
+                ->where('is_read', false)
+                ->latest()
+                ->limit(self::VISIBLE_NOTIFICATIONS_LIMIT)
+                ->get(),
+        ]);
     }
 }

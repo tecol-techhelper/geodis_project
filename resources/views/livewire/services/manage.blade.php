@@ -242,6 +242,17 @@ new #[Layout('layouts.app')] class extends Component {
                 'error' => $e->getMessage(),
             ]);
 
+            try {
+                $this->form->mount(
+                    Service::query()->findOrFail((int) $this->form->id),
+                );
+            } catch (\Throwable $refreshException) {
+                Log::warning('No se pudo refrescar el formulario después del fallo IFTSTA', [
+                    'service_id' => $this->form->id,
+                    'error' => $refreshException->getMessage(),
+                ]);
+            }
+
             flash()->title('Actualizacion parcial')->warning('Servicio actualizado, pero no se pudo enviar IFTSTA.');
             return;
         }
