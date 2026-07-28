@@ -1,4 +1,4 @@
-<div wire:poll.10s wire:key="notifications-bell" class="relative justify-center" x-data="{ open: false }">
+<div wire:poll.60s.visible wire:key="notifications-bell" class="relative justify-center" x-data="{ open: false }">
     {{-- Botón de campana --}}
     <button @click="open = !open" type="button" class="button focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
         aria-label="Ver notificaciones" :aria-expanded="open.toString()">

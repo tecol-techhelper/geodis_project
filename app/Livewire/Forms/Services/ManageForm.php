@@ -580,6 +580,7 @@ class ManageForm extends Form
 
         $dirtyIds = [];
         $insertedServiceResourceIds = [];
+        $persistedServiceResourceRows = [];
         $this->last_update_changes = [
             'status_changed' => false,
             'resource_added' => false,
@@ -587,7 +588,11 @@ class ManageForm extends Form
         ];
         $this->last_added_service_resource_ids = [];
 
-        DB::transaction(function () use (&$dirtyIds, &$insertedServiceResourceIds) {
+        DB::transaction(function () use (
+            &$dirtyIds,
+            &$insertedServiceResourceIds,
+            &$persistedServiceResourceRows,
+        ) {
             $s = Service::query()->findOrFail($this->id);
 
             $rawItem = trim((string) ($this->item ?? ''));
@@ -714,14 +719,14 @@ class ManageForm extends Form
 
             // Guarda “dirty” para que el botón Enviar sepa qué CNIs incluir en IFTSTA
             $dirtyIds = array_values(array_unique($dirtyIds));
-            $this->dirty_purchase_order_ids = $dirtyIds;
-
-            // Recarga todo (y refresca snapshot)
-            $this->reset_resource_selection = true;
-            $this->mount($s);
-            $this->dirty_purchase_order_ids = $dirtyIds;
-            $this->last_added_service_resource_ids = array_values(array_unique($insertedServiceResourceIds));
+            $persistedServiceResourceRows = $newResourceRows;
         });
+
+        $this->service_resource_rows = $persistedServiceResourceRows;
+        $this->original_service_resource_rows = $persistedServiceResourceRows;
+        $this->dirty_purchase_order_ids = $dirtyIds;
+        $this->last_added_service_resource_ids = array_values(array_unique($insertedServiceResourceIds));
+        $this->reset_resource_selection = true;
 
         return $dirtyIds;
     }
@@ -811,10 +816,12 @@ class ManageForm extends Form
                 ServiceResourceReport::withTrashed()
                     ->where('service_resource_id', $row['pivot_id'])
                     ->delete();
+                $this->additional_information[$row['row_key']]['report_id'] = null;
                 continue;
             }
 
-            $this->persistAdditionalInformationRow($service, $row);
+            $report = $this->persistAdditionalInformationRow($service, $row);
+            $this->additional_information[$row['row_key']]['report_id'] = (int) $report->id;
         }
     }
 

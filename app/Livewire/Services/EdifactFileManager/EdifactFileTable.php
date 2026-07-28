@@ -98,11 +98,6 @@ final class EdifactFileTable extends PowerGridComponent
         return [];
     }
 
-    public function hydrate(): void
-    {
-        sleep(2);
-    }
-
     private function formatPurchaseOrders(?string $purchaseOrders): string
     {
         $orders = preg_split('/\s+/', trim((string) $purchaseOrders), -1, PREG_SPLIT_NO_EMPTY);
