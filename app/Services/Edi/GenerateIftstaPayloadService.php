@@ -25,8 +25,7 @@ class GenerateIftstaPayloadService
         ?array $purchaseOrderIds = null,
         ?string $resourceId = null,
         Carbon|string|null $statusReportedAt = null
-    ): array
-    {
+    ): array {
         // Cargar TODO lo necesario (si ya viene cargado, Eloquent no repite query)
         $service->loadMissing([
             'status',
@@ -91,7 +90,7 @@ class GenerateIftstaPayloadService
         $segments[] = "UNA:+.? '";
 
         // UNB (intercambio)
-        $segments[] = $this->seg("UNB+UNOC:3+{$senderId}:22+{$receiverId}:22+{$this->formatDate('ymd')}:{$this->formatDate('Hi')}+{$interchangeRef}");
+        $segments[] = $this->seg("UNB+UNOC:3+{$senderId}:ZZ+{$receiverId}:ZZ+{$this->formatDate('ymd')}:{$this->formatDate('Hi')}+{$interchangeRef}");
 
         // UNH (mensaje)
         $segments[] = $this->seg("UNH+{$messageRef}+IFTSTA:D:97A:UN");
@@ -227,7 +226,7 @@ class GenerateIftstaPayloadService
         if (!empty($service->raw_segment) && str_starts_with((string) $service->raw_segment, 'BGM+')) {
             $bgmSegment = (string) $service->raw_segment;
         } elseif (!empty($service->consecutive)) {
-            $bgmSegment = 'BGM+335+' . $service->consecutive . '+9';
+            $bgmSegment = 'BGM+77+' . $service->consecutive . '+9';
         }
 
         if (!empty($bgmSegment)) {
