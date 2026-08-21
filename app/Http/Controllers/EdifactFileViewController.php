@@ -57,7 +57,9 @@ class EdifactFileViewController extends Controller
         }
 
         return collect($segments)
-            ->map(fn(string $segment) => trim($segment) . "'")
+            // No recortar espacios del segmento: UNA:+.? ' requiere el espacio
+            // inmediatamente antes del apóstrofo como carácter reservado.
+            ->map(fn(string $segment) => rtrim($segment, "\r\n") . "'")
             ->implode("\n") . "\n";
     }
 }
