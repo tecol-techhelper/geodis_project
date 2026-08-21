@@ -61,7 +61,7 @@ class GenerateIftstaPayloadService
         ]);
 
         $pos = $this->selectPurchaseOrders($service, $purchaseOrderIds);
-        $messagePos = $pos->take(1)->values();
+        $messagePos = $pos->values();
 
         // Si no hay CNIs a reportar, no generes basura.
         if ($messagePos->isEmpty()) {
@@ -179,7 +179,9 @@ class GenerateIftstaPayloadService
         $segments = $this->withoutBlankSegments($segments);
         $segments = $this->finalizeWithTrailers($segments, $messageRef, $interchangeRef);
 
-        $payload = implode("\n", $segments) . "\n";
+        // EDIFACT se entrega como una secuencia continua: el apóstrofo es el único
+        // separador entre segmentos. La presentación en líneas corresponde a la vista.
+        $payload = implode('', $segments);
 
         return [
             'payload' => $payload,

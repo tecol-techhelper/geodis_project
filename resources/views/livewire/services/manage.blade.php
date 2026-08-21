@@ -98,7 +98,7 @@ new #[Layout('layouts.app')] class extends Component {
 
         try {
             $service = Service::query()
-                ->with(['status:id,status_name,edifact_code', 'resources', 'purchase_orders:id,service_id'])
+                ->with(['status:id,status_name,edifact_code', 'resources', 'purchase_orders'])
                 ->findOrFail((int) $this->form->id);
 
             $resources = $service->resources ?? collect();
