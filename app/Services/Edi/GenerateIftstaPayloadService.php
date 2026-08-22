@@ -61,7 +61,7 @@ class GenerateIftstaPayloadService
         ]);
 
         $pos = $this->selectPurchaseOrders($service, $purchaseOrderIds);
-        $messagePos = $pos->values();
+        $messagePos = $pos->take(1)->values();
 
         // Si no hay CNIs a reportar, no generes basura.
         if ($messagePos->isEmpty()) {

@@ -459,9 +459,11 @@ new #[Layout('layouts.app')] class extends Component {
 
     private function buildIftstaFileName(Service $service, string $interchangeRef): string
     {
-        $timestamp = now()->format('YmdHis');
+        $generatedAt = now();
+        $generationDate = $generatedAt->format('Ymd');
+        $generationTime = $generatedAt->format('His');
         $consecutive = $service->consecutive ?? 'NA';
-        return "ECOPETROL_TRANSTECOL_IFTSTA_{$timestamp}_{$consecutive}.edi";
+        return "ECP_MPO_SHIPST_{$generationDate}_{$generationTime}_{$consecutive}.edi";
     }
 
     private function markResourcesWithStatus(
