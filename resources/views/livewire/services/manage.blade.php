@@ -463,7 +463,7 @@ new #[Layout('layouts.app')] class extends Component {
         $generationDate = $generatedAt->format('Ymd');
         $generationTime = $generatedAt->format('His');
         $consecutive = $service->consecutive ?? 'NA';
-        return "ECP_MPO_SHIPST_{$generationDate}_{$generationTime}_{$consecutive}.edi";
+        return "ECP_MPO_SHIPST_{$generationDate}_{$generationTime}_{$consecutive}.xml";
     }
 
     private function markResourcesWithStatus(
