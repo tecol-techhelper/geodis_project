@@ -184,33 +184,39 @@ new #[Layout('layouts.app')] class extends Component {
                     $meta = (array) ($result['meta'] ?? []);
                     $interchangeRef = (string) ($meta['interchange_ref'] ?? now()->format('YmdHis'));
 
-                    $transmissionId = $this->uniqueOutgoingTransmissionId($interchangeRef);
-                    $fileName = $this->buildIftstaFileName($service, $interchangeRef);
+                    foreach ($this->iftstaFileExtensions() as $extension) {
+                        $transmissionId = $this->uniqueOutgoingTransmissionId("{$interchangeRef}-" . Str::upper($extension));
 
-                    $edifactFile = EdifactFile::query()->create([
-                        'transmission_id' => $transmissionId,
-                        'message_type' => EdifactFile::TYPE_IFTSTA,
-                        'direction' => EdifactFile::DIRECTION_OUT,
-                        'status' => EdifactFile::STATUS_PENDING,
-                        'file_name' => $fileName,
-                        'purchase_order' => $service->purchase_orders()->whereIn('id', $dirtyPurchaseOrderIds)->pluck('purchase_order_number')->filter()->join(' '),
-                        'service_id' => $service->id,
-                    ]);
+                        $edifactFile = EdifactFile::query()->create([
+                            'transmission_id' => $transmissionId,
+                            'message_type' => EdifactFile::TYPE_IFTSTA,
+                            'direction' => EdifactFile::DIRECTION_OUT,
+                            'status' => EdifactFile::STATUS_PENDING,
+                            'file_name' => "pending.{$extension}",
+                            'purchase_order' => $service->purchase_orders()->whereIn('id', $dirtyPurchaseOrderIds)->pluck('purchase_order_number')->filter()->join(' '),
+                            'service_id' => $service->id,
+                        ]);
 
-                    UploadEdifactToSftpJob::dispatchSync(edifactFileId: (int) $edifactFile->id, payload: $payload);
-                    $edifactFile->refresh();
+                        $edifactFile->update([
+                            'file_name' => $this->buildIftstaFileName((int) $edifactFile->id, $extension),
+                        ]);
 
-                    if ($edifactFile->status !== EdifactFile::STATUS_SENT) {
-                        throw new \RuntimeException("El IFTSTA #{$edifactFile->id} no quedo enviado por SFTP.");
+                        UploadEdifactToSftpJob::dispatchSync(edifactFileId: (int) $edifactFile->id, payload: $payload);
+                        $edifactFile->refresh();
+
+                        if ($edifactFile->status !== EdifactFile::STATUS_SENT) {
+                            throw new \RuntimeException("El IFTSTA #{$edifactFile->id} no quedo enviado por SFTP.");
+                        }
+
+                        Log::info('IFTSTA generado y job de envio despachado', [
+                            'service_id' => $service->id,
+                            'edifact_file_id' => $edifactFile->id,
+                            'transmission_id' => $transmissionId,
+                            'purchase_orders' => $dirtyPurchaseOrderIds,
+                            'resource_id' => $resourceId,
+                            'extension' => $extension,
+                        ]);
                     }
-
-                    Log::info('IFTSTA generado y job de envio despachado', [
-                        'service_id' => $service->id,
-                        'edifact_file_id' => $edifactFile->id,
-                        'transmission_id' => $transmissionId,
-                        'purchase_orders' => $dirtyPurchaseOrderIds,
-                        'resource_id' => $resourceId,
-                    ]);
 
                     if (!$statusReport) {
                         $statusReport = $this->persistServiceStatusReport($service, $statusReportedAt);
@@ -457,13 +463,24 @@ new #[Layout('layouts.app')] class extends Component {
         return $candidate;
     }
 
-    private function buildIftstaFileName(Service $service, string $interchangeRef): string
+    private function iftstaFileExtensions(): array
+    {
+        $extensions = explode(',', (string) config('edi.iftsta.file_extensions', 'xml'));
+
+        return collect($extensions)
+            ->map(fn (string $extension) => strtolower(trim($extension)))
+            ->filter(fn (string $extension) => in_array($extension, ['edi', 'xml'], true))
+            ->unique()
+            ->values()
+            ->all() ?: ['xml'];
+    }
+
+    private function buildIftstaFileName(int $edifactFileId, string $extension): string
     {
         $generatedAt = now();
         $generationDate = $generatedAt->format('Ymd');
         $generationTime = $generatedAt->format('His');
-        $consecutive = $service->consecutive ?? 'NA';
-        return "ECP_MPO_SHIPST_{$generationDate}_{$generationTime}_{$consecutive}.xml";
+        return "ECP_MPO_SHIPST_{$generationDate}_{$generationTime}_{$edifactFileId}.{$extension}";
     }
 
     private function markResourcesWithStatus(
