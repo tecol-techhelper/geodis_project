@@ -36,6 +36,8 @@ return [
     'iftsta' => [
         // Primer componente del STS+X+Y
         'sts_type' => env('EDI_IFTSTA_STS_TYPE', '1'),
+        // Extensiones de salida, separadas por coma: edi, xml o edi,xml.
+        'file_extensions' => env('EDI_IFTSTA_FILE_EXTENSIONS', 'xml'),
     ],
 
     // Segmentos a omitir en generaciÃ³n (por tag EDIFACT)
