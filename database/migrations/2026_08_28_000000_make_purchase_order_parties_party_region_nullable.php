@@ -1,0 +1,27 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('purchase_order_parties', function (Blueprint $table) {
+            $table->string('party_region')->nullable()->change();
+        });
+    }
+
+    public function down(): void
+    {
+        DB::table('purchase_order_parties')
+            ->whereNull('party_region')
+            ->update(['party_region' => '']);
+
+        Schema::table('purchase_order_parties', function (Blueprint $table) {
+            $table->string('party_region')->nullable(false)->change();
+        });
+    }
+};

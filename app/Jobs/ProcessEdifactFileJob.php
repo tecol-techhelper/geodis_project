@@ -459,7 +459,7 @@ class ProcessEdifactFileJob implements ShouldQueue
                             'party_name'         => $party['party_name'] ?? null,
                             'party_street'       => $party['party_street'] ?? null,
                             'party_city'         => $party['party_city'] ?? 'UNKNOWN',
-                            'party_region'       => $party['party_region'] ?? 'UNKNOWN',
+                            'party_region'       => $party['party_region'] ?? null,
                             'party_country_code' => $party['party_country_code'] ?? 'UN',
                             'party_type_id'      => $partyTypeId,
                             'purchase_order_id'  => $purchaseOrderId,
