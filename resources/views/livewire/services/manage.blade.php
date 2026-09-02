@@ -7,6 +7,7 @@ use App\Models\Resource;
 use App\Models\ServiceStatusReport;
 use App\Models\StatusPurpose;
 use App\Jobs\UploadEdifactToSftpJob;
+use App\Services\Edi\IftstaResourceReferenceKey;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -142,7 +143,12 @@ new #[Layout('layouts.app')] class extends Component {
                 /** @var GenerateIftstaPayloadService $iftsta */
                 $iftsta = app(GenerateIftstaPayloadService::class);
 
-                $reportTasks = $newResourceReports
+                $resourcesToReport = $newResourceReports
+                    ->concat($selectedExistingResourceReports)
+                    ->unique(fn($resourceItem) => (int) $resourceItem->pivot->id)
+                    ->values();
+
+                $reportTasks = $resourcesToReport
                     ->map(fn($resourceItem) => [
                         'resource' => $resourceItem,
                         'resource_id' => trim((string) ($resourceItem->resource_id ?? '')),
@@ -150,7 +156,7 @@ new #[Layout('layouts.app')] class extends Component {
                     ->values()
                     ->all();
 
-                $statusOnlyRequired = ($updateChanges['status_changed'] ?? false) && $newResourceReports->isEmpty();
+                $statusOnlyRequired = ($updateChanges['status_changed'] ?? false) && $reportTasks === [];
 
                 if ($statusOnlyRequired) {
                     $reportTasks[] = [
@@ -490,15 +496,20 @@ new #[Layout('layouts.app')] class extends Component {
         ?string $reportedStatusName,
     ): void {
         $reportedAt ??= now();
+        $keyGenerator = app(IftstaResourceReferenceKey::class);
 
         $resources
             ->filter(fn($resourceItem) => $resourceItem->pivot?->id)
             ->unique(fn($resourceItem) => (int) $resourceItem->pivot->id)
-            ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName) {
+            ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName, $keyGenerator) {
                 $resourceStatusAttributes = [
                     'service_resource_id' => (int) $resourceItem->pivot->id,
                     'service_status_report_id' => $statusReport->id,
                 ];
+                $referenceKey = $keyGenerator->make(
+                    (string) $resourceItem->resource_id,
+                    (int) $statusReport->status_id,
+                );
 
                 $existingResourceStatus = DB::table('service_resource_status_reports')
                     ->where($resourceStatusAttributes)
@@ -508,11 +519,13 @@ new #[Layout('layouts.app')] class extends Component {
                     DB::table('service_resource_status_reports')
                         ->where($resourceStatusAttributes)
                         ->update([
+                            'iftsta_reference_key' => $referenceKey,
                             'reported_at' => $reportedAt,
                             'updated_at' => now(),
                         ]);
                 } else {
                     DB::table('service_resource_status_reports')->insert($resourceStatusAttributes + [
+                        'iftsta_reference_key' => $referenceKey,
                         'reported_at' => $reportedAt,
                         'created_at' => now(),
                         'updated_at' => now(),
