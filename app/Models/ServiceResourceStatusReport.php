@@ -10,7 +10,6 @@ class ServiceResourceStatusReport extends Model
     protected $fillable = [
         'service_resource_id',
         'service_status_report_id',
-        'iftsta_reference_key',
         'reported_at',
     ];
 

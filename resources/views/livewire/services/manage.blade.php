@@ -7,7 +7,6 @@ use App\Models\Resource;
 use App\Models\ServiceStatusReport;
 use App\Models\StatusPurpose;
 use App\Jobs\UploadEdifactToSftpJob;
-use App\Services\Edi\IftstaResourceReferenceKey;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -151,7 +150,7 @@ new #[Layout('layouts.app')] class extends Component {
                 $reportTasks = $resourcesToReport
                     ->map(fn($resourceItem) => [
                         'resource' => $resourceItem,
-                        'resource_id' => trim((string) ($resourceItem->resource_id ?? '')),
+                        'resource_reference' => trim((string) ($resourceItem->resource_id ?? '')) . '-' . (int) $resourceItem->id,
                     ])
                     ->values()
                     ->all();
@@ -161,7 +160,7 @@ new #[Layout('layouts.app')] class extends Component {
                 if ($statusOnlyRequired) {
                     $reportTasks[] = [
                         'resource' => null,
-                        'resource_id' => null,
+                        'resource_reference' => null,
                     ];
                 }
 
@@ -173,16 +172,16 @@ new #[Layout('layouts.app')] class extends Component {
                 }
 
                 foreach ($reportTasks as $reportTask) {
-                    $resourceId = $reportTask['resource_id'];
+                    $resourceReference = $reportTask['resource_reference'];
 
-                    $result = $iftsta->generate($service, $dirtyPurchaseOrderIds, $resourceId, $statusReportedAt);
+                    $result = $iftsta->generate($service, $dirtyPurchaseOrderIds, $resourceReference, $statusReportedAt);
 
                     $payload = (string) ($result['payload'] ?? '');
                     if ($payload === '') {
                         Log::warning('No se genero payload IFTSTA luego de cambiar estados', [
                             'service_id' => $service->id,
                             'purchase_orders' => $dirtyPurchaseOrderIds,
-                            'resource_id' => $resourceId,
+                            'resource_reference' => $resourceReference,
                         ]);
                         continue;
                     }
@@ -219,7 +218,7 @@ new #[Layout('layouts.app')] class extends Component {
                             'edifact_file_id' => $edifactFile->id,
                             'transmission_id' => $transmissionId,
                             'purchase_orders' => $dirtyPurchaseOrderIds,
-                            'resource_id' => $resourceId,
+                            'resource_reference' => $resourceReference,
                             'extension' => $extension,
                         ]);
                     }
@@ -496,20 +495,15 @@ new #[Layout('layouts.app')] class extends Component {
         ?string $reportedStatusName,
     ): void {
         $reportedAt ??= now();
-        $keyGenerator = app(IftstaResourceReferenceKey::class);
 
         $resources
             ->filter(fn($resourceItem) => $resourceItem->pivot?->id)
             ->unique(fn($resourceItem) => (int) $resourceItem->pivot->id)
-            ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName, $keyGenerator) {
+            ->each(function ($resourceItem) use ($statusReport, $reportedAt, $reportedStatusName) {
                 $resourceStatusAttributes = [
                     'service_resource_id' => (int) $resourceItem->pivot->id,
                     'service_status_report_id' => $statusReport->id,
                 ];
-                $referenceKey = $keyGenerator->make(
-                    (string) $resourceItem->resource_id,
-                    (int) $statusReport->status_id,
-                );
 
                 $existingResourceStatus = DB::table('service_resource_status_reports')
                     ->where($resourceStatusAttributes)
@@ -519,13 +513,11 @@ new #[Layout('layouts.app')] class extends Component {
                     DB::table('service_resource_status_reports')
                         ->where($resourceStatusAttributes)
                         ->update([
-                            'iftsta_reference_key' => $referenceKey,
                             'reported_at' => $reportedAt,
                             'updated_at' => now(),
                         ]);
                 } else {
                     DB::table('service_resource_status_reports')->insert($resourceStatusAttributes + [
-                        'iftsta_reference_key' => $referenceKey,
                         'reported_at' => $reportedAt,
                         'created_at' => now(),
                         'updated_at' => now(),

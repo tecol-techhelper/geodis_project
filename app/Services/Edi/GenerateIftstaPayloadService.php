@@ -9,10 +9,6 @@ use Illuminate\Support\Str;
 
 class GenerateIftstaPayloadService
 {
-    public function __construct(
-        private readonly IftstaResourceReferenceKey $resourceReferenceKey,
-    ) {}
-
     /**
      * Genera el payload IFTSTA para un Service.
      *
@@ -20,14 +16,14 @@ class GenerateIftstaPayloadService
      *
      * @param  \App\Models\Service  $service  Service ya existente (idealmente con relaciones cargadas)
      * @param  array<int>|null      $purchaseOrderIds  Si se pasa, solo incluye esos CNI. Si null, usa "pendientes".
-     * @param  string|null          $resourceId  Si se pasa, solo incluye ese RFF+FS (1 por mensaje).
+     * @param  string|null          $resourceReference  Si se pasa, solo incluye ese RFF+FS (1 por mensaje).
      * @param  Carbon|string|null   $statusReportedAt  Fecha/hora manual para DTM+7.
      * @return array{payload:string, meta:array<string,mixed>}
      */
     public function generate(
         Service $service,
         ?array $purchaseOrderIds = null,
-        ?string $resourceId = null,
+        ?string $resourceReference = null,
         Carbon|string|null $statusReportedAt = null
     ): array {
         // Cargar TODO lo necesario (si ya viene cargado, Eloquent no repite query)
@@ -88,15 +84,7 @@ class GenerateIftstaPayloadService
         $receiverId = config('edi.unb.receiver_id', config('geodis.edifact.receiver_id', 'GEOSCOT'));
         $stsType    = config('edi.iftsta.sts_type', config('geodis.edifact.iftsta_sts_type', '1')); // el primer componente del STS+X+Y
 
-        $resourceId = $resourceId !== null ? trim($resourceId) : null;
-        $resourceReference = null;
-
-        if ($resourceId !== null && $resourceId !== '') {
-            $resourceReference = $resourceId . '-' . $this->resourceReferenceKey->make(
-                $resourceId,
-                (int) $service->status_id,
-            );
-        }
+        $resourceReference = $resourceReference !== null ? trim($resourceReference) : null;
 
         $segments = [];
 
@@ -165,7 +153,7 @@ class GenerateIftstaPayloadService
 
                 // RFF+FS: solo una vez, en el primer bloque CNI.
                 if ($isFirstCni) {
-                    if ($resourceId !== null && $resourceId !== '') {
+                    if ($resourceReference !== null && $resourceReference !== '') {
                         $segments[] = $this->seg('RFF+FS:' . $resourceReference);
                     }
                 }
@@ -203,7 +191,6 @@ class GenerateIftstaPayloadService
                 'message_type' => 'IFTSTA',
                 'interchange_ref' => $interchangeRef,
                 'message_ref' => $messageRef,
-                'resource_id' => $resourceId,
                 'resource_reference' => $resourceReference,
                 'status_reported_at' => $statusReportedAt ? (string) $statusReportedAt : null,
                 'purchase_orders' => $messagePos->pluck('id')->values()->all(),
