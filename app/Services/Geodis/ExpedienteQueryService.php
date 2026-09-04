@@ -58,6 +58,7 @@ class ExpedienteQueryService
                     'service_parties.service_id',
                     'service_parties.party_type_id',
                     'service_parties.party_street',
+                    'service_parties.party_city',
                 ])
                 ->whereHas('party_type', fn ($partyTypeQuery) => $partyTypeQuery
                     ->where('party_qualifier', 'PW'))
@@ -78,7 +79,7 @@ class ExpedienteQueryService
                     'order_references.order_reference_value',
                 ])
                 ->whereHas('reference_type', fn ($referenceTypeQuery) => $referenceTypeQuery
-                    ->where('reference_type_code', 'ACD'))
+                    ->whereIn('reference_type_code', ['ACD', 'AGW', 'COI']))
                 ->orderBy('order_references.id'),
             'service.purchase_orders.order_references.reference_type' => fn ($query) => $query->select([
                 'reference_types.id',
@@ -90,6 +91,7 @@ class ExpedienteQueryService
                     'purchase_order_parties.purchase_order_id',
                     'purchase_order_parties.party_type_id',
                     'purchase_order_parties.party_street',
+                    'purchase_order_parties.party_city',
                 ])
                 ->whereHas('party_type', fn ($partyTypeQuery) => $partyTypeQuery
                     ->where('party_qualifier', 'DP'))

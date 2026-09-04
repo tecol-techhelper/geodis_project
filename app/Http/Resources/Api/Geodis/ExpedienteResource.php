@@ -44,6 +44,8 @@ class ExpedienteResource extends JsonResource
             'so' => $this->service?->consecutive !== null
                 ? (string) $this->service->consecutive
                 : null,
+            'n_consolidado' => $this->consolidatedNumbers(),
+            'orden_compra' => $this->purchaseOrderNumbers(),
             'item' => $catalogResource?->id !== null
                 ? (string) $catalogResource->id
                 : null,
@@ -51,7 +53,7 @@ class ExpedienteResource extends JsonResource
             'recurso' => $catalogResource?->resource_id,
             'administrativo' => $this->administrativeData(),
             'regional' => null,
-            'origen' => $this->service?->service_parties?->first()?->party_street,
+            'origen' => $this->service?->service_parties?->first()?->party_city,
             'destino' => $this->destination(),
             'remesa' => $this->report?->remesa_transporte,
             'fecha_de_posicionamiento' => $this->service?->positioning_date?->format('Y-m-d'),
@@ -77,10 +79,10 @@ class ExpedienteResource extends JsonResource
 
         $plate = $this->report->vehicle?->plate;
         $personnel = $this->report->personnel
-            ->filter(fn ($reportedPersonnel) => $reportedPersonnel->operator !== null)
+            ->filter(fn($reportedPersonnel) => $reportedPersonnel->operator !== null)
             ->map(function ($reportedPersonnel) use ($plate): array {
                 $operator = $reportedPersonnel->operator;
-                $operatorName = trim($operator->first_name.' '.$operator->last_name);
+                $operatorName = trim($operator->first_name . ' ' . $operator->last_name);
 
                 return [
                     'placa' => $plate,
@@ -111,16 +113,16 @@ class ExpedienteResource extends JsonResource
         } else {
             $resourceId = $this->resource->resource?->id;
             $candidatePurchaseOrders = $purchaseOrders->filter(
-                fn ($purchaseOrder) => $resourceId !== null
+                fn($purchaseOrder) => $resourceId !== null
                     && $purchaseOrder->resources->contains('id', $resourceId),
             );
         }
 
         $destinations = $candidatePurchaseOrders
-            ->flatMap(fn ($purchaseOrder) => $purchaseOrder->purchase_order_parties)
-            ->pluck('party_street')
-            ->filter(fn ($destination) => filled($destination))
-            ->map(fn ($destination) => trim((string) $destination))
+            ->flatMap(fn($purchaseOrder) => $purchaseOrder->purchase_order_parties)
+            ->pluck('party_city')
+            ->filter(fn($destination) => filled($destination))
+            ->map(fn($destination) => trim((string) $destination))
             ->unique()
             ->values();
 
@@ -136,7 +138,9 @@ class ExpedienteResource extends JsonResource
         }
 
         $flows = $purchaseOrders->map(function ($purchaseOrder): ?string {
-            $references = $purchaseOrder->order_references;
+            $references = $purchaseOrder->order_references->filter(
+                fn($reference) => strtoupper(trim((string) $reference->reference_type?->reference_type_code)) === 'ACD',
+            );
 
             if ($references->count() !== 1) {
                 return null;
@@ -158,6 +162,38 @@ class ExpedienteResource extends JsonResource
         return is_string($flow) && isset(self::FLOW_STATUSES[$flow]) ? $flow : null;
     }
 
+    private function consolidatedNumbers(): ?string
+    {
+        return $this->referenceValues('AGW', function (string $value): ?string {
+            $parts = array_map('trim', explode('/', $value, 2));
+
+            return ($parts[1] ?? '') !== '' ? $parts[1] : null;
+        });
+    }
+
+    private function purchaseOrderNumbers(): ?string
+    {
+        return $this->referenceValues('COI', fn(string $value): ?string => trim(explode('/', $value, 2)[0] ?? '') ?: null);
+    }
+
+    /**
+     * @param  callable(string): ?string  $valueExtractor
+     */
+    private function referenceValues(string $referenceTypeCode, callable $valueExtractor): ?string
+    {
+        $values = ($this->service?->purchase_orders ?? collect())
+            ->flatMap(fn($purchaseOrder) => $purchaseOrder->order_references)
+            ->filter(
+                fn($reference) => strtoupper(trim((string) $reference->reference_type?->reference_type_code)) === $referenceTypeCode,
+            )
+            ->map(fn($reference) => $valueExtractor(trim((string) $reference->order_reference_value)))
+            ->filter(fn($value) => filled($value))
+            ->unique()
+            ->values();
+
+        return $values->isEmpty() ? null : $values->implode('/');
+    }
+
     private function reportedDateFor(?string $flow, string $event): ?string
     {
         if ($flow === null || ! isset(self::FLOW_STATUSES[$flow][$event])) {
@@ -177,7 +213,7 @@ class ExpedienteResource extends JsonResource
         });
 
         $reportedAt = $matchingReports
-            ->sortByDesc(fn (ServiceResourceStatusReport $report) => $report->reported_at?->getTimestamp() ?? 0)
+            ->sortByDesc(fn(ServiceResourceStatusReport $report) => $report->reported_at?->getTimestamp() ?? 0)
             ->first()?->reported_at;
 
         return $reportedAt?->format('Y-m-d');
