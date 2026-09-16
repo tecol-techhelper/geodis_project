@@ -70,6 +70,10 @@
                         class="block border-l-4 border-transparent px-12 py-2 text-sm text-gray-800 transition hover:border-gray-700 hover:bg-white focus:border-gray-700 focus:bg-white focus:outline-none">
                         Configuración de recursos
                     </a>
+                    <a href="{{ route('regions.index') }}"
+                        class="block border-l-4 border-transparent px-12 py-2 text-sm text-gray-800 transition hover:border-gray-700 hover:bg-white focus:border-gray-700 focus:bg-white focus:outline-none">
+                        Regionales
+                    </a>
                     <a href="{{ route('edifact.viewer') }}"
                         class="block border-l-4 border-transparent px-12 py-2 text-sm text-gray-800 transition hover:border-gray-700 hover:bg-white focus:border-gray-700 focus:bg-white focus:outline-none">
                         Mensajes extraídos
