@@ -1,7 +1,5 @@
 /.phpunit.cache
 /.phpunit.result.cache
-/phpunit.xml
-/tests
 /coverage
 /database/factories
 /.env.testing
@@ -48,3 +46,4 @@ public/error_log
 AGENTS.md
 /docs
 /tests
+phpunit.xml
