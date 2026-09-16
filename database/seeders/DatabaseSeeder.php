@@ -40,6 +40,7 @@ class DatabaseSeeder extends Seeder
             ProductIdentifierTypeSeeder::class,
             DeliveryTermCatalogSeeder::class,
             PartyTypeSeeder::class,
+            RegionOriginSeeder::class,
             ResourceSeeder::class,
             PersonnelRoleSeeder::class,
             ResourcePersonnelRequirementSeeder::class,

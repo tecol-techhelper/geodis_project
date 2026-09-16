@@ -52,7 +52,7 @@ class ExpedienteResource extends JsonResource
             'item_geodis' => null,
             'recurso' => $catalogResource?->resource_id,
             'administrativo' => $this->administrativeData(),
-            'regional' => null,
+            'regional' => $this->resolved_regional,
             'origen' => $this->service?->service_parties?->first()?->party_city,
             'destino' => $this->destination(),
             'remesa' => $this->report?->remesa_transporte,

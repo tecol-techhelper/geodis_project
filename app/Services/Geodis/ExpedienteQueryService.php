@@ -9,6 +9,11 @@ use Illuminate\Database\Eloquent\Builder;
 
 class ExpedienteQueryService
 {
+    public function __construct(
+        private readonly RegionResolver $regionResolver,
+        private readonly OriginNormalizer $originNormalizer,
+    ) {}
+
     /**
      * @param  array{
      *     so:?string,
@@ -34,10 +39,14 @@ class ExpedienteQueryService
 
         $this->applyFilters($query, $filters);
 
-        return $query->paginate(
+        $paginator = $query->paginate(
             perPage: $filters['per_page'],
             page: $filters['page'],
         );
+
+        $this->resolvePageRegions($paginator->getCollection());
+
+        return $paginator;
     }
 
     /**
@@ -196,6 +205,28 @@ class ExpedienteQueryService
                             );
                     });
             });
+        }
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, ServiceResource>  $serviceResources
+     */
+    private function resolvePageRegions(\Illuminate\Support\Collection $serviceResources): void
+    {
+        $originsByResource = $serviceResources->mapWithKeys(function (ServiceResource $serviceResource): array {
+            $origin = $serviceResource->service?->service_parties?->first()?->party_city;
+
+            return [$serviceResource->id => $origin];
+        });
+
+        $regionsByOrigin = $this->regionResolver->resolveMany($originsByResource->all());
+
+        foreach ($serviceResources as $serviceResource) {
+            $normalizedOrigin = $this->originNormalizer->normalize($originsByResource->get($serviceResource->id));
+            $serviceResource->setAttribute(
+                'resolved_regional',
+                $normalizedOrigin !== null ? $regionsByOrigin->get($normalizedOrigin)?->name : null,
+            );
         }
     }
 }

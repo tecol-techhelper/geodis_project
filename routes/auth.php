@@ -20,9 +20,6 @@ Route::middleware(['guest', 'blocked'])->group(function () {
         ->name('password.reset');
 });
 
-
-
-
 Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
     Volt::route('/userIndex/form/{user?}', 'pages.users.edit-user')
         ->name('user.edit');
@@ -54,6 +51,9 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
 
         Volt::route('resource-report-configuration', 'pages.admin.resource-report-configuration')
             ->name('resources.report-configuration');
+
+        Volt::route('regionales', 'pages.admin.regions.index')
+            ->name('regions.index');
     });
 
     Route::middleware(['blocked'])->group(function () {
@@ -69,9 +69,6 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
             ->name('edifactfiles.view');
     });
 });
-
-
-
 
 // Route::middleware('auth')->group(function () {
 //     Volt::route('verify-email', 'pages.auth.verify-email')
