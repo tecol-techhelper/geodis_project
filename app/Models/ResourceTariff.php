@@ -20,10 +20,18 @@ class ResourceTariff extends Model
         'id' => 'integer',
         'resource_id' => 'integer',
         'region_id' => 'integer',
+        'region_scope_key' => 'integer',
         'operation_concept_id' => 'integer',
         'unit_price' => 'decimal:6',
         'is_active' => 'boolean',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (self $tariff): void {
+            $tariff->region_scope_key = $tariff->region_id ?? 0;
+        });
+    }
 
     public function resource(): BelongsTo
     {
