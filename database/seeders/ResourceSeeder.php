@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\Resource;
+use App\Models\ResourceOperation;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -168,6 +169,24 @@ class ResourceSeeder extends Seeder
 
         $rows = array_map(function (array $row) use ($reportMasks) {
             $row['required_report_mask'] = $reportMasks[$row['resource_id']];
+            return $row;
+        }, $rows);
+
+        $operationIds = ResourceOperation::query()
+            ->whereIn('name', array_unique(array_column($rows, 'resource_operation')))
+            ->pluck('id', 'name');
+
+        $rows = array_map(function (array $row) use ($operationIds): array {
+            $operationName = $row['resource_operation'];
+            $operationId = $operationIds->get($operationName);
+
+            if ($operationId === null) {
+                throw new RuntimeException("Resource operation not found: {$operationName}.");
+            }
+
+            unset($row['resource_operation']);
+            $row['resource_operation_id'] = $operationId;
+
             return $row;
         }, $rows);
 

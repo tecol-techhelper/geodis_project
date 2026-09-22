@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\Geodis\ExpedienteIndexRequest;
 use App\Http\Resources\Api\Geodis\ExpedienteResource;
 use App\Services\Geodis\ExpedienteQueryService;
+use App\Services\Geodis\ExpedienteJsonEncoder;
 use Illuminate\Http\JsonResponse;
 
 class ExpedienteController extends Controller
@@ -13,10 +14,11 @@ class ExpedienteController extends Controller
     public function index(
         ExpedienteIndexRequest $request,
         ExpedienteQueryService $queryService,
+        ExpedienteJsonEncoder $jsonEncoder,
     ): JsonResponse {
         $paginator = $queryService->paginate($request->normalizedFilters());
 
-        return response()->json([
+        return JsonResponse::fromJsonString($jsonEncoder->encode([
             'data' => ExpedienteResource::collection($paginator->getCollection())->resolve($request),
             'meta' => [
                 'current_page' => $paginator->currentPage(),
@@ -24,7 +26,7 @@ class ExpedienteController extends Controller
                 'total' => $paginator->total(),
                 'last_page' => $paginator->lastPage(),
             ],
-        ]);
+        ]));
     }
 
     public function ping(): JsonResponse

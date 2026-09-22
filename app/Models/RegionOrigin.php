@@ -10,20 +10,25 @@ class RegionOrigin extends Model
 {
     protected $fillable = [
         'region_id',
-        'origin',
-        'normalized_origin',
+        'origin_id',
         'is_active',
     ];
 
     protected $casts = [
         'id' => 'integer',
         'region_id' => 'integer',
+        'origin_id' => 'integer',
         'is_active' => 'boolean',
     ];
 
     public function region(): BelongsTo
     {
         return $this->belongsTo(Region::class);
+    }
+
+    public function catalogueOrigin(): BelongsTo
+    {
+        return $this->belongsTo(Origin::class, 'origin_id');
     }
 
     public function scopeActive(Builder $query): Builder

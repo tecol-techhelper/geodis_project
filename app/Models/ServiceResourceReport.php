@@ -62,6 +62,12 @@ class ServiceResourceReport extends Model
         return $this->hasMany(ServiceResourceReportPersonnel::class);
     }
 
+    public function lines(): HasMany
+    {
+        return $this->hasMany(ServiceResourceReportLine::class)
+            ->orderBy('id');
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

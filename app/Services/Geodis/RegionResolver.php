@@ -22,7 +22,7 @@ class RegionResolver
 
         return RegionOrigin::query()
             ->active()
-            ->where('normalized_origin', $normalizedOrigin)
+            ->whereHas('catalogueOrigin', fn ($query) => $query->where('normalized_origin', $normalizedOrigin))
             ->whereHas('region', fn ($query) => $query->active())
             ->with('region')
             ->first()?->region;
@@ -46,12 +46,13 @@ class RegionResolver
 
         return RegionOrigin::query()
             ->active()
-            ->whereIn('normalized_origin', $normalizedOrigins)
+            ->whereHas('catalogueOrigin', fn ($query) => $query->whereIn('normalized_origin', $normalizedOrigins))
             ->whereHas('region', fn ($query) => $query->active())
-            ->with('region:id,name,is_active')
+            ->with(['catalogueOrigin:id,normalized_origin', 'region:id,name,is_active'])
             ->get()
+            ->filter(fn (RegionOrigin $regionOrigin) => $regionOrigin->catalogueOrigin !== null)
             ->mapWithKeys(fn (RegionOrigin $regionOrigin) => [
-                $regionOrigin->normalized_origin => $regionOrigin->region,
+                $regionOrigin->catalogueOrigin->normalized_origin => $regionOrigin->region,
             ]);
     }
 }

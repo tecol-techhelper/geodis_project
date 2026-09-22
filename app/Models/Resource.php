@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -19,13 +20,14 @@ class Resource extends Model
     protected $fillable = [
         'resource_id',
         'resource_name',
-        'resource_operation',
+        'resource_operation_id',
         'required_report_mask',
     ];
 
     protected $casts = [
         'id' => 'integer',
         'required_report_mask' => 'integer',
+        'resource_operation_id' => 'integer',
     ];
 
     public function requiresVehicle(): bool
@@ -64,6 +66,11 @@ class Resource extends Model
             ->withTimestamps();
     }
 
+    public function operation(): BelongsTo
+    {
+        return $this->belongsTo(ResourceOperation::class, 'resource_operation_id');
+    }
+
     public function services(): BelongsToMany
     {
         return $this->belongsToMany(Service::class, 'service_resource', 'resource_id', 'service_id')
@@ -81,5 +88,10 @@ class Resource extends Model
         return $this->hasMany(ResourcePersonnelRequirement::class)
             ->orderBy('sort_order')
             ->orderBy('id');
+    }
+
+    public function tariffs(): HasMany
+    {
+        return $this->hasMany(ResourceTariff::class);
     }
 }
