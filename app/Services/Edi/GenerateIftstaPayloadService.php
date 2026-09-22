@@ -135,11 +135,11 @@ class GenerateIftstaPayloadService
                 $segments[] = $this->seg("STS+{$stsType}+{$edifactCode}");
             }
 
-            // 3.1) RFF (SRN, ACL y ACD del servicio) justo despues de STS
+            // 3.1) RFF (solo SRN del servicio) justo despues de STS
             if (!$this->shouldOmitSegment('RFF')) {
                 foreach (($po->order_references ?? collect()) as $rff) {
                     $refType = $rff->reference_type?->reference_type_code ?? null;
-                    if (!in_array($refType, ['SRN', 'ACL', 'ACD'], true)) {
+                    if ($refType !== 'SRN') {
                         continue;
                     }
                     if (!empty($rff->raw_segment)) {
@@ -147,7 +147,7 @@ class GenerateIftstaPayloadService
                         continue;
                     }
                     if (!empty($rff->order_reference_value)) {
-                        $segments[] = $this->seg('RFF+' . $refType . ':' . $rff->order_reference_value);
+                        $segments[] = $this->seg('RFF+SRN:' . $rff->order_reference_value);
                     }
                 }
 
