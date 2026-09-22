@@ -41,7 +41,9 @@ class DatabaseSeeder extends Seeder
             DeliveryTermCatalogSeeder::class,
             PartyTypeSeeder::class,
             RegionOriginSeeder::class,
+            ResourceOperationSeeder::class,
             ResourceSeeder::class,
+            OperationConceptSeeder::class,
             PersonnelRoleSeeder::class,
             ResourcePersonnelRequirementSeeder::class,
         ]);

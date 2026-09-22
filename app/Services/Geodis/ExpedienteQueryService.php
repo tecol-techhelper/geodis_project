@@ -115,7 +115,9 @@ class ExpedienteQueryService
             'resource' => fn ($query) => $query->select([
                 'resources.id',
                 'resources.resource_id',
+                'resources.resource_operation_id',
             ]),
+            'resource.operation:id,name',
             'report' => fn ($query) => $query->select([
                 'service_resource_reports.id',
                 'service_resource_reports.service_resource_id',
@@ -127,6 +129,10 @@ class ExpedienteQueryService
                 'vehicles.id',
                 'vehicles.plate',
             ]),
+            'report.lines:id,service_resource_report_id,origin_id,destination_id,operation_concept_id,remesa_transporte,quantity,unit_price,total_price',
+            'report.lines.origin:id,origin',
+            'report.lines.destination:id,origin',
+            'report.lines.concept:id,name',
             'report.container' => fn ($query) => $query->select([
                 'containers.id',
                 'containers.container_number',
@@ -219,7 +225,12 @@ class ExpedienteQueryService
             return [$serviceResource->id => $origin];
         });
 
-        $regionsByOrigin = $this->regionResolver->resolveMany($originsByResource->all());
+        $lineOrigins = $serviceResources
+            ->filter(fn (ServiceResource $resource) => trim((string) $resource->resource?->operation?->name) === 'TRANSPORTE')
+            ->flatMap(fn (ServiceResource $resource) => $resource->report?->lines ?? collect())
+            ->map(fn ($line) => $line->origin?->origin);
+
+        $regionsByOrigin = $this->regionResolver->resolveMany($originsByResource->values()->concat($lineOrigins));
 
         foreach ($serviceResources as $serviceResource) {
             $normalizedOrigin = $this->originNormalizer->normalize($originsByResource->get($serviceResource->id));
@@ -227,6 +238,14 @@ class ExpedienteQueryService
                 'resolved_regional',
                 $normalizedOrigin !== null ? $regionsByOrigin->get($normalizedOrigin)?->name : null,
             );
+
+            $isTransport = trim((string) $serviceResource->resource?->operation?->name) === 'TRANSPORTE';
+            foreach ($serviceResource->report?->lines ?? [] as $line) {
+                $lineOrigin = $isTransport
+                    ? $this->originNormalizer->normalize($line->origin?->origin)
+                    : $normalizedOrigin;
+                $line->setAttribute('resolved_regional', $lineOrigin !== null ? $regionsByOrigin->get($lineOrigin)?->name : null);
+            }
         }
     }
 }

@@ -2,6 +2,7 @@
 
 use App\Models\PersonnelRole;
 use App\Models\Resource;
+use App\Models\ResourceOperation;
 use App\Models\ResourcePersonnelRequirement;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +26,7 @@ new #[Layout('layouts.app')] class extends Component {
     /** @var EloquentCollection<int, PersonnelRole> */
     public $personnelRoles;
 
-    /** @var array<int, string> */
+    /** @var array<int, array{id: int, name: string}> */
     public array $operations = [];
 
     public function mount(): void
@@ -35,17 +36,20 @@ new #[Layout('layouts.app')] class extends Component {
             ->orderBy('name')
             ->get();
 
-        $this->operations = Resource::query()
-            ->select('resource_operation')
-            ->distinct()
-            ->orderBy('resource_operation')
-            ->pluck('resource_operation')
+        $this->operations = ResourceOperation::query()
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn (ResourceOperation $operation) => [
+                'id' => (int) $operation->id,
+                'name' => $operation->name,
+            ])
             ->all();
 
         $firstResourceId = Resource::query()
-            ->orderBy('resource_operation')
+            ->leftJoin('resource_operations', 'resource_operations.id', '=', 'resources.resource_operation_id')
+            ->orderBy('resource_operations.name')
             ->orderBy('resource_name')
-            ->value('id');
+            ->value('resources.id');
 
         if ($firstResourceId !== null) {
             $this->selectResource((int) $firstResourceId);
@@ -55,18 +59,20 @@ new #[Layout('layouts.app')] class extends Component {
     public function resources(): EloquentCollection
     {
         return Resource::query()
-            ->select(['id', 'resource_id', 'resource_name', 'resource_operation', 'required_report_mask'])
-            ->when($this->operationFilter !== '', fn($query) => $query->where('resource_operation', $this->operationFilter))
+            ->with('operation:id,name')
+            ->leftJoin('resource_operations', 'resource_operations.id', '=', 'resources.resource_operation_id')
+            ->select(['resources.id', 'resources.resource_id', 'resources.resource_name', 'resources.resource_operation_id', 'resources.required_report_mask'])
+            ->when($this->operationFilter !== '', fn($query) => $query->where('resources.resource_operation_id', (int) $this->operationFilter))
             ->when($this->search !== '', function ($query) {
                 $search = '%' . trim($this->search) . '%';
 
                 $query->where(function ($query) use ($search) {
-                    $query->where('resource_id', 'like', $search)
-                        ->orWhere('resource_name', 'like', $search);
+                    $query->where('resources.resource_id', 'like', $search)
+                        ->orWhere('resources.resource_name', 'like', $search);
                 });
             })
-            ->orderBy('resource_operation')
-            ->orderBy('resource_name')
+            ->orderBy('resource_operations.name')
+            ->orderBy('resources.resource_name')
             ->limit(150)
             ->get();
     }
@@ -79,6 +85,7 @@ new #[Layout('layouts.app')] class extends Component {
 
         return Resource::query()
             ->with([
+                'operation:id,name',
                 'personnelRequirements' => fn($query) => $query
                     ->withTrashed()
                     ->with('personnelRole')
@@ -91,7 +98,7 @@ new #[Layout('layouts.app')] class extends Component {
     public function selectResource(int $resourceId): void
     {
         $resource = Resource::query()
-            ->with(['personnelRequirements' => fn($query) => $query->withTrashed()])
+            ->with(['operation:id,name', 'personnelRequirements' => fn($query) => $query->withTrashed()])
             ->findOrFail($resourceId);
 
         $this->selectedResourceId = (int) $resource->id;
@@ -276,12 +283,13 @@ new #[Layout('layouts.app')] class extends Component {
 };
 ?>
 
-@section('title', 'Configuración de Recursos')
+@section('title', 'Recursos')
 
 <div class="space-y-6">
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
-        ['label' => 'Configuración de Recursos', 'icon' => 'settings'],
+        ['label' => 'Configuración de servicios', 'url' => route('services.configuration'), 'icon' => 'settings'],
+        ['label' => 'Recursos', 'icon' => 'package'],
     ]"></x-breadcrums>
 
     <div class="rounded-lg border-2 bg-white p-6 shadow-lg">
@@ -313,7 +321,7 @@ new #[Layout('layouts.app')] class extends Component {
                                 class="mt-1 w-full rounded-xl border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                                 <option value="">Todas</option>
                                 @foreach ($operations as $operation)
-                                    <option value="{{ $operation }}">{{ $operation }}</option>
+                                    <option value="{{ $operation['id'] }}">{{ $operation['name'] }}</option>
                                 @endforeach
                             </select>
                         </div>
@@ -345,7 +353,7 @@ new #[Layout('layouts.app')] class extends Component {
                                         <div class="font-semibold text-gray-900">{{ $resource->resource_name }}</div>
                                     </td>
                                     <td class="px-4 py-3 align-top text-gray-700">
-                                        {{ $resource->resource_operation }}
+                                        {{ $resource->operation?->name }}
                                     </td>
                                     <td class="px-4 py-3 align-top">
                                         @if ($labels === [])
@@ -378,7 +386,7 @@ new #[Layout('layouts.app')] class extends Component {
                     <form wire:submit="save" class="space-y-5 p-5">
                         <div>
                             <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                {{ $selected->resource_operation }}
+                                {{ $selected->operation?->name }}
                             </p>
                             <h3 class="mt-1 text-lg font-semibold text-gray-900">
                                 {{ $selected->resource_name }}

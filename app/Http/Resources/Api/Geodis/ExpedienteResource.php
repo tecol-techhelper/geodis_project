@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\Geodis;
 
+use App\Models\ServiceResourceReportLine;
 use App\Models\ServiceResourceStatusReport;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -52,20 +53,38 @@ class ExpedienteResource extends JsonResource
             'item_geodis' => null,
             'recurso' => $catalogResource?->resource_id,
             'administrativo' => $this->administrativeData(),
-            'regional' => $this->resolved_regional,
-            'origen' => $this->service?->service_parties?->first()?->party_city,
-            'destino' => $this->destination(),
-            'remesa' => $this->report?->remesa_transporte,
+            'unidad' => 1,
+            'informe_final' => $this->finalReport(),
             'fecha_de_posicionamiento' => $this->service?->positioning_date?->format('Y-m-d'),
             'fecha_de_cargue' => $this->reportedDateFor($flow, 'initial'),
             'fecha_de_arribo' => $this->service?->arrival_date?->format('Y-m-d'),
             'fecha_de_descargue' => $this->reportedDateFor($flow, 'final'),
-            'unidad' => null,
-            'cantidad' => null,
-            'valor_unitario' => null,
-            'valor_total' => null,
             'numero_contenedor' => $this->report?->container?->container_number,
         ];
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function finalReport(): array
+    {
+        $lines = $this->report?->lines ?? collect();
+        if ($lines->isEmpty()) {
+            return [];
+        }
+
+        $isTransport = trim((string) $this->resource->resource?->operation?->name) === 'TRANSPORTE';
+        $generalOrigin = $isTransport ? null : $this->service?->service_parties?->first()?->party_city;
+        $generalDestination = $isTransport ? null : $this->destination();
+
+        return $lines->map(fn (ServiceResourceReportLine $line): array => [
+            'remesa' => $isTransport ? $line->remesa_transporte : $this->report->remesa_transporte,
+            'regional' => $line->resolved_regional,
+            'origen' => $isTransport ? $line->origin?->origin : $generalOrigin,
+            'destino' => $isTransport ? $line->destination?->origin : $generalDestination,
+            'concepto' => $line->concept?->name,
+            'cantidad' => $line->quantity,
+            'valor_unitario' => $line->unit_price,
+            'valor_total' => $line->total_price,
+        ])->values()->all();
     }
 
     /**

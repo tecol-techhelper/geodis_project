@@ -146,6 +146,20 @@ document.addEventListener('service-resource-reset', () => {
     select.dataset.currentValue = '';
 });
 
+document.addEventListener('tariff-resource-selected', (event) => {
+    const select = document.getElementById('form_resource');
+    if (!select) return;
+
+    const resourceId = event.detail?.resourceId ?? '';
+    select.dataset.currentValue = resourceId;
+
+    if (select.tomselect) {
+        select.tomselect.setValue(resourceId, true);
+    } else {
+        select.value = resourceId;
+    }
+});
+
 // Fallback: observe DOM changes to replace UNKNOWN values after any re-render
 if (typeof MutationObserver !== 'undefined') {
     let scheduled = false;

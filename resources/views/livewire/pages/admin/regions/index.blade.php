@@ -2,6 +2,7 @@
 
 use App\Models\Region;
 use App\Models\RegionOrigin;
+use App\Models\Origin;
 use App\Services\Geodis\OriginNormalizer;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Validation\ValidationException;
@@ -14,7 +15,7 @@ new #[Layout('layouts.app')] class extends Component {
     public string $regionName = '';
     public bool $regionIsActive = true;
 
-    public ?int $originId = null;
+    public ?int $regionOriginId = null;
     public string $originName = '';
     public bool $originIsActive = true;
 
@@ -43,8 +44,11 @@ new #[Layout('layouts.app')] class extends Component {
         }
 
         return RegionOrigin::query()
+            ->with('catalogueOrigin')
+            ->join('origins', 'origins.id', '=', 'region_origins.origin_id')
+            ->select('region_origins.*')
             ->where('region_id', $this->selectedRegionId)
-            ->orderBy('origin')
+            ->orderBy('origins.origin')
             ->get();
     }
 
@@ -128,13 +132,17 @@ new #[Layout('layouts.app')] class extends Component {
         $this->resetValidation();
     }
 
-    public function editOrigin(int $originId): void
+    public function editOrigin(int $regionOriginId): void
     {
         $this->ensureAdministrator();
-        $origin = RegionOrigin::query()->where('region_id', $this->selectedRegionId)->findOrFail($originId);
-        $this->originId = (int) $origin->id;
-        $this->originName = $origin->origin;
-        $this->originIsActive = (bool) $origin->is_active;
+        $regionOrigin = RegionOrigin::query()
+            ->with('catalogueOrigin')
+            ->where('region_id', $this->selectedRegionId)
+            ->findOrFail($regionOriginId);
+
+        $this->regionOriginId = (int) $regionOrigin->id;
+        $this->originName = $regionOrigin->catalogueOrigin?->origin ?? '';
+        $this->originIsActive = (bool) $regionOrigin->is_active;
         $this->resetValidation();
     }
 
@@ -158,9 +166,16 @@ new #[Layout('layouts.app')] class extends Component {
             throw ValidationException::withMessages(['originName' => 'El origen es obligatorio.']);
         }
 
-        $duplicate = RegionOrigin::query()
+        $duplicate = Origin::query()
             ->where('normalized_origin', $normalizedOrigin)
-            ->when($this->originId !== null, fn ($query) => $query->whereKeyNot($this->originId))
+            ->when($this->regionOriginId !== null, function ($query) {
+                $originId = RegionOrigin::query()
+                    ->where('region_id', $this->selectedRegionId)
+                    ->whereKey($this->regionOriginId)
+                    ->value('origin_id');
+
+                $query->whereKeyNot($originId);
+            })
             ->exists();
 
         if ($duplicate) {
@@ -169,42 +184,51 @@ new #[Layout('layouts.app')] class extends Component {
 
         Region::query()->findOrFail($this->selectedRegionId);
 
-        if ($this->originId === null) {
-            RegionOrigin::query()->create([
-                'region_id' => $this->selectedRegionId,
+        if ($this->regionOriginId === null) {
+            $origin = Origin::query()->create([
                 'origin' => $normalizedOrigin,
                 'normalized_origin' => $normalizedOrigin,
+            ]);
+
+            RegionOrigin::query()->create([
+                'region_id' => $this->selectedRegionId,
+                'origin_id' => $origin->id,
                 'is_active' => $this->originIsActive,
             ]);
         } else {
-            RegionOrigin::query()
+            $regionOrigin = RegionOrigin::query()
+                ->with('catalogueOrigin')
                 ->where('region_id', $this->selectedRegionId)
-                ->findOrFail($this->originId)
-                ->update([
-                    'origin' => $normalizedOrigin,
-                    'normalized_origin' => $normalizedOrigin,
-                    'is_active' => $this->originIsActive,
-                ]);
+                ->findOrFail($this->regionOriginId);
+
+            $regionOrigin->catalogueOrigin->update([
+                'origin' => $normalizedOrigin,
+                'normalized_origin' => $normalizedOrigin,
+            ]);
+
+            $regionOrigin->update([
+                'is_active' => $this->originIsActive,
+            ]);
         }
 
         $this->resetOriginForm();
         flash()->title('Origen guardado')->success('El origen se guardo correctamente.');
     }
 
-    public function toggleOrigin(int $originId): void
+    public function toggleOrigin(int $regionOriginId): void
     {
         $this->ensureAdministrator();
-        $origin = RegionOrigin::query()->where('region_id', $this->selectedRegionId)->findOrFail($originId);
-        $origin->update(['is_active' => ! $origin->is_active]);
+        $regionOrigin = RegionOrigin::query()->where('region_id', $this->selectedRegionId)->findOrFail($regionOriginId);
+        $regionOrigin->update(['is_active' => ! $regionOrigin->is_active]);
 
-        if ($this->originId === $originId) {
-            $this->originIsActive = (bool) $origin->is_active;
+        if ($this->regionOriginId === $regionOriginId) {
+            $this->originIsActive = (bool) $regionOrigin->is_active;
         }
     }
 
     private function resetOriginForm(): void
     {
-        $this->originId = null;
+        $this->regionOriginId = null;
         $this->originName = '';
         $this->originIsActive = true;
     }
@@ -226,6 +250,7 @@ new #[Layout('layouts.app')] class extends Component {
 <div class="space-y-6">
     <x-breadcrums :items="[
         ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
+        ['label' => 'Configuración de servicios', 'url' => route('services.configuration'), 'icon' => 'settings'],
         ['label' => 'Regionales', 'icon' => 'settings'],
     ]" />
 
@@ -280,14 +305,14 @@ new #[Layout('layouts.app')] class extends Component {
                             <div class="max-h-[360px] overflow-y-auto rounded-lg border border-gray-200">
                                 <table class="min-w-full divide-y divide-gray-200 text-sm"><thead class="sticky top-0 bg-white text-left text-xs font-semibold uppercase tracking-wide text-gray-500"><tr><th class="px-3 py-2">Origen</th><th class="px-3 py-2">Estado</th><th class="px-3 py-2"></th></tr></thead><tbody class="divide-y divide-gray-100">
                                     @forelse ($this->origins() as $origin)
-                                        <tr wire:key="origin-{{ $origin->id }}" @class(['bg-blue-50' => $originId === $origin->id])><td class="px-3 py-2 font-medium text-gray-800">{{ $origin->origin }}</td><td class="px-3 py-2"><button type="button" wire:click="toggleOrigin({{ $origin->id }})" @class(['rounded-full px-2 py-1 text-xs font-medium', 'bg-emerald-100 text-emerald-800' => $origin->is_active, 'bg-gray-200 text-gray-700' => ! $origin->is_active])>{{ $origin->is_active ? 'Activo' : 'Inactivo' }}</button></td><td class="px-3 py-2 text-right"><button type="button" wire:click="editOrigin({{ $origin->id }})" class="text-xs font-medium text-blue-700 hover:underline">Editar</button></td></tr>
+                                        <tr wire:key="origin-{{ $origin->id }}" @class(['bg-blue-50' => $regionOriginId === $origin->id])><td class="px-3 py-2 font-medium text-gray-800">{{ $origin->catalogueOrigin?->origin }}</td><td class="px-3 py-2"><button type="button" wire:click="toggleOrigin({{ $origin->id }})" @class(['rounded-full px-2 py-1 text-xs font-medium', 'bg-emerald-100 text-emerald-800' => $origin->is_active, 'bg-gray-200 text-gray-700' => ! $origin->is_active])>{{ $origin->is_active ? 'Activo' : 'Inactivo' }}</button></td><td class="px-3 py-2 text-right"><button type="button" wire:click="editOrigin({{ $origin->id }})" class="text-xs font-medium text-blue-700 hover:underline">Editar</button></td></tr>
                                     @empty
                                         <tr><td colspan="3" class="px-3 py-6 text-center text-sm text-gray-500">Esta regional no tiene origenes.</td></tr>
                                     @endforelse
                                 </tbody></table>
                             </div>
                             <form wire:submit="saveOrigin" class="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                                <h3 class="font-semibold text-gray-900">{{ $originId === null ? 'Nuevo origen' : 'Editar origen' }}</h3>
+                                <h3 class="font-semibold text-gray-900">{{ $regionOriginId === null ? 'Nuevo origen' : 'Editar origen' }}</h3>
                                 <div class="mt-4"><x-input-label for="origin_name">Origen</x-input-label><x-text-input id="origin_name" type="text" wire:model.defer="originName" class="mt-1 w-full" placeholder="Ej. PUERTO GAITAN" /><x-input-error :messages="$errors->get('originName')" class="mt-2" /></div>
                                 <div class="mt-4"><x-input-label for="origin_status">Estado</x-input-label><select id="origin_status" wire:model.defer="originIsActive" class="mt-1 w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"><option value="1">Activo</option><option value="0">Inactivo</option></select></div>
                                 <div class="mt-4 flex justify-end"><x-success-button type="submit" wire:loading.attr="disabled" wire:target="saveOrigin">Guardar origen</x-success-button></div>

@@ -3,20 +3,39 @@
 namespace App\Livewire\Forms\Services;
 
 use App\Models\Container;
+use App\Models\OperationConcept;
 use App\Models\Operator;
+use App\Models\Origin;
 use App\Models\Resource;
 use App\Models\Service;
 use App\Models\ServiceResourceReport;
+use App\Models\ServiceResourceReportLine;
 use App\Models\ServiceResourceReportPersonnel;
 use App\Models\Vehicle;
+use App\Services\Geodis\OriginNormalizer;
+use App\Services\Tariffs\TariffResolver;
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Livewire\Form;
 
 class ManageForm extends Form
 {
+    private const TRANSPORT_OPERATION = 'TRANSPORTE';
+
+    private const AUTHORIZED_COST_OPERATION = 'COSTO_AUTORIZADO';
+
+    private const OPERATIONS_WITH_LINES = [
+        self::TRANSPORT_OPERATION,
+        'OCONCEPTOS',
+        'IZAJES',
+        'COSTO_AUTORIZADO',
+    ];
+
     public bool $canEdit = false;
     public ?Service $service = null;
 
@@ -57,6 +76,7 @@ class ManageForm extends Form
      *     resource_id:int,
      *     required_report_mask:int,
      *     resource_operation:string,
+     *     resource_operation_id:int|null,
      *     personnel_requirements:array<int, array<string, mixed>>
      * }>
      */
@@ -71,6 +91,7 @@ class ManageForm extends Form
      *     resource_id:int,
      *     required_report_mask:int,
      *     resource_operation:string,
+     *     resource_operation_id:int|null,
      *     personnel_requirements:array<int, array<string, mixed>>
      * }>
      */
@@ -154,16 +175,20 @@ class ManageForm extends Form
                 'transport_details.transport_mode',
 
                 // Service
+                'resources.operation',
                 'resources.personnelRequirements.personnelRole',
                 'service_resource_rows.report.vehicle',
                 'service_resource_rows.report.container',
                 'service_resource_rows.report.personnel.operator',
                 'service_resource_rows.report.personnel.personnelRole',
+                'service_resource_rows.report.lines.origin.regionOrigin.region',
+                'service_resource_rows.report.lines.destination',
+                'service_resource_rows.report.lines.concept',
                 'service_status_reports.status',
                 'service_status_reports.resourceStatusReports.serviceResource.resource',
 
                 // Purchase Orders (CNIs)
-                'purchase_orders',
+                'purchase_orders.resources',
                 'purchase_orders.order_references.reference_type',
 
                 // Delivery terms
@@ -243,7 +268,10 @@ class ManageForm extends Form
                     'pivot_id' => $pivotId,
                     'resource_id' => (int) $resource->id,
                     'required_report_mask' => (int) $resource->required_report_mask,
-                    'resource_operation' => (string) $resource->resource_operation,
+                    'resource_operation' => (string) $resource->operation?->name,
+                    'resource_operation_id' => $resource->resource_operation_id !== null
+                        ? (int) $resource->resource_operation_id
+                        : null,
                     'personnel_requirements' => $personnelRequirements,
                 ];
             })
@@ -323,7 +351,7 @@ class ManageForm extends Form
         }
 
         $resource = Resource::query()
-            ->with('personnelRequirements.personnelRole')
+            ->with(['operation', 'personnelRequirements.personnelRole'])
             ->find($id);
 
         if (!$resource) {
@@ -338,7 +366,10 @@ class ManageForm extends Form
             'pivot_id' => null,
             'resource_id' => $id,
             'required_report_mask' => (int) $resource->required_report_mask,
-            'resource_operation' => (string) $resource->resource_operation,
+            'resource_operation' => (string) $resource->operation?->name,
+            'resource_operation_id' => $resource->resource_operation_id !== null
+                ? (int) $resource->resource_operation_id
+                : null,
             'personnel_requirements' => $personnelRequirements,
         ];
         $this->additional_information[$rowKey] = $this->emptyAdditionalInformation($personnelRequirements);
@@ -370,6 +401,7 @@ class ManageForm extends Form
             return;
         }
 
+        $this->ensureOperationLines($rowKey);
         $this->active_resource_row_key = $rowKey;
     }
 
@@ -389,7 +421,78 @@ class ManageForm extends Form
         $this->additional_information[$rowKey] = $this->emptyAdditionalInformation(
             $this->personnelRequirementsForRow($rowKey),
         );
+        $this->ensureOperationLines($rowKey);
         $this->resetValidation("additional_information.{$rowKey}");
+    }
+
+    public function addOperationLine(string $rowKey): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        if (!$this->usesOperationLines($rowKey)) {
+            return;
+        }
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+        $lines[] = $this->newOperationLine($rowKey);
+        data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
+    }
+
+    public function updateOperationLineOrigin(string $rowKey, int $lineIndex, mixed $originId): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        if (!$this->isTransportOperation($rowKey)) {
+            return;
+        }
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+
+        if (!array_key_exists($lineIndex, $lines)) {
+            return;
+        }
+
+        $origin = is_numeric($originId) ? $this->originWithRegion((int) $originId) : null;
+        $lines[$lineIndex]['origin_id'] = $origin?->id;
+        $lines[$lineIndex]['regional'] = $this->regionalNameForOrigin($origin);
+        $lines[$lineIndex]['unit_price'] = $this->resolveOperationLineUnitPrice($rowKey, $lines[$lineIndex]);
+        $lines[$lineIndex]['total_price'] = $this->calculateOperationLineTotal($lines[$lineIndex]);
+        data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
+        $this->resetValidation("additional_information.{$rowKey}.operation_lines.{$lineIndex}.origin_id");
+    }
+
+    public function updateOperationLineConcept(string $rowKey, int $lineIndex, mixed $conceptId): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+
+        if (!array_key_exists($lineIndex, $lines)) {
+            return;
+        }
+
+        $lines[$lineIndex]['operation_concept_id'] = is_numeric($conceptId) ? (int) $conceptId : null;
+        if (!$this->isAuthorizedCostOperation($rowKey)) {
+            $lines[$lineIndex]['unit_price'] = $this->resolveOperationLineUnitPrice($rowKey, $lines[$lineIndex]);
+        }
+        $lines[$lineIndex]['total_price'] = $this->calculateOperationLineTotal($lines[$lineIndex]);
+        data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
+    }
+
+    public function updateOperationLineQuantity(string $rowKey, int $lineIndex, mixed $quantity): void
+    {
+        $this->updateOperationLineDecimal($rowKey, $lineIndex, 'quantity', $quantity);
+    }
+
+    public function updateOperationLineUnitPrice(string $rowKey, int $lineIndex, mixed $unitPrice): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        if (!$this->isAuthorizedCostOperation($rowKey)) {
+            return;
+        }
+
+        $this->updateOperationLineDecimal($rowKey, $lineIndex, 'unit_price', $unitPrice);
     }
 
     public function updateAdditionalInformation(string $rowKey): void
@@ -430,7 +533,15 @@ class ManageForm extends Form
             abort_unless($report, 404, 'La información adicional registrada no fue encontrada.');
 
             $report = $this->persistAdditionalInformationRow($service, $row, $report);
-            $report->load(['vehicle', 'container', 'personnel.operator', 'personnel.personnelRole']);
+            $report->load([
+                'vehicle',
+                'container',
+                'personnel.operator',
+                'personnel.personnelRole',
+                'lines.origin.regionOrigin.region',
+                'lines.destination',
+                'lines.concept',
+            ]);
             $this->additional_information[$rowKey] = $this->additionalInformationFromReport(
                 $report,
                 $this->personnelRequirementsForRow($rowKey),
@@ -440,7 +551,294 @@ class ManageForm extends Form
 
     public function requiresAdditionalInformationForRow(string $rowKey): bool
     {
-        return in_array(true, $this->requirementsForRow($rowKey), true);
+        return in_array(true, $this->requirementsForRow($rowKey), true)
+            || $this->usesOperationLines($rowKey);
+    }
+
+    public function usesOperationLines(string $rowKey): bool
+    {
+        return in_array($this->operationNameForRow($rowKey), self::OPERATIONS_WITH_LINES, true);
+    }
+
+    public function isTransportOperation(string $rowKey): bool
+    {
+        return $this->operationNameForRow($rowKey) === self::TRANSPORT_OPERATION;
+    }
+
+    public function isAuthorizedCostOperation(string $rowKey): bool
+    {
+        return $this->operationNameForRow($rowKey) === self::AUTHORIZED_COST_OPERATION;
+    }
+
+    public function operationNameForRow(string $rowKey): ?string
+    {
+        $operation = trim((string) data_get($this->resourceRow($rowKey), 'resource_operation'));
+
+        return $operation !== '' ? $operation : null;
+    }
+
+    public function availableOrigins()
+    {
+        return Origin::query()
+            ->orderBy('normalized_origin')
+            ->get(['id', 'normalized_origin']);
+    }
+
+    public function operationConceptsForRow(string $rowKey)
+    {
+        $operationId = (int) data_get($this->resourceRow($rowKey), 'resource_operation_id', 0);
+
+        if ($operationId <= 0) {
+            return collect();
+        }
+
+        return OperationConcept::query()
+            ->where('resource_operation_id', $operationId)
+            ->orderBy('name')
+            ->get(['id', 'name']);
+    }
+
+    private function ensureOperationLines(string $rowKey): void
+    {
+        if (!$this->usesOperationLines($rowKey)) {
+            return;
+        }
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+
+        if ($lines === []) {
+            $lines[] = $this->newOperationLine($rowKey);
+
+            data_set($this->additional_information, "{$rowKey}.operation_lines", $lines);
+
+            return;
+        }
+
+        $origin = $this->originForValue($this->generalOrigin());
+        $destination = $this->isTransportOperation($rowKey)
+            ? $this->originForValue($this->generalDestination())
+            : null;
+
+        $lines = array_map(function (array $line) use ($rowKey, $origin, $destination): array {
+            if ($this->isTransportOperation($rowKey) && empty($line['origin_id']) && $origin) {
+                $line['origin_id'] = $origin->id;
+                $line['regional'] = $this->regionalNameForOrigin($origin);
+            }
+
+            if ($this->isTransportOperation($rowKey) && empty($line['destination_id']) && $destination) {
+                $line['destination_id'] = $destination->id;
+            }
+
+            if (data_get($line, 'unit_price') === null && filled(data_get($line, 'operation_concept_id'))) {
+                $line['unit_price'] = $this->resolveOperationLineUnitPrice($rowKey, $line);
+            }
+
+            $line['total_price'] = $this->calculateOperationLineTotal($line);
+
+            return $line;
+        }, $lines);
+
+        data_set($this->additional_information, "{$rowKey}.operation_lines", $lines);
+    }
+
+    /** @return array<string, int|string|null> */
+    private function newOperationLine(string $rowKey): array
+    {
+        $origin = $this->originForValue($this->generalOrigin());
+        $destination = $this->isTransportOperation($rowKey)
+            ? $this->originForValue($this->generalDestination())
+            : null;
+
+        return [
+            'line_id' => null,
+            'origin_id' => $this->isTransportOperation($rowKey) ? $origin?->id : null,
+            'destination_id' => $destination?->id,
+            'regional' => $this->regionalNameForOrigin($origin),
+            'operation_concept_id' => null,
+            'quantity' => null,
+            'unit_price' => null,
+            'total_price' => null,
+            'remesa_transporte' => null,
+        ];
+    }
+
+    private function generalOrigin(): ?string
+    {
+        return $this->service?->service_parties
+            ?->first(fn ($party) => strtoupper(trim((string) ($party->party_type?->party_qualifier ?? ''))) === 'PW')
+            ?->party_city;
+    }
+
+    private function generalDestination(): ?string
+    {
+        $purchaseOrders = $this->service?->purchase_orders ?? collect();
+
+        $destinations = $purchaseOrders
+            ->flatMap(fn ($purchaseOrder) => $purchaseOrder->purchase_order_parties)
+            ->filter(fn ($party) => strtoupper(trim((string) ($party->party_type?->party_qualifier ?? ''))) === 'DP')
+            ->pluck('party_city')
+            ->map(fn ($destination) => app(OriginNormalizer::class)->normalize($destination))
+            ->filter()
+            ->unique()
+            ->values();
+
+        return $destinations->count() === 1 ? $destinations->first() : null;
+    }
+
+    private function originForValue(?string $value): ?Origin
+    {
+        $normalizedOrigin = app(OriginNormalizer::class)->normalize($value);
+
+        if ($normalizedOrigin === null) {
+            return null;
+        }
+
+        return Origin::query()
+            ->with('regionOrigin.region')
+            ->where('normalized_origin', $normalizedOrigin)
+            ->first();
+    }
+
+    private function originWithRegion(int $originId): ?Origin
+    {
+        return Origin::query()
+            ->with('regionOrigin.region')
+            ->find($originId);
+    }
+
+    private function regionalNameForOrigin(?Origin $origin): ?string
+    {
+        $regionOrigin = $origin?->regionOrigin;
+
+        return $regionOrigin?->is_active && $regionOrigin->region?->is_active
+            ? $regionOrigin->region->name
+            : null;
+    }
+
+    private function regionalIdForOrigin(?Origin $origin): ?int
+    {
+        $regionOrigin = $origin?->regionOrigin;
+
+        return $regionOrigin?->is_active && $regionOrigin->region?->is_active
+            ? (int) $regionOrigin->region_id
+            : null;
+    }
+
+    /** @param array<string, mixed> $line */
+    private function resolveOperationLineUnitPrice(string $rowKey, array $line): ?string
+    {
+        $resourceId = data_get($this->resourceRow($rowKey), 'resource_id');
+        $conceptId = data_get($line, 'operation_concept_id');
+        $origin = $this->isTransportOperation($rowKey)
+            ? (is_numeric(data_get($line, 'origin_id')) ? $this->originWithRegion((int) data_get($line, 'origin_id')) : null)
+            : $this->originForValue($this->generalOrigin());
+
+        return app(TariffResolver::class)->resolve(
+            is_numeric($resourceId) ? (int) $resourceId : null,
+            $this->regionalIdForOrigin($origin),
+            is_numeric($conceptId) ? (int) $conceptId : null,
+            $this->normalizePositiveDecimal(data_get($line, 'quantity')),
+        );
+    }
+
+    private function updateOperationLineDecimal(string $rowKey, int $lineIndex, string $field, mixed $value): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+
+        if (!array_key_exists($lineIndex, $lines)) {
+            return;
+        }
+
+        $lines[$lineIndex][$field] = $this->normalizeDecimalInput($value);
+        $conceptId = data_get($lines[$lineIndex], 'operation_concept_id');
+        if ($field === 'quantity' && $this->isTransportOperation($rowKey)
+            && app(TariffResolver::class)->usesDistanceRanges(
+                is_numeric($conceptId) ? (int) $conceptId : null,
+            )) {
+            $lines[$lineIndex]['unit_price'] = $this->resolveOperationLineUnitPrice($rowKey, $lines[$lineIndex]);
+        }
+        $lines[$lineIndex]['total_price'] = $this->calculateOperationLineTotal($lines[$lineIndex]);
+        data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
+        $this->resetValidation("additional_information.{$rowKey}.operation_lines.{$lineIndex}.{$field}");
+
+        if ($lines[$lineIndex][$field] !== null && $this->normalizePositiveDecimal($lines[$lineIndex][$field]) === null) {
+            $this->addError(
+                "additional_information.{$rowKey}.operation_lines.{$lineIndex}.{$field}",
+                'El campo debe ser un número decimal mayor a cero.',
+            );
+        }
+    }
+
+    private function normalizePositiveDecimal(mixed $value): ?string
+    {
+        $value = $this->normalizeDecimalInput($value);
+
+        return is_numeric($value) && (float) $value > 0 ? $value : null;
+    }
+
+    private function normalizeDecimalInput(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return null;
+        }
+
+        $value = str_replace([' ', '$'], '', $value);
+
+        if (str_contains($value, ',') && str_contains($value, '.')) {
+            $value = strrpos($value, ',') > strrpos($value, '.')
+                ? str_replace(['.', ','], ['', '.'], $value)
+                : str_replace(',', '', $value);
+        } else {
+            $value = str_replace(',', '.', $value);
+        }
+
+        return $value !== '' ? $value : null;
+    }
+
+    public function formatOperationLineMoney(mixed $value): string
+    {
+        $decimal = $this->trimStoredDecimal($value);
+
+        return $decimal === null
+            ? '—'
+            : '$ ' . number_format((float) $decimal, str_contains($decimal, '.') ? 2 : 0, ',', '.');
+    }
+
+    private function trimStoredDecimal(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $decimal = (string) $value;
+
+        return preg_match('/\A-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?\z/', $decimal)
+            ? rtrim(rtrim($decimal, '0'), '.')
+            : $decimal;
+    }
+
+    /** @param array<string, mixed> $line */
+    private function calculateOperationLineTotal(array $line): ?string
+    {
+        $quantity = $this->normalizePositiveDecimal(data_get($line, 'quantity'));
+        $unitPrice = $this->normalizePositiveDecimal(data_get($line, 'unit_price'));
+
+        if ($quantity === null || $unitPrice === null) {
+            return null;
+        }
+
+        $conceptId = data_get($line, 'operation_concept_id');
+        if (BigDecimal::of($quantity)->isLessThanOrEqualTo(30)
+            && app(TariffResolver::class)->usesDistanceRanges(is_numeric($conceptId) ? (int) $conceptId : null)) {
+            // Viajes up to 30 km is charged as the flat amount of that range.
+            return (string) BigDecimal::of($unitPrice)->toScale(6, RoundingMode::HALF_UP);
+        }
+
+        return number_format((float) $quantity * (float) $unitPrice, 6, '.', '');
     }
 
     /**
@@ -530,6 +928,35 @@ class ManageForm extends Form
         $requirements = $this->requirementsForRow($rowKey);
         $draft = $this->additional_information[$rowKey] ?? [];
 
+        if ($this->usesOperationLines($rowKey) && (array) data_get($draft, 'operation_lines', []) === []) {
+            return false;
+        }
+
+        if ($this->usesOperationLines($rowKey)) {
+            $requiresConcept = $this->operationConceptsForRow($rowKey)->isNotEmpty();
+
+            foreach ((array) data_get($draft, 'operation_lines', []) as $line) {
+                if ($requiresConcept && !filled(data_get($line, 'operation_concept_id'))) {
+                    return false;
+                }
+
+                if ($this->isTransportOperation($rowKey)
+                    && (!filled(data_get($line, 'origin_id')) || !filled(data_get($line, 'destination_id')))) {
+                    return false;
+                }
+
+                $quantity = $this->normalizePositiveDecimal(data_get($line, 'quantity'));
+                $unitPrice = $this->normalizePositiveDecimal(data_get($line, 'unit_price'));
+                $totalPrice = $this->normalizePositiveDecimal(data_get($line, 'total_price'));
+                $expectedTotal = $this->calculateOperationLineTotal($line);
+
+                if ($quantity === null || $unitPrice === null || $totalPrice === null || $expectedTotal === null
+                    || abs((float) $totalPrice - (float) $expectedTotal) > 0.000001) {
+                    return false;
+                }
+            }
+        }
+
         if ($requirements['vehicle'] && blank(data_get($draft, 'vehicle_plate'))) {
             return false;
         }
@@ -549,8 +976,9 @@ class ManageForm extends Form
             }
         }
 
-        if ($requirements['remittance'] && blank(data_get($draft, 'remesa_transporte'))) {
-            return false;
+        if ($requirements['remittance'] && !$this->isTransportOperation($rowKey)
+            && blank(data_get($draft, 'remesa_transporte'))) {
+                return false;
         }
 
         if ($requirements['container'] && blank(data_get($draft, 'container_number'))) {
@@ -651,6 +1079,9 @@ class ManageForm extends Form
                         'resource_id' => $resourceId,
                         'required_report_mask' => (int) data_get($row, 'required_report_mask', 0),
                         'resource_operation' => (string) data_get($row, 'resource_operation', ''),
+                        'resource_operation_id' => data_get($row, 'resource_operation_id') !== null
+                            ? (int) data_get($row, 'resource_operation_id')
+                            : null,
                         'personnel_requirements' => (array) data_get($row, 'personnel_requirements', []),
                     ];
                 }, $rows)));
@@ -780,9 +1211,59 @@ class ManageForm extends Form
                 }
             }
 
-            if ($requirements['remittance']) {
+            if ($requirements['remittance'] && !$this->isTransportOperation($rowKey)) {
                 $rules["{$prefix}.remesa_transporte"] = ['required', 'string', 'max:128'];
                 $attributes["{$prefix}.remesa_transporte"] = 'remesa de transporte';
+            }
+
+            if ($this->usesOperationLines($rowKey)) {
+                $rules["{$prefix}.operation_lines"] = $requirements['remittance'] && $this->isTransportOperation($rowKey)
+                    ? ['array', 'min:1']
+                    : ['array'];
+                $operationId = (int) data_get($row, 'resource_operation_id', 0);
+
+                foreach ((array) data_get($this->additional_information, "{$rowKey}.operation_lines", []) as $lineIndex => $line) {
+                    $linePrefix = "{$prefix}.operation_lines.{$lineIndex}";
+                    $rules["{$linePrefix}.line_id"] = ['nullable', 'integer'];
+                    $rules["{$linePrefix}.operation_concept_id"] = [
+                        'nullable',
+                        'integer',
+                        'exists:operation_concepts,id',
+                        function (string $attribute, mixed $value, \Closure $fail) use ($operationId): void {
+                            if ($value === null || $value === '') {
+                                return;
+                            }
+
+                            $belongsToOperation = $operationId > 0
+                                && OperationConcept::query()
+                                    ->whereKey((int) $value)
+                                    ->where('resource_operation_id', $operationId)
+                                    ->exists();
+
+                            if (!$belongsToOperation) {
+                                $fail('El concepto seleccionado no corresponde a la operación del recurso.');
+                            }
+                        },
+                    ];
+                    $attributes["{$linePrefix}.operation_concept_id"] = 'concepto';
+                    $rules["{$linePrefix}.quantity"] = ['nullable', 'numeric', 'gt:0'];
+                    $attributes["{$linePrefix}.quantity"] = 'cantidad';
+
+                    if ($this->isAuthorizedCostOperation($rowKey)) {
+                        $rules["{$linePrefix}.unit_price"] = ['nullable', 'numeric', 'gt:0'];
+                        $attributes["{$linePrefix}.unit_price"] = 'valor unitario';
+                    }
+
+                    if ($this->isTransportOperation($rowKey)) {
+                        $rules["{$linePrefix}.origin_id"] = ['nullable', 'integer', 'exists:origins,id'];
+                        $rules["{$linePrefix}.destination_id"] = ['nullable', 'integer', 'exists:origins,id'];
+                        $attributes["{$linePrefix}.origin_id"] = 'origen';
+                        $attributes["{$linePrefix}.destination_id"] = 'destino';
+
+                        $rules["{$linePrefix}.remesa_transporte"] = ['nullable', 'string', 'max:128'];
+                        $attributes["{$linePrefix}.remesa_transporte"] = 'remesa de transporte';
+                    }
+                }
             }
 
             if ($requirements['container']) {
@@ -804,6 +1285,7 @@ class ManageForm extends Form
      *     resource_id:int,
      *     required_report_mask:int,
      *     resource_operation:string,
+     *     resource_operation_id:int|null,
      *     personnel_requirements:array<int, array<string, mixed>>
      * }> $resourceRows
      */
@@ -811,8 +1293,9 @@ class ManageForm extends Form
     {
         foreach ($resourceRows as $row) {
             $requirements = $this->requirementsForRow($row['row_key']);
+            $hasOperationLines = $this->hasOperationLinesToPersist($row['row_key']);
 
-            if (!in_array(true, $requirements, true)) {
+            if (!in_array(true, $requirements, true) && !$hasOperationLines) {
                 ServiceResourceReport::withTrashed()
                     ->where('service_resource_id', $row['pivot_id'])
                     ->delete();
@@ -825,6 +1308,86 @@ class ManageForm extends Form
         }
     }
 
+    /** @return array<int, array{line_id:int|null,origin_id:int|null,destination_id:int|null,operation_concept_id:int|null,remesa_transporte:string|null}> */
+    private function operationLinesForPersistence(string $rowKey): array
+    {
+        if (!$this->usesOperationLines($rowKey)) {
+            return [];
+        }
+
+        return collect((array) data_get($this->additional_information, "{$rowKey}.operation_lines", []))
+            ->map(function ($line) use ($rowKey): array {
+                $originId = data_get($line, 'origin_id');
+                $destinationId = data_get($line, 'destination_id');
+                $conceptId = data_get($line, 'operation_concept_id');
+                $remittance = trim((string) data_get($line, 'remesa_transporte'));
+
+                return [
+                    'line_id' => filled(data_get($line, 'line_id')) ? (int) data_get($line, 'line_id') : null,
+                    'origin_id' => is_numeric($originId) ? (int) $originId : null,
+                    'destination_id' => is_numeric($destinationId) ? (int) $destinationId : null,
+                    'operation_concept_id' => is_numeric($conceptId) ? (int) $conceptId : null,
+                    'quantity' => $this->normalizePositiveDecimal(data_get($line, 'quantity')),
+                    'unit_price' => $this->isAuthorizedCostOperation($rowKey)
+                        ? $this->normalizePositiveDecimal(data_get($line, 'unit_price'))
+                        : $this->resolveOperationLineUnitPrice($rowKey, $line),
+                    'total_price' => null,
+                    'remesa_transporte' => $remittance !== '' ? $remittance : null,
+                ];
+            })
+            ->map(function (array $line, int $lineIndex) use ($rowKey): array {
+                $line['total_price'] = $this->calculateOperationLineTotal($line);
+
+                foreach (['quantity' => 'La cantidad', 'unit_price' => 'El valor unitario', 'total_price' => 'El valor total'] as $field => $label) {
+                    if ($line[$field] !== null && BigDecimal::of($line[$field])
+                        ->toScale(6, RoundingMode::HALF_UP)->isGreaterThan('99999999999999.999999')) {
+                        throw ValidationException::withMessages([
+                            "{$this->getPropertyName()}.additional_information.{$rowKey}.operation_lines.{$lineIndex}.{$field}"
+                                => "{$label} supera el máximo permitido de 99.999.999.999.999,999999.",
+                        ]);
+                    }
+                }
+
+                return $line;
+            })
+            ->filter(fn (array $line) => $line['origin_id'] !== null
+                || $line['destination_id'] !== null
+                || $line['operation_concept_id'] !== null
+                || $line['quantity'] !== null
+                || $line['unit_price'] !== null
+                || $line['total_price'] !== null
+                || $line['remesa_transporte'] !== null)
+            ->values()
+            ->all();
+    }
+
+    private function hasOperationLinesToPersist(string $rowKey): bool
+    {
+        return $this->operationLinesForPersistence($rowKey) !== [];
+    }
+
+    /** @param array<int, array{remesa_transporte:string|null}> $operationLines */
+    private function firstTransportRemittance(array $operationLines): ?string
+    {
+        return $operationLines[0]['remesa_transporte'] ?? null;
+    }
+
+    /** @param array<int, array{line_id:int|null,origin_id:int|null,destination_id:int|null,operation_concept_id:int|null,remesa_transporte:string|null}> $operationLines */
+    private function persistOperationLines(ServiceResourceReport $report, array $operationLines): void
+    {
+        $existingLines = $report->lines()->get()->keyBy('id');
+
+        foreach ($operationLines as $lineData) {
+            $lineId = $lineData['line_id'];
+            $line = $lineId !== null ? $existingLines->pull($lineId) : null;
+            $line ??= new ServiceResourceReportLine(['service_resource_report_id' => $report->id]);
+            $line->fill($lineData);
+            $line->save();
+        }
+
+        $existingLines->each->delete();
+    }
+
     /**
      * @param array{
      *     row_key:string,
@@ -832,6 +1395,7 @@ class ManageForm extends Form
      *     resource_id:int,
      *     required_report_mask:int,
      *     resource_operation:string,
+     *     resource_operation_id:int|null,
      *     personnel_requirements:array<int, array<string, mixed>>
      * } $row
      */
@@ -843,6 +1407,7 @@ class ManageForm extends Form
     {
         $requirements = $this->requirementsForRow($row['row_key']);
         $draft = $this->additional_information[$row['row_key']] ?? [];
+        $operationLines = $this->operationLinesForPersistence($row['row_key']);
         $vehicleId = $requirements['vehicle']
             ? $this->persistVehicle((string) data_get($draft, 'vehicle_plate'))
             : null;
@@ -867,12 +1432,13 @@ class ManageForm extends Form
             'resource_id' => $row['resource_id'],
             'vehicle_id' => $vehicleId,
             'container_id' => $containerId,
-            'remesa_transporte' => $requirements['remittance']
-                ? trim((string) data_get($draft, 'remesa_transporte'))
-                : null,
+            'remesa_transporte' => $this->isTransportOperation($row['row_key'])
+                ? $this->firstTransportRemittance($operationLines)
+                : ($requirements['remittance'] ? trim((string) data_get($draft, 'remesa_transporte')) : null),
             'updated_by' => Auth::id(),
         ]);
         $report->save();
+        $this->persistOperationLines($report, $operationLines);
         $this->persistReportPersonnel($report, $draft, $requirements['personnel']
             ? $this->personnelRequirementsForRow($row['row_key'])
             : []);
@@ -1005,6 +1571,20 @@ class ManageForm extends Form
             'personnel' => $personnel,
             'remesa_transporte' => $report->remesa_transporte,
             'container_number' => $report->container?->container_number,
+            'operation_lines' => $report->lines
+                ?->map(fn (ServiceResourceReportLine $line) => [
+                    'line_id' => (int) $line->id,
+                    'origin_id' => $line->origin_id,
+                    'destination_id' => $line->destination_id,
+                    'regional' => $this->regionalNameForOrigin($line->origin),
+                    'operation_concept_id' => $line->operation_concept_id,
+                    'quantity' => $this->trimStoredDecimal($line->quantity),
+                    'unit_price' => $this->trimStoredDecimal($line->unit_price),
+                    'total_price' => $this->trimStoredDecimal($line->total_price),
+                    'remesa_transporte' => $line->remesa_transporte,
+                ])
+                ->values()
+                ->all() ?? [],
         ];
     }
 
@@ -1019,6 +1599,7 @@ class ManageForm extends Form
             'personnel' => $this->emptyPersonnelInformation($personnelRequirements),
             'remesa_transporte' => null,
             'container_number' => null,
+            'operation_lines' => [],
         ];
     }
 

@@ -67,9 +67,11 @@ new #[Layout('layouts.app')] class extends Component {
         }
 
         $this->resources = Resource::query()
-            ->select(['id', 'resource_id', 'resource_name', 'resource_operation', 'required_report_mask'])
-            ->orderBy('resource_operation')
-            ->orderBy('resource_name')
+            ->with('operation:id,name')
+            ->leftJoin('resource_operations', 'resource_operations.id', '=', 'resources.resource_operation_id')
+            ->select(['resources.id', 'resources.resource_id', 'resources.resource_name', 'resources.resource_operation_id', 'resources.required_report_mask'])
+            ->orderBy('resource_operations.name')
+            ->orderBy('resources.resource_name')
             ->get();
     }
 
@@ -313,6 +315,46 @@ new #[Layout('layouts.app')] class extends Component {
         flash()
             ->title('Información actualizada')
             ->success('La información adicional se actualizó correctamente.');
+    }
+
+    public function addOperationLine(): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->addOperationLine($rowKey);
+    }
+
+    public function updateOperationLineOrigin(int $lineIndex, mixed $originId): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateOperationLineOrigin($rowKey, $lineIndex, $originId);
+    }
+
+    public function updateOperationLineConcept(int $lineIndex, mixed $conceptId): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateOperationLineConcept($rowKey, $lineIndex, $conceptId);
+    }
+
+    public function updateOperationLineQuantity(int $lineIndex, mixed $quantity): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateOperationLineQuantity($rowKey, $lineIndex, $quantity);
+    }
+
+    public function updateOperationLineUnitPrice(int $lineIndex, mixed $unitPrice): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateOperationLineUnitPrice($rowKey, $lineIndex, $unitPrice);
     }
 
     public function searchPersonnel(string $lookupKey): void
@@ -963,7 +1005,7 @@ new #[Layout('layouts.app')] class extends Component {
                 </div>
 
                 @php
-                    $resourceGroups = $resources?->groupBy('resource_operation') ?? collect();
+                    $resourceGroups = $resources?->groupBy(fn ($resource) => $resource->operation?->name) ?? collect();
                     $resourceLookup = $resources?->keyBy('id') ?? collect();
                     $serviceResourcePivotLookup = collect($form->service?->resources ?? [])
                         ->filter(fn($resource) => (int) data_get($resource, 'pivot.id', 0) > 0)
@@ -1307,13 +1349,21 @@ new #[Layout('layouts.app')] class extends Component {
                     $activePersonnelRequirements = $activeRowKey ? $form->personnelRequirementsForRow($activeRowKey) : [];
                     $activeHasRegisteredInformation = $activeRowKey
                         && filled(data_get($form->additional_information, "{$activeRowKey}.report_id"));
+                    $hasOperationalInformation = ($activeRequirements['vehicle'] ?? false)
+                        || ($activeRequirements['remittance'] ?? false)
+                        || ($activeRequirements['container'] ?? false)
+                        || ($activeRequirements['personnel'] ?? false);
+                    $hasFinalReport = $activeRowKey && $form->usesOperationLines($activeRowKey);
+                    $showsInformationTabs = $hasOperationalInformation && $hasFinalReport;
+                    $initialInformationTab = $hasOperationalInformation ? 'operational' : 'final';
                 @endphp
 
                 @if ($activeResourceRow && $activeRowKey)
-                    <div x-data="{ confirmClear: false }" x-on:keydown.escape.window="$wire.closeAdditionalInformation()"
+                    <div x-data="{ confirmClear: false, activeInformationTab: @js($initialInformationTab) }" x-on:keydown.escape.window="$wire.closeAdditionalInformation()"
                         class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-8 backdrop-blur-sm"
                         role="dialog" aria-modal="true" aria-labelledby="additionalInformationTitle">
-                        <div class="my-4 flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
+                        <div :class="activeInformationTab === 'operational' ? 'max-w-2xl' : 'max-w-7xl'"
+                            class="my-4 flex max-h-[90vh] w-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
                             <div class="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50 px-5 py-4">
                                 <div>
                                     <h3 id="additionalInformationTitle" class="font-semibold text-gray-900">
@@ -1352,6 +1402,26 @@ new #[Layout('layouts.app')] class extends Component {
                                         @endif
                                     </p>
                                 @endif
+
+                                @if ($showsInformationTabs)
+                                    <div class="border-b border-gray-200" role="tablist" aria-label="Secciones de información adicional">
+                                        <button type="button" role="tab" @click="activeInformationTab = 'operational'"
+                                            :aria-selected="(activeInformationTab === 'operational').toString()"
+                                            :class="activeInformationTab === 'operational' ? 'border-blue-700 text-blue-700' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'"
+                                            class="border-b-2 px-4 py-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">
+                                            Información Operativa
+                                        </button>
+                                        <button type="button" role="tab" @click="activeInformationTab = 'final'"
+                                            :aria-selected="(activeInformationTab === 'final').toString()"
+                                            :class="activeInformationTab === 'final' ? 'border-blue-700 text-blue-700' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'"
+                                            class="border-b-2 px-4 py-3 text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2">
+                                            Informe Final
+                                        </button>
+                                    </div>
+                                @endif
+
+                                @if ($hasOperationalInformation)
+                                <div @if ($showsInformationTabs) x-cloak x-show="activeInformationTab === 'operational'" @endif class="space-y-5">
                                 @if (($activeRequirements['vehicle'] ?? false) || ($activeRequirements['remittance'] ?? false) || ($activeRequirements['container'] ?? false))
                                     <section class="rounded-xl border border-gray-200 bg-white p-4">
                                         <div class="space-y-4">
@@ -1370,7 +1440,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                 </div>
                                             @endif
 
-                                            @if ($activeRequirements['remittance'] ?? false)
+                                            @if (($activeRequirements['remittance'] ?? false) && !$form->isTransportOperation($activeRowKey))
                                                 <div>
                                                     <x-input-label for="additional_remittance">
                                                         Remesa de transporte <span class="text-red-600">*</span>
@@ -1510,6 +1580,211 @@ new #[Layout('layouts.app')] class extends Component {
                                             @endforeach
                                         </div>
                                     </section>
+                                @endif
+
+                                </div>
+                                @endif
+
+                                @php
+                                    $resourceOperation = $form->operationNameForRow($activeRowKey);
+                                    $isTransportOperation = $form->isTransportOperation($activeRowKey);
+                                    $isAuthorizedCostOperation = $form->isAuthorizedCostOperation($activeRowKey);
+                                    $showsOperationTable = $form->usesOperationLines($activeRowKey);
+                                    $showRemittance = $isTransportOperation && ($activeRequirements['remittance'] ?? false);
+                                    $operationLines = (array) data_get($form->additional_information, "{$activeRowKey}.operation_lines", []);
+                                    $origins = $showsOperationTable ? $form->availableOrigins() : collect();
+                                    $operationConcepts = $showsOperationTable
+                                        ? $form->operationConceptsForRow($activeRowKey)
+                                        : collect();
+                                @endphp
+
+                                @if ($hasFinalReport)
+                                <div @if ($showsInformationTabs) x-cloak x-show="activeInformationTab === 'final'" @endif>
+                                @if ($showsOperationTable)
+                                    <section class="rounded-xl border border-gray-200 bg-white p-4">
+                                        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                            <div>
+                                                <h4 class="font-semibold text-gray-900">Informe Final</h4>
+                                            </div>
+                                            <div class="flex items-center gap-2">
+                                                <span class="w-fit rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-medium text-gray-600">
+                                                    {{ $resourceOperation }}
+                                                </span>
+                                                @if ($form->canEdit)
+                                                    <button type="button" wire:click="addOperationLine"
+                                                        wire:loading.attr="disabled" wire:target="addOperationLine"
+                                                        class="inline-flex items-center gap-1 rounded-md border border-blue-700 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-widest text-blue-700 transition hover:bg-blue-700 hover:text-white">
+                                                        <span aria-hidden="true">+</span> Agregar fila
+                                                    </button>
+                                                @endif
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-4 overflow-x-auto rounded-lg border border-gray-200">
+                                            <table @class(['min-w-[1120px] divide-y divide-gray-200 text-sm' => $isTransportOperation, 'min-w-[760px] divide-y divide-gray-200 text-sm' => !$isTransportOperation])>
+                                                <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+                                                    <tr>
+                                                        @if ($showRemittance)
+                                                            <th class="px-3 py-3">Remesa</th>
+                                                        @endif
+                                                        <th class="px-3 py-3">Regional</th>
+                                                        @if ($isTransportOperation)
+                                                            <th class="px-3 py-3">Origen</th>
+                                                            <th class="px-3 py-3">Destino</th>
+                                                        @endif
+                                                        <th class="px-3 py-3">Concepto</th>
+                                                        <th class="px-3 py-3">Cantidad</th>
+                                                        <th class="px-3 py-3">Valor unitario</th>
+                                                        <th class="px-3 py-3">Valor total</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-gray-100 bg-white">
+                                                    @foreach ($operationLines as $lineIndex => $operationLine)
+                                                        @php
+                                                            $linePrefix = 'form.additional_information.' . $activeRowKey . '.operation_lines.' . $lineIndex;
+                                                        @endphp
+                                                        <tr wire:key="operation-line-{{ $activeRowKey }}-{{ data_get($operationLine, 'line_id', 'new-' . $lineIndex) }}">
+                                                            @if ($showRemittance)
+                                                                <td class="min-w-44 px-3 py-3 align-top">
+                                                                    <x-text-input type="text" class="w-full" maxlength="128"
+                                                                        wire:model.defer="{{ $linePrefix }}.remesa_transporte"
+                                                                        :disabled="!$form->canEdit" />
+                                                                    @error($linePrefix . '.remesa_transporte')
+                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                    @enderror
+                                                                </td>
+                                                            @endif
+                                                            <td class="min-w-36 px-3 py-3 align-top">
+                                                                <input type="text" readonly
+                                                                    value="{{ data_get($operationLine, 'regional') ?? '' }}"
+                                                                    placeholder="Sin regional"
+                                                                    class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-600 shadow-sm" />
+                                                            </td>
+                                                            @if ($isTransportOperation)
+                                                                <td class="min-w-48 px-3 py-3 align-top">
+                                                                    <select wire:model.defer="{{ $linePrefix }}.origin_id"
+                                                                        wire:change="updateOperationLineOrigin({{ $lineIndex }}, $event.target.value)"
+                                                                        @disabled(!$form->canEdit)
+                                                                        class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
+                                                                        <option value="">Seleccione origen</option>
+                                                                        @foreach ($origins as $origin)
+                                                                            <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
+                                                                        @endforeach
+                                                                    </select>
+                                                                    @error($linePrefix . '.origin_id')
+                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                    @enderror
+                                                                </td>
+                                                                <td class="min-w-48 px-3 py-3 align-top">
+                                                                    <select wire:model.defer="{{ $linePrefix }}.destination_id"
+                                                                        @disabled(!$form->canEdit)
+                                                                        class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
+                                                                        <option value="">Seleccione destino</option>
+                                                                        @foreach ($origins as $origin)
+                                                                            <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
+                                                                        @endforeach
+                                                                    </select>
+                                                                    @error($linePrefix . '.destination_id')
+                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                    @enderror
+                                                                </td>
+                                                            @endif
+                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                                <select wire:model.defer="{{ $linePrefix }}.operation_concept_id"
+                                                                    wire:change="updateOperationLineConcept({{ $lineIndex }}, $event.target.value)"
+                                                                    @disabled(!$form->canEdit || $operationConcepts->isEmpty())
+                                                                    class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
+                                                                    <option value="">Seleccione un concepto</option>
+                                                                    @foreach ($operationConcepts as $concept)
+                                                                        <option value="{{ $concept->id }}">{{ $concept->name }}</option>
+                                                                    @endforeach
+                                                                </select>
+                                                                @error($linePrefix . '.operation_concept_id')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </td>
+                                                            <td class="min-w-32 px-3 py-3 align-top">
+                                                                <x-text-input type="text" inputmode="decimal" class="w-full"
+                                                                    placeholder="0,00"
+                                                                    wire:model.defer="{{ $linePrefix }}.quantity"
+                                                                    wire:change="updateOperationLineQuantity({{ $lineIndex }}, $event.target.value)"
+                                                                    x-on:keydown.enter.prevent.stop="$el.blur()"
+                                                                    :disabled="!$form->canEdit" />
+                                                                @error($linePrefix . '.quantity')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </td>
+                                                            <td class="min-w-36 px-3 py-3 align-top">
+                                                                @if ($isAuthorizedCostOperation)
+                                                                    <x-text-input type="text" inputmode="decimal" class="w-full"
+                                                                        placeholder="0,00"
+                                                                        wire:model.defer="{{ $linePrefix }}.unit_price"
+                                                                        wire:change="updateOperationLineUnitPrice({{ $lineIndex }}, $event.target.value)"
+                                                                        x-on:keydown.enter.prevent.stop="$el.blur()"
+                                                                        :disabled="!$form->canEdit" />
+                                                                    @error($linePrefix . '.unit_price')
+                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                    @enderror
+                                                                @else
+                                                                    <input type="text" readonly disabled
+                                                                        value="{{ $form->formatOperationLineMoney(data_get($operationLine, 'unit_price')) }}"
+                                                                        class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-600 shadow-sm" />
+                                                                @endif
+                                                            </td>
+                                                            <td class="min-w-36 px-3 py-3 align-top">
+                                                                <input type="text" readonly disabled
+                                                                    value="{{ $form->formatOperationLineMoney(data_get($operationLine, 'total_price')) }}"
+                                                                    class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-600 shadow-sm" />
+                                                                @error($linePrefix . '.total_price')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </td>
+                                                        </tr>
+                                                    @endforeach
+                                                    @if ($operationLines === [])
+                                                    <tr>
+                                                        @if ($isTransportOperation)
+                                                            <td class="min-w-44 px-3 py-3 align-top">
+                                                                <x-text-input type="text" class="w-full" placeholder="Remesa" disabled />
+                                                            </td>
+                                                        @endif
+                                                        <td class="min-w-36 px-3 py-3 align-top">
+                                                            <x-text-input type="text" class="w-full" placeholder="Sin regional" readonly disabled />
+                                                        </td>
+                                                        @if ($isTransportOperation)
+                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                                <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
+                                                                    <option>Origen</option>
+                                                                </select>
+                                                            </td>
+                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                                <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
+                                                                    <option>Destino</option>
+                                                                </select>
+                                                            </td>
+                                                        @endif
+                                                        <td class="min-w-48 px-3 py-3 align-top">
+                                                            <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
+                                                                <option>Seleccione un concepto</option>
+                                                            </select>
+                                                        </td>
+                                                        <td class="min-w-32 px-3 py-3 align-top">
+                                                            <x-text-input type="text" class="w-full" placeholder="—" disabled />
+                                                        </td>
+                                                        <td class="min-w-36 px-3 py-3 align-top">
+                                                            <x-text-input type="text" class="w-full" placeholder="—" disabled />
+                                                        </td>
+                                                        <td class="min-w-36 px-3 py-3 align-top">
+                                                            <x-text-input type="text" class="w-full" placeholder="—" disabled />
+                                                        </td>
+                                                    </tr>
+                                                    @endif
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </section>
+                                @endif
+                                </div>
                                 @endif
 
                             </div>

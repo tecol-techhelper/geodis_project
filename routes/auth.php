@@ -49,6 +49,15 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
         Volt::route('auditoria', 'pages.audits.index')
             ->name('audits.index');
 
+        Volt::route('configuracion-servicios', 'pages.admin.service-configuration')
+            ->name('services.configuration');
+
+        Volt::route('conceptos-operacion', 'pages.admin.operation-concepts')
+            ->name('operation-concepts.index');
+
+        Volt::route('tarifario', 'pages.admin.resource-tariffs')
+            ->name('tariffs.index');
+
         Volt::route('resource-report-configuration', 'pages.admin.resource-report-configuration')
             ->name('resources.report-configuration');
 

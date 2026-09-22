@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\Region;
 use App\Models\RegionOrigin;
+use App\Models\Origin;
 use App\Services\Geodis\OriginNormalizer;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -68,11 +69,15 @@ class RegionOriginSeeder extends Seeder
                         continue;
                     }
 
-                    RegionOrigin::query()->updateOrCreate(
+                    $originModel = Origin::query()->updateOrCreate(
                         ['normalized_origin' => $normalizedOrigin],
+                        ['origin' => $normalizedOrigin],
+                    );
+
+                    RegionOrigin::query()->updateOrCreate(
+                        ['origin_id' => $originModel->id],
                         [
                             'region_id' => $region->id,
-                            'origin' => $normalizedOrigin,
                             'is_active' => true,
                         ],
                     );
