@@ -442,10 +442,6 @@ class ManageForm extends Form
     {
         abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
 
-        if (!$this->isTransportOperation($rowKey)) {
-            return;
-        }
-
         $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
 
         if (!array_key_exists($lineIndex, $lines)) {
@@ -615,17 +611,15 @@ class ManageForm extends Form
         }
 
         $origin = $this->originForValue($this->generalOrigin());
-        $destination = $this->isTransportOperation($rowKey)
-            ? $this->originForValue($this->generalDestination())
-            : null;
+        $destination = $this->originForValue($this->generalDestination());
 
         $lines = array_map(function (array $line) use ($rowKey, $origin, $destination): array {
-            if ($this->isTransportOperation($rowKey) && empty($line['origin_id']) && $origin) {
+            if (empty($line['origin_id']) && $origin) {
                 $line['origin_id'] = $origin->id;
                 $line['regional'] = $this->regionalNameForOrigin($origin);
             }
 
-            if ($this->isTransportOperation($rowKey) && empty($line['destination_id']) && $destination) {
+            if (empty($line['destination_id']) && $destination) {
                 $line['destination_id'] = $destination->id;
             }
 
@@ -645,13 +639,11 @@ class ManageForm extends Form
     private function newOperationLine(string $rowKey): array
     {
         $origin = $this->originForValue($this->generalOrigin());
-        $destination = $this->isTransportOperation($rowKey)
-            ? $this->originForValue($this->generalDestination())
-            : null;
+        $destination = $this->originForValue($this->generalDestination());
 
         return [
             'line_id' => null,
-            'origin_id' => $this->isTransportOperation($rowKey) ? $origin?->id : null,
+            'origin_id' => $origin?->id,
             'destination_id' => $destination?->id,
             'regional' => $this->regionalNameForOrigin($origin),
             'operation_concept_id' => null,
@@ -729,8 +721,9 @@ class ManageForm extends Form
     {
         $resourceId = data_get($this->resourceRow($rowKey), 'resource_id');
         $conceptId = data_get($line, 'operation_concept_id');
-        $origin = $this->isTransportOperation($rowKey)
-            ? (is_numeric(data_get($line, 'origin_id')) ? $this->originWithRegion((int) data_get($line, 'origin_id')) : null)
+        $originId = data_get($line, 'origin_id');
+        $origin = is_numeric($originId)
+            ? $this->originWithRegion((int) $originId)
             : $this->originForValue($this->generalOrigin());
 
         return app(TariffResolver::class)->resolve(
@@ -940,8 +933,7 @@ class ManageForm extends Form
                     return false;
                 }
 
-                if ($this->isTransportOperation($rowKey)
-                    && (!filled(data_get($line, 'origin_id')) || !filled(data_get($line, 'destination_id')))) {
+                if (!filled(data_get($line, 'origin_id')) || !filled(data_get($line, 'destination_id'))) {
                     return false;
                 }
 
@@ -1217,16 +1209,15 @@ class ManageForm extends Form
             }
 
             if ($this->usesOperationLines($rowKey)) {
-                $rules["{$prefix}.operation_lines"] = $requirements['remittance'] && $this->isTransportOperation($rowKey)
-                    ? ['array', 'min:1']
-                    : ['array'];
+                $rules["{$prefix}.operation_lines"] = ['array', 'min:1'];
                 $operationId = (int) data_get($row, 'resource_operation_id', 0);
+                $requiresConcept = $this->operationConceptsForRow($rowKey)->isNotEmpty();
 
                 foreach ((array) data_get($this->additional_information, "{$rowKey}.operation_lines", []) as $lineIndex => $line) {
                     $linePrefix = "{$prefix}.operation_lines.{$lineIndex}";
                     $rules["{$linePrefix}.line_id"] = ['nullable', 'integer'];
                     $rules["{$linePrefix}.operation_concept_id"] = [
-                        'nullable',
+                        $requiresConcept ? 'required' : 'nullable',
                         'integer',
                         'exists:operation_concepts,id',
                         function (string $attribute, mixed $value, \Closure $fail) use ($operationId): void {
@@ -1246,20 +1237,20 @@ class ManageForm extends Form
                         },
                     ];
                     $attributes["{$linePrefix}.operation_concept_id"] = 'concepto';
-                    $rules["{$linePrefix}.quantity"] = ['nullable', 'numeric', 'gt:0'];
+                    $rules["{$linePrefix}.quantity"] = ['required', 'numeric', 'gt:0'];
                     $attributes["{$linePrefix}.quantity"] = 'cantidad';
 
+                    $rules["{$linePrefix}.origin_id"] = ['required', 'integer', 'exists:origins,id'];
+                    $rules["{$linePrefix}.destination_id"] = ['required', 'integer', 'exists:origins,id'];
+                    $attributes["{$linePrefix}.origin_id"] = 'origen';
+                    $attributes["{$linePrefix}.destination_id"] = 'destino';
+
                     if ($this->isAuthorizedCostOperation($rowKey)) {
-                        $rules["{$linePrefix}.unit_price"] = ['nullable', 'numeric', 'gt:0'];
+                        $rules["{$linePrefix}.unit_price"] = ['required', 'numeric', 'gt:0'];
                         $attributes["{$linePrefix}.unit_price"] = 'valor unitario';
                     }
 
                     if ($this->isTransportOperation($rowKey)) {
-                        $rules["{$linePrefix}.origin_id"] = ['nullable', 'integer', 'exists:origins,id'];
-                        $rules["{$linePrefix}.destination_id"] = ['nullable', 'integer', 'exists:origins,id'];
-                        $attributes["{$linePrefix}.origin_id"] = 'origen';
-                        $attributes["{$linePrefix}.destination_id"] = 'destino';
-
                         $rules["{$linePrefix}.remesa_transporte"] = ['nullable', 'string', 'max:128'];
                         $attributes["{$linePrefix}.remesa_transporte"] = 'remesa de transporte';
                     }

@@ -72,14 +72,12 @@ class ExpedienteResource extends JsonResource
         }
 
         $isTransport = trim((string) $this->resource->resource?->operation?->name) === 'TRANSPORTE';
-        $generalOrigin = $isTransport ? null : $this->service?->service_parties?->first()?->party_city;
-        $generalDestination = $isTransport ? null : $this->destination();
 
         return $lines->map(fn (ServiceResourceReportLine $line): array => [
             'remesa' => $isTransport ? $line->remesa_transporte : $this->report->remesa_transporte,
             'regional' => $line->resolved_regional,
-            'origen' => $isTransport ? $line->origin?->origin : $generalOrigin,
-            'destino' => $isTransport ? $line->destination?->origin : $generalDestination,
+            'origen' => $line->origin?->origin,
+            'destino' => $line->destination?->origin,
             'concepto' => $line->concept?->name,
             'cantidad' => $line->quantity,
             'valor_unitario' => $line->unit_price,

@@ -226,7 +226,6 @@ class ExpedienteQueryService
         });
 
         $lineOrigins = $serviceResources
-            ->filter(fn (ServiceResource $resource) => trim((string) $resource->resource?->operation?->name) === 'TRANSPORTE')
             ->flatMap(fn (ServiceResource $resource) => $resource->report?->lines ?? collect())
             ->map(fn ($line) => $line->origin?->origin);
 
@@ -239,11 +238,8 @@ class ExpedienteQueryService
                 $normalizedOrigin !== null ? $regionsByOrigin->get($normalizedOrigin)?->name : null,
             );
 
-            $isTransport = trim((string) $serviceResource->resource?->operation?->name) === 'TRANSPORTE';
             foreach ($serviceResource->report?->lines ?? [] as $line) {
-                $lineOrigin = $isTransport
-                    ? $this->originNormalizer->normalize($line->origin?->origin)
-                    : $normalizedOrigin;
+                $lineOrigin = $this->originNormalizer->normalize($line->origin?->origin);
                 $line->setAttribute('resolved_regional', $lineOrigin !== null ? $regionsByOrigin->get($lineOrigin)?->name : null);
             }
         }
