@@ -193,31 +193,66 @@ final class ServiceTable extends PowerGridComponent
                 DB::raw("(SELECT COUNT(*)
                     FROM service_resource sr
                     INNER JOIN resources r ON r.id = sr.resource_id
+                    LEFT JOIN resource_operations ro ON ro.id = r.resource_operation_id
                     LEFT JOIN service_resource_reports srr
                         ON srr.service_resource_id = sr.id
                         AND srr.deleted_at IS NULL
                     WHERE sr.service_id = services.id
-                      AND COALESCE(r.required_report_mask, 0) <> 0
                       AND r.deleted_at IS NULL
                       AND (
-                          ((r.required_report_mask & 1) = 1 AND srr.vehicle_id IS NULL)
-                          OR ((r.required_report_mask & 4) = 4 AND TRIM(COALESCE(srr.remesa_transporte, '')) = '')
-                          OR ((r.required_report_mask & 8) = 8 AND srr.container_id IS NULL)
-                          OR (
-                              (r.required_report_mask & 2) = 2
-                              AND EXISTS (
-                                  SELECT 1
-                                  FROM resource_personnel_requirements rpr
-                                  WHERE rpr.resource_id = r.id
-                                    AND rpr.deleted_at IS NULL
-                                    AND rpr.quantity_required > 0
-                                    AND (
-                                        SELECT COUNT(*)
-                                        FROM service_resource_report_personnel srrp
-                                        WHERE srrp.service_resource_report_id = srr.id
-                                          AND srrp.personnel_role_id = rpr.personnel_role_id
-                                          AND srrp.deleted_at IS NULL
-                                    ) < rpr.quantity_required
+                          (COALESCE(r.required_report_mask, 0) <> 0
+                              OR ro.name IN ('TRANSPORTE', 'OCONCEPTOS', 'IZAJES', 'COSTO_AUTORIZADO'))
+                          AND (
+                              srr.id IS NULL
+                              OR ((r.required_report_mask & 1) = 1 AND srr.vehicle_id IS NULL)
+                              OR ((r.required_report_mask & 4) = 4 AND TRIM(COALESCE(srr.remesa_transporte, '')) = '')
+                              OR ((r.required_report_mask & 8) = 8 AND srr.container_id IS NULL)
+                              OR (
+                                  (r.required_report_mask & 2) = 2
+                                  AND EXISTS (
+                                      SELECT 1
+                                      FROM resource_personnel_requirements rpr
+                                      WHERE rpr.resource_id = r.id
+                                        AND rpr.deleted_at IS NULL
+                                        AND rpr.quantity_required > 0
+                                        AND (
+                                            SELECT COUNT(*)
+                                            FROM service_resource_report_personnel srrp
+                                            WHERE srrp.service_resource_report_id = srr.id
+                                              AND srrp.personnel_role_id = rpr.personnel_role_id
+                                              AND srrp.deleted_at IS NULL
+                                        ) < rpr.quantity_required
+                                  )
+                              )
+                              OR (
+                                  ro.name IN ('TRANSPORTE', 'OCONCEPTOS', 'IZAJES', 'COSTO_AUTORIZADO')
+                                  AND (
+                                      NOT EXISTS (
+                                          SELECT 1
+                                          FROM service_resource_report_lines line
+                                          WHERE line.service_resource_report_id = srr.id
+                                      )
+                                      OR EXISTS (
+                                          SELECT 1
+                                          FROM service_resource_report_lines line
+                                          WHERE line.service_resource_report_id = srr.id
+                                            AND (
+                                                line.origin_id IS NULL
+                                                OR line.destination_id IS NULL
+                                                OR (
+                                                    EXISTS (
+                                                        SELECT 1
+                                                        FROM operation_concepts concept
+                                                        WHERE concept.resource_operation_id = r.resource_operation_id
+                                                    )
+                                                    AND line.operation_concept_id IS NULL
+                                                )
+                                                OR line.quantity IS NULL OR line.quantity <= 0
+                                                OR line.unit_price IS NULL OR line.unit_price <= 0
+                                                OR line.total_price IS NULL OR line.total_price <= 0
+                                            )
+                                      )
+                                  )
                               )
                           )
                       )
@@ -538,18 +573,13 @@ final class ServiceTable extends PowerGridComponent
         }
 
         $requiredEdifactCodes = $this->requiredEdifactCodesForServiceType($row->acd_type_value ?? null);
-        $finalEdifactCode = $requiredEdifactCodes !== []
-            ? $requiredEdifactCodes[array_key_last($requiredEdifactCodes)]
-            : null;
         $hasCompleteStatusFlow = $requiredEdifactCodes !== []
             && array_diff($requiredEdifactCodes, $this->reportedEdifactCodes($row)) === [];
         $hasCompleteRequiredData = (int) ($row->incomplete_required_resource_count ?? 0) === 0;
         $hasEstimatedServiceDates = filled($row->positioning_date) && filled($row->arrival_date);
 
         if (
-            $finalEdifactCode !== null
-            && $latestEdifactCode === $finalEdifactCode
-            && $hasCompleteStatusFlow
+            $hasCompleteStatusFlow
             && $hasCompleteRequiredData
             && $hasEstimatedServiceDates
         ) {

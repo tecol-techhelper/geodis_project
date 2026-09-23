@@ -1621,17 +1621,15 @@ new #[Layout('layouts.app')] class extends Component {
                                         </div>
 
                                         <div class="mt-4 overflow-x-auto rounded-lg border border-gray-200">
-                                            <table @class(['min-w-[1120px] divide-y divide-gray-200 text-sm' => $isTransportOperation, 'min-w-[760px] divide-y divide-gray-200 text-sm' => !$isTransportOperation])>
+                                            <table class="min-w-[1120px] divide-y divide-gray-200 text-sm">
                                                 <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     <tr>
                                                         @if ($showRemittance)
                                                             <th class="px-3 py-3">Remesa</th>
                                                         @endif
                                                         <th class="px-3 py-3">Regional</th>
-                                                        @if ($isTransportOperation)
-                                                            <th class="px-3 py-3">Origen</th>
-                                                            <th class="px-3 py-3">Destino</th>
-                                                        @endif
+                                                        <th class="px-3 py-3">Origen</th>
+                                                        <th class="px-3 py-3">Destino</th>
                                                         <th class="px-3 py-3">Concepto</th>
                                                         <th class="px-3 py-3">Cantidad</th>
                                                         <th class="px-3 py-3">Valor unitario</th>
@@ -1660,35 +1658,33 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     placeholder="Sin regional"
                                                                     class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-600 shadow-sm" />
                                                             </td>
-                                                            @if ($isTransportOperation)
-                                                                <td class="min-w-48 px-3 py-3 align-top">
-                                                                    <select wire:model.defer="{{ $linePrefix }}.origin_id"
-                                                                        wire:change="updateOperationLineOrigin({{ $lineIndex }}, $event.target.value)"
-                                                                        @disabled(!$form->canEdit)
-                                                                        class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
-                                                                        <option value="">Seleccione origen</option>
-                                                                        @foreach ($origins as $origin)
-                                                                            <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
-                                                                        @endforeach
-                                                                    </select>
-                                                                    @error($linePrefix . '.origin_id')
-                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                    @enderror
-                                                                </td>
-                                                                <td class="min-w-48 px-3 py-3 align-top">
-                                                                    <select wire:model.defer="{{ $linePrefix }}.destination_id"
-                                                                        @disabled(!$form->canEdit)
-                                                                        class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
-                                                                        <option value="">Seleccione destino</option>
-                                                                        @foreach ($origins as $origin)
-                                                                            <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
-                                                                        @endforeach
-                                                                    </select>
-                                                                    @error($linePrefix . '.destination_id')
-                                                                        <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
-                                                                    @enderror
-                                                                </td>
-                                                            @endif
+                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                                <select wire:model.defer="{{ $linePrefix }}.origin_id"
+                                                                    wire:change="updateOperationLineOrigin({{ $lineIndex }}, $event.target.value)"
+                                                                    @disabled(!$form->canEdit)
+                                                                    class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
+                                                                    <option value="">Seleccione origen</option>
+                                                                    @foreach ($origins as $origin)
+                                                                        <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
+                                                                    @endforeach
+                                                                </select>
+                                                                @error($linePrefix . '.origin_id')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </td>
+                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                                <select wire:model.defer="{{ $linePrefix }}.destination_id"
+                                                                    @disabled(!$form->canEdit)
+                                                                    class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
+                                                                    <option value="">Seleccione destino</option>
+                                                                    @foreach ($origins as $origin)
+                                                                        <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
+                                                                    @endforeach
+                                                                </select>
+                                                                @error($linePrefix . '.destination_id')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                            </td>
                                                             <td class="min-w-48 px-3 py-3 align-top">
                                                                 <select wire:model.defer="{{ $linePrefix }}.operation_concept_id"
                                                                     wire:change="updateOperationLineConcept({{ $lineIndex }}, $event.target.value)"
@@ -1751,18 +1747,16 @@ new #[Layout('layouts.app')] class extends Component {
                                                         <td class="min-w-36 px-3 py-3 align-top">
                                                             <x-text-input type="text" class="w-full" placeholder="Sin regional" readonly disabled />
                                                         </td>
-                                                        @if ($isTransportOperation)
-                                                            <td class="min-w-48 px-3 py-3 align-top">
-                                                                <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
-                                                                    <option>Origen</option>
-                                                                </select>
-                                                            </td>
-                                                            <td class="min-w-48 px-3 py-3 align-top">
-                                                                <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
-                                                                    <option>Destino</option>
-                                                                </select>
-                                                            </td>
-                                                        @endif
+                                                        <td class="min-w-48 px-3 py-3 align-top">
+                                                            <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
+                                                                <option>Origen</option>
+                                                            </select>
+                                                        </td>
+                                                        <td class="min-w-48 px-3 py-3 align-top">
+                                                            <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
+                                                                <option>Destino</option>
+                                                            </select>
+                                                        </td>
                                                         <td class="min-w-48 px-3 py-3 align-top">
                                                             <select disabled class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-500 shadow-sm">
                                                                 <option>Seleccione un concepto</option>
