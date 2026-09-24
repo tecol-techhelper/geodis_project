@@ -1307,13 +1307,12 @@ class ManageForm extends Form
             if ($this->usesOperationLines($rowKey)) {
                 $rules["{$prefix}.operation_lines"] = ['array', 'min:1'];
                 $operationId = (int) data_get($row, 'resource_operation_id', 0);
-                $requiresConcept = $this->operationConceptsForRow($rowKey)->isNotEmpty();
 
                 foreach ((array) data_get($this->additional_information, "{$rowKey}.operation_lines", []) as $lineIndex => $line) {
                     $linePrefix = "{$prefix}.operation_lines.{$lineIndex}";
                     $rules["{$linePrefix}.line_id"] = ['nullable', 'integer'];
                     $rules["{$linePrefix}.operation_concept_id"] = [
-                        $requiresConcept ? 'required' : 'nullable',
+                        'nullable',
                         'integer',
                         'exists:operation_concepts,id',
                         function (string $attribute, mixed $value, \Closure $fail) use ($operationId): void {
@@ -1333,20 +1332,20 @@ class ManageForm extends Form
                         },
                     ];
                     $attributes["{$linePrefix}.operation_concept_id"] = 'concepto';
-                    $rules["{$linePrefix}.quantity"] = ['required', 'numeric', 'gt:0'];
+                    $rules["{$linePrefix}.quantity"] = ['nullable', 'numeric', 'gt:0'];
                     $attributes["{$linePrefix}.quantity"] = 'cantidad';
 
-                    $rules["{$linePrefix}.origin_id"] = ['required', 'integer', 'exists:origins,id'];
-                    $rules["{$linePrefix}.origin_date"] = ['required', 'date'];
-                    $rules["{$linePrefix}.destination_id"] = ['required', 'integer', 'exists:origins,id'];
-                    $rules["{$linePrefix}.destination_date"] = ['required', 'date'];
+                    $rules["{$linePrefix}.origin_id"] = ['nullable', 'integer', 'exists:origins,id'];
+                    $rules["{$linePrefix}.origin_date"] = ['nullable', 'date'];
+                    $rules["{$linePrefix}.destination_id"] = ['nullable', 'integer', 'exists:origins,id'];
+                    $rules["{$linePrefix}.destination_date"] = ['nullable', 'date'];
                     $attributes["{$linePrefix}.origin_id"] = 'origen';
                     $attributes["{$linePrefix}.origin_date"] = 'fecha de origen';
                     $attributes["{$linePrefix}.destination_id"] = 'destino';
                     $attributes["{$linePrefix}.destination_date"] = 'fecha de destino';
 
                     if ($this->isAuthorizedCostOperation($rowKey)) {
-                        $rules["{$linePrefix}.unit_price"] = ['required', 'numeric', 'gt:0'];
+                        $rules["{$linePrefix}.unit_price"] = ['nullable', 'numeric', 'gt:0'];
                         $attributes["{$linePrefix}.unit_price"] = 'valor unitario';
                     }
 
