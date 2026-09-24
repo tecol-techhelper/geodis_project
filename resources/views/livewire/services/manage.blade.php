@@ -1664,11 +1664,18 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     @disabled(!$form->canEdit)
                                                                     class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
                                                                     <option value="">Seleccione origen</option>
-                                                                    @foreach ($origins as $origin)
-                                                                        <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
-                                                                    @endforeach
+                                                                @foreach ($origins as $origin)
+                                                                    <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
+                                                                @endforeach
                                                                 </select>
+                                                                <x-text-input type="datetime-local"
+                                                                    class="mt-2 h-9 w-full text-xs"
+                                                                    wire:model.defer="{{ $linePrefix }}.origin_date"
+                                                                    :disabled="!$form->canEdit" />
                                                                 @error($linePrefix . '.origin_id')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                                @error($linePrefix . '.origin_date')
                                                                     <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                                                                 @enderror
                                                             </td>
@@ -1677,11 +1684,18 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     @disabled(!$form->canEdit)
                                                                     class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
                                                                     <option value="">Seleccione destino</option>
-                                                                    @foreach ($origins as $origin)
-                                                                        <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
-                                                                    @endforeach
+                                                                @foreach ($origins as $origin)
+                                                                    <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
+                                                                @endforeach
                                                                 </select>
+                                                                <x-text-input type="datetime-local"
+                                                                    class="mt-2 h-9 w-full text-xs"
+                                                                    wire:model.defer="{{ $linePrefix }}.destination_date"
+                                                                    :disabled="!$form->canEdit" />
                                                                 @error($linePrefix . '.destination_id')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
+                                                                @error($linePrefix . '.destination_date')
                                                                     <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                                                                 @enderror
                                                             </td>

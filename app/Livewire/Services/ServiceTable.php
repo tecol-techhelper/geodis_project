@@ -238,7 +238,9 @@ final class ServiceTable extends PowerGridComponent
                                           WHERE line.service_resource_report_id = srr.id
                                             AND (
                                                 line.origin_id IS NULL
+                                                OR line.origin_date IS NULL
                                                 OR line.destination_id IS NULL
+                                                OR line.destination_date IS NULL
                                                 OR (
                                                     EXISTS (
                                                         SELECT 1

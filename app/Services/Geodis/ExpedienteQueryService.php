@@ -129,7 +129,7 @@ class ExpedienteQueryService
                 'vehicles.id',
                 'vehicles.plate',
             ]),
-            'report.lines:id,service_resource_report_id,origin_id,destination_id,operation_concept_id,remesa_transporte,quantity,unit_price,total_price',
+            'report.lines:id,service_resource_report_id,origin_id,origin_date,destination_id,destination_date,operation_concept_id,remesa_transporte,quantity,unit_price,total_price',
             'report.lines.origin:id,origin',
             'report.lines.destination:id,origin',
             'report.lines.concept:id,name',
