@@ -17,6 +17,7 @@ use App\Services\Tariffs\TariffResolver;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -34,6 +35,26 @@ class ManageForm extends Form
         'OCONCEPTOS',
         'IZAJES',
         'COSTO_AUTORIZADO',
+    ];
+
+    /** @var array<string, array{initial:array{be:string,edifact:int},final:array{be:string,edifact:int}}> */
+    private const FLOW_STATUSES = [
+        'POST-CARRIAGE' => [
+            'initial' => ['be' => 'ACT013', 'edifact' => 13],
+            'final' => ['be' => 'WHRECP', 'edifact' => 29],
+        ],
+        'DOM-CONSOL' => [
+            'initial' => ['be' => 'ACT035', 'edifact' => 35],
+            'final' => ['be' => 'ACT021', 'edifact' => 74],
+        ],
+        'EMPTY-CONTAINER' => [
+            'initial' => ['be' => 'CNT013', 'edifact' => 79],
+            'final' => ['be' => 'CNT021', 'edifact' => 82],
+        ],
+        'DELIVERY-SO' => [
+            'initial' => ['be' => 'ACT013', 'edifact' => 13],
+            'final' => ['be' => 'ACT021', 'edifact' => 74],
+        ],
     ];
 
     public bool $canEdit = false;
@@ -184,7 +205,7 @@ class ManageForm extends Form
                 'service_resource_rows.report.lines.origin.regionOrigin.region',
                 'service_resource_rows.report.lines.destination',
                 'service_resource_rows.report.lines.concept',
-                'service_status_reports.status',
+                'service_status_reports.status.status_purpose',
                 'service_status_reports.resourceStatusReports.serviceResource.resource',
 
                 // Purchase Orders (CNIs)
@@ -623,6 +644,14 @@ class ManageForm extends Form
                 $line['destination_id'] = $destination->id;
             }
 
+            if (blank(data_get($line, 'origin_date'))) {
+                $line['origin_date'] = $this->operationLineDateSnapshot($rowKey, 'initial');
+            }
+
+            if (blank(data_get($line, 'destination_date'))) {
+                $line['destination_date'] = $this->operationLineDateSnapshot($rowKey, 'final');
+            }
+
             if (data_get($line, 'unit_price') === null && filled(data_get($line, 'operation_concept_id'))) {
                 $line['unit_price'] = $this->resolveOperationLineUnitPrice($rowKey, $line);
             }
@@ -644,7 +673,9 @@ class ManageForm extends Form
         return [
             'line_id' => null,
             'origin_id' => $origin?->id,
+            'origin_date' => $this->operationLineDateSnapshot($rowKey, 'initial'),
             'destination_id' => $destination?->id,
+            'destination_date' => $this->operationLineDateSnapshot($rowKey, 'final'),
             'regional' => $this->regionalNameForOrigin($origin),
             'operation_concept_id' => null,
             'quantity' => null,
@@ -652,6 +683,68 @@ class ManageForm extends Form
             'total_price' => null,
             'remesa_transporte' => null,
         ];
+    }
+
+    private function operationLineDateSnapshot(string $rowKey, string $event): ?string
+    {
+        $pivotId = (int) data_get($this->resourceRow($rowKey), 'pivot_id', 0);
+        $flow = $this->serviceFlow();
+
+        if ($pivotId <= 0 || $flow === null || !isset(self::FLOW_STATUSES[$flow][$event])) {
+            return null;
+        }
+
+        $expectedStatus = self::FLOW_STATUSES[$flow][$event];
+        $reportedAt = ($this->service?->service_status_reports ?? collect())
+            ->filter(function ($statusReport) use ($flow, $expectedStatus): bool {
+                $status = $statusReport->status;
+
+                return $status !== null
+                    && Str::upper(trim((string) $status->status_purpose?->purpose_subcode)) === $flow
+                    && Str::upper(trim((string) $status->status_be)) === $expectedStatus['be']
+                    && (int) $status->edifact_code === $expectedStatus['edifact'];
+            })
+            ->flatMap(fn($statusReport) => $statusReport->resourceStatusReports ?? collect())
+            ->filter(fn($resourceStatusReport) => (int) $resourceStatusReport->service_resource_id === $pivotId)
+            ->pluck('reported_at')
+            ->filter()
+            ->sortDesc()
+            ->first();
+
+        return $reportedAt !== null ? Carbon::parse($reportedAt)->format('Y-m-d\\TH:i') : null;
+    }
+
+    private function serviceFlow(): ?string
+    {
+        $purchaseOrders = $this->service?->purchase_orders ?? collect();
+
+        if ($purchaseOrders->isEmpty()) {
+            return null;
+        }
+
+        $flows = $purchaseOrders->map(function ($purchaseOrder): ?string {
+            $references = $purchaseOrder->order_references->filter(
+                fn($reference) => strtoupper(trim((string) $reference->reference_type?->reference_type_code)) === 'ACD',
+            );
+
+            if ($references->count() !== 1) {
+                return null;
+            }
+
+            $flow = Str::upper(trim((string) $references->first()->order_reference_value));
+            $flow = str_replace([' ', '_'], '-', $flow);
+
+            return $flow === 'ROAD' ? 'DELIVERY-SO' : $flow;
+        });
+
+        if ($flows->contains(null)) {
+            return null;
+        }
+
+        $uniqueFlows = $flows->unique()->values();
+        $flow = $uniqueFlows->count() === 1 ? $uniqueFlows->first() : null;
+
+        return is_string($flow) && isset(self::FLOW_STATUSES[$flow]) ? $flow : null;
     }
 
     private function generalOrigin(): ?string
@@ -933,7 +1026,10 @@ class ManageForm extends Form
                     return false;
                 }
 
-                if (!filled(data_get($line, 'origin_id')) || !filled(data_get($line, 'destination_id'))) {
+                if (!filled(data_get($line, 'origin_id'))
+                    || !filled(data_get($line, 'origin_date'))
+                    || !filled(data_get($line, 'destination_id'))
+                    || !filled(data_get($line, 'destination_date'))) {
                     return false;
                 }
 
@@ -1241,9 +1337,13 @@ class ManageForm extends Form
                     $attributes["{$linePrefix}.quantity"] = 'cantidad';
 
                     $rules["{$linePrefix}.origin_id"] = ['required', 'integer', 'exists:origins,id'];
+                    $rules["{$linePrefix}.origin_date"] = ['required', 'date'];
                     $rules["{$linePrefix}.destination_id"] = ['required', 'integer', 'exists:origins,id'];
+                    $rules["{$linePrefix}.destination_date"] = ['required', 'date'];
                     $attributes["{$linePrefix}.origin_id"] = 'origen';
+                    $attributes["{$linePrefix}.origin_date"] = 'fecha de origen';
                     $attributes["{$linePrefix}.destination_id"] = 'destino';
+                    $attributes["{$linePrefix}.destination_date"] = 'fecha de destino';
 
                     if ($this->isAuthorizedCostOperation($rowKey)) {
                         $rules["{$linePrefix}.unit_price"] = ['required', 'numeric', 'gt:0'];
@@ -1316,7 +1416,9 @@ class ManageForm extends Form
                 return [
                     'line_id' => filled(data_get($line, 'line_id')) ? (int) data_get($line, 'line_id') : null,
                     'origin_id' => is_numeric($originId) ? (int) $originId : null,
+                    'origin_date' => filled(data_get($line, 'origin_date')) ? Carbon::parse(data_get($line, 'origin_date')) : null,
                     'destination_id' => is_numeric($destinationId) ? (int) $destinationId : null,
+                    'destination_date' => filled(data_get($line, 'destination_date')) ? Carbon::parse(data_get($line, 'destination_date')) : null,
                     'operation_concept_id' => is_numeric($conceptId) ? (int) $conceptId : null,
                     'quantity' => $this->normalizePositiveDecimal(data_get($line, 'quantity')),
                     'unit_price' => $this->isAuthorizedCostOperation($rowKey)
@@ -1342,7 +1444,9 @@ class ManageForm extends Form
                 return $line;
             })
             ->filter(fn (array $line) => $line['origin_id'] !== null
+                || $line['origin_date'] !== null
                 || $line['destination_id'] !== null
+                || $line['destination_date'] !== null
                 || $line['operation_concept_id'] !== null
                 || $line['quantity'] !== null
                 || $line['unit_price'] !== null
@@ -1566,7 +1670,9 @@ class ManageForm extends Form
                 ?->map(fn (ServiceResourceReportLine $line) => [
                     'line_id' => (int) $line->id,
                     'origin_id' => $line->origin_id,
+                    'origin_date' => $line->origin_date?->format('Y-m-d\\TH:i'),
                     'destination_id' => $line->destination_id,
+                    'destination_date' => $line->destination_date?->format('Y-m-d\\TH:i'),
                     'regional' => $this->regionalNameForOrigin($line->origin),
                     'operation_concept_id' => $line->operation_concept_id,
                     'quantity' => $this->trimStoredDecimal($line->quantity),
