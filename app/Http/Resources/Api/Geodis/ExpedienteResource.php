@@ -29,8 +29,6 @@ class ExpedienteResource extends JsonResource
             'administrativo' => $this->administrativeData(),
             'unidad' => 1,
             'informe_final' => $this->finalReport(),
-            'fecha_de_posicionamiento' => $this->service?->positioning_date?->format('Y-m-d'),
-            'fecha_de_arribo' => $this->service?->arrival_date?->format('Y-m-d'),
             'numero_contenedor' => $this->report?->container?->container_number,
         ];
     }
@@ -49,8 +47,10 @@ class ExpedienteResource extends JsonResource
             'remesa' => $isTransport ? $line->remesa_transporte : $this->report->remesa_transporte,
             'regional' => $line->resolved_regional,
             'origen' => $line->origin?->origin,
+            'fecha_de_posicionamiento' => $line->positioning_date?->format('Y-m-d'),
             'fecha_de_cargue' => $line->origin_date?->format('Y-m-d'),
             'destino' => $line->destination?->origin,
+            'fecha_de_arribo' => $line->arrival_date?->format('Y-m-d'),
             'fecha_de_descargue' => $line->destination_date?->format('Y-m-d'),
             'concepto' => $line->concept?->name,
             'cantidad' => $line->quantity,

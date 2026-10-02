@@ -459,6 +459,20 @@ class ManageForm extends Form
         data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
     }
 
+    public function removeOperationLine(string $rowKey, int $lineIndex): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+        if (!array_key_exists($lineIndex, $lines)) {
+            return;
+        }
+
+        array_splice($lines, $lineIndex, 1);
+        data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
+        $this->resetValidation("additional_information.{$rowKey}.operation_lines");
+    }
+
     public function updateOperationLineOrigin(string $rowKey, int $lineIndex, mixed $originId): void
     {
         abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
@@ -476,6 +490,41 @@ class ManageForm extends Form
         $lines[$lineIndex]['total_price'] = $this->calculateOperationLineTotal($lines[$lineIndex]);
         data_set($this->additional_information, "{$rowKey}.operation_lines", array_values($lines));
         $this->resetValidation("additional_information.{$rowKey}.operation_lines.{$lineIndex}.origin_id");
+    }
+
+    public function updateOperationLineDate(string $rowKey, int $lineIndex, string $field, ?string $date): void
+    {
+        abort_unless($this->canEdit, 403, 'No tienes permisos para editar este servicio.');
+
+        if (!in_array($field, ['positioning_date', 'origin_date', 'arrival_date', 'destination_date'], true)) {
+            return;
+        }
+
+        $lines = (array) data_get($this->additional_information, "{$rowKey}.operation_lines", []);
+        if (!array_key_exists($lineIndex, $lines)) {
+            return;
+        }
+
+        if (filled($date)) {
+            $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+            if ($parsed === false || $parsed->format('Y-m-d') !== $date) {
+                throw ValidationException::withMessages([
+                    "{$this->getPropertyName()}.additional_information.{$rowKey}.operation_lines.{$lineIndex}.{$field}"
+                        => 'Seleccione una fecha válida.',
+                ]);
+            }
+        }
+
+        if (in_array($field, ['origin_date', 'destination_date'], true) && filled($date)) {
+            $current = data_get($lines[$lineIndex], $field);
+            $time = filled($current) ? Carbon::parse($current)->format('H:i') : '00:00';
+            $lines[$lineIndex][$field] = $date . 'T' . $time;
+        } else {
+            $lines[$lineIndex][$field] = filled($date) ? $date : null;
+        }
+
+        data_set($this->additional_information, "{$rowKey}.operation_lines", $lines);
+        $this->resetValidation("additional_information.{$rowKey}.operation_lines.{$lineIndex}.{$field}");
     }
 
     public function updateOperationLineConcept(string $rowKey, int $lineIndex, mixed $conceptId): void
@@ -673,8 +722,10 @@ class ManageForm extends Form
         return [
             'line_id' => null,
             'origin_id' => $origin?->id,
+            'positioning_date' => null,
             'origin_date' => $this->operationLineDateSnapshot($rowKey, 'initial'),
             'destination_id' => $destination?->id,
+            'arrival_date' => null,
             'destination_date' => $this->operationLineDateSnapshot($rowKey, 'final'),
             'regional' => $this->regionalNameForOrigin($origin),
             'operation_concept_id' => null,
@@ -1415,8 +1466,10 @@ class ManageForm extends Form
                 return [
                     'line_id' => filled(data_get($line, 'line_id')) ? (int) data_get($line, 'line_id') : null,
                     'origin_id' => is_numeric($originId) ? (int) $originId : null,
+                    'positioning_date' => filled(data_get($line, 'positioning_date')) ? Carbon::parse(data_get($line, 'positioning_date'))->format('Y-m-d') : null,
                     'origin_date' => filled(data_get($line, 'origin_date')) ? Carbon::parse(data_get($line, 'origin_date')) : null,
                     'destination_id' => is_numeric($destinationId) ? (int) $destinationId : null,
+                    'arrival_date' => filled(data_get($line, 'arrival_date')) ? Carbon::parse(data_get($line, 'arrival_date'))->format('Y-m-d') : null,
                     'destination_date' => filled(data_get($line, 'destination_date')) ? Carbon::parse(data_get($line, 'destination_date')) : null,
                     'operation_concept_id' => is_numeric($conceptId) ? (int) $conceptId : null,
                     'quantity' => $this->normalizePositiveDecimal(data_get($line, 'quantity')),
@@ -1443,8 +1496,10 @@ class ManageForm extends Form
                 return $line;
             })
             ->filter(fn (array $line) => $line['origin_id'] !== null
+                || $line['positioning_date'] !== null
                 || $line['origin_date'] !== null
                 || $line['destination_id'] !== null
+                || $line['arrival_date'] !== null
                 || $line['destination_date'] !== null
                 || $line['operation_concept_id'] !== null
                 || $line['quantity'] !== null
@@ -1669,8 +1724,10 @@ class ManageForm extends Form
                 ?->map(fn (ServiceResourceReportLine $line) => [
                     'line_id' => (int) $line->id,
                     'origin_id' => $line->origin_id,
+                    'positioning_date' => $line->positioning_date?->format('Y-m-d'),
                     'origin_date' => $line->origin_date?->format('Y-m-d\\TH:i'),
                     'destination_id' => $line->destination_id,
+                    'arrival_date' => $line->arrival_date?->format('Y-m-d'),
                     'destination_date' => $line->destination_date?->format('Y-m-d\\TH:i'),
                     'regional' => $this->regionalNameForOrigin($line->origin),
                     'operation_concept_id' => $line->operation_concept_id,
