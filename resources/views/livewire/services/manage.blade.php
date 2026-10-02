@@ -325,12 +325,28 @@ new #[Layout('layouts.app')] class extends Component {
         $this->form->addOperationLine($rowKey);
     }
 
+    public function removeOperationLine(int $lineIndex): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->removeOperationLine($rowKey, $lineIndex);
+    }
+
     public function updateOperationLineOrigin(int $lineIndex, mixed $originId): void
     {
         $rowKey = $this->form->active_resource_row_key;
         abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
 
         $this->form->updateOperationLineOrigin($rowKey, $lineIndex, $originId);
+    }
+
+    public function updateOperationLineDate(int $lineIndex, string $field, ?string $date): void
+    {
+        $rowKey = $this->form->active_resource_row_key;
+        abort_unless($rowKey, 404, 'No hay un recurso seleccionado.');
+
+        $this->form->updateOperationLineDate($rowKey, $lineIndex, $field, $date);
     }
 
     public function updateOperationLineConcept(int $lineIndex, mixed $conceptId): void
@@ -955,42 +971,6 @@ new #[Layout('layouts.app')] class extends Component {
                                 <span class="text-gray-400">-</span>
                             @endforelse
                         </div>
-                    </div>
-                </div>
-
-                <div class="mt-2 md:col-span-3">
-                    <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900">
-                        <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z" />
-                        </svg>
-                        Fechas Estimadas del Servicio
-                    </h3>
-                </div>
-
-                <div class="grid grid-cols-1 gap-4 md:col-span-3 md:grid-cols-2">
-                    <div>
-                        <label for="positioning_date" class="mb-1 block text-sm font-medium text-gray-700">
-                            Fecha estimada de cargue (Posicionamiento)
-                        </label>
-                        <input type="datetime-local" id="positioning_date" wire:model.defer="form.positioning_date"
-                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
-                            @disabled(!$form->canEdit) />
-                        @error('form.positioning_date')
-                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                        @enderror
-                    </div>
-
-                    <div>
-                        <label for="arrival_date" class="mb-1 block text-sm font-medium text-gray-700">
-                            Fecha estimada de descargue (Arribo)
-                        </label>
-                        <input type="datetime-local" id="arrival_date" wire:model.defer="form.arrival_date"
-                            class="h-11 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
-                            @disabled(!$form->canEdit) />
-                        @error('form.arrival_date')
-                            <p class="mt-1 text-sm text-red-600">{{ $message }}</p>
-                        @enderror
                     </div>
                 </div>
 
@@ -1624,6 +1604,9 @@ new #[Layout('layouts.app')] class extends Component {
                                             <table class="min-w-[1120px] divide-y divide-gray-200 text-sm">
                                                 <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                                     <tr>
+                                                        <th class="w-12 px-3 py-3">
+                                                            <span class="sr-only">Acciones</span>
+                                                        </th>
                                                         @if ($showRemittance)
                                                             <th class="px-3 py-3">Remesa</th>
                                                         @endif
@@ -1640,8 +1623,25 @@ new #[Layout('layouts.app')] class extends Component {
                                                     @foreach ($operationLines as $lineIndex => $operationLine)
                                                         @php
                                                             $linePrefix = 'form.additional_information.' . $activeRowKey . '.operation_lines.' . $lineIndex;
+                                                            $shortDate = static fn ($value) => filled($value)
+                                                                ? \Illuminate\Support\Carbon::parse($value)->format('d/m/y') : '—';
+                                                            $dateValue = static fn ($value) => filled($value)
+                                                                ? substr((string) $value, 0, 10) : '';
                                                         @endphp
                                                         <tr wire:key="operation-line-{{ $activeRowKey }}-{{ data_get($operationLine, 'line_id', 'new-' . $lineIndex) }}">
+                                                            <td class="w-12 px-3 py-3 align-middle">
+                                                                @if ($form->canEdit)
+                                                                    <button type="button" wire:click="removeOperationLine({{ $lineIndex }})"
+                                                                        wire:loading.attr="disabled"
+                                                                        wire:target="removeOperationLine({{ $lineIndex }})"
+                                                                        title="Eliminar fila" aria-label="Eliminar fila"
+                                                                        class="inline-flex h-10 w-10 items-center justify-center text-red-600 transition hover:text-red-800 disabled:cursor-not-allowed disabled:opacity-50">
+                                                                        <svg aria-hidden="true" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7h12m-9 4v6m6-6v6m-7 3h8a1 1 0 001-1V7H7v12a1 1 0 001 1zM9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
+                                                                        </svg>
+                                                                    </button>
+                                                                @endif
+                                                            </td>
                                                             @if ($showRemittance)
                                                                 <td class="min-w-44 px-3 py-3 align-top">
                                                                     <x-text-input type="text" class="w-full" maxlength="128"
@@ -1658,7 +1658,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     placeholder="Sin regional"
                                                                     class="w-full rounded-md border-gray-300 bg-gray-100 text-sm text-gray-600 shadow-sm" />
                                                             </td>
-                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                            <td class="min-w-72 px-3 py-3 align-top">
                                                                 <select wire:model.defer="{{ $linePrefix }}.origin_id"
                                                                     wire:change="updateOperationLineOrigin({{ $lineIndex }}, $event.target.value)"
                                                                     @disabled(!$form->canEdit)
@@ -1668,10 +1668,35 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
                                                                 @endforeach
                                                                 </select>
-                                                                <x-text-input type="datetime-local"
-                                                                    class="mt-2 h-9 w-full text-xs"
-                                                                    wire:model.defer="{{ $linePrefix }}.origin_date"
-                                                                    :disabled="!$form->canEdit" />
+                                                                <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                                                                    <div class="flex min-w-0 items-center gap-1">
+                                                                        <span class="shrink-0">Pos.</span>
+                                                                        <label class="relative inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-md border border-gray-300 bg-white px-1 text-gray-800">
+                                                                            <span>{{ $shortDate(data_get($operationLine, 'positioning_date')) }}</span>
+                                                                            <input type="date" value="{{ $dateValue(data_get($operationLine, 'positioning_date')) }}"
+                                                                                aria-label="Posicionamiento" title="Editar posicionamiento"
+                                                                                wire:change="updateOperationLineDate({{ $lineIndex }}, 'positioning_date', $event.target.value)"
+                                                                                x-on:click="$el.showPicker?.()"
+                                                                                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                                                @disabled(!$form->canEdit) />
+                                                                        </label>
+                                                                    </div>
+                                                                    <div class="flex min-w-0 items-center gap-1">
+                                                                        <span class="shrink-0">Cargue</span>
+                                                                        <label class="relative inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-md border border-gray-300 bg-white px-1 text-gray-800">
+                                                                            <span>{{ $shortDate(data_get($operationLine, 'origin_date')) }}</span>
+                                                                            <input type="date" value="{{ $dateValue(data_get($operationLine, 'origin_date')) }}"
+                                                                                aria-label="Fecha de cargue" title="Editar cargue"
+                                                                                wire:change="updateOperationLineDate({{ $lineIndex }}, 'origin_date', $event.target.value)"
+                                                                                x-on:click="$el.showPicker?.()"
+                                                                                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                                                @disabled(!$form->canEdit) />
+                                                                        </label>
+                                                                    </div>
+                                                                </div>
+                                                                @error($linePrefix . '.positioning_date')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
                                                                 @error($linePrefix . '.origin_id')
                                                                     <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                                                                 @enderror
@@ -1679,7 +1704,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                                                                 @enderror
                                                             </td>
-                                                            <td class="min-w-48 px-3 py-3 align-top">
+                                                            <td class="min-w-72 px-3 py-3 align-top">
                                                                 <select wire:model.defer="{{ $linePrefix }}.destination_id"
                                                                     @disabled(!$form->canEdit)
                                                                     class="w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:bg-gray-100">
@@ -1688,10 +1713,35 @@ new #[Layout('layouts.app')] class extends Component {
                                                                     <option value="{{ $origin->id }}">{{ $origin->normalized_origin }}</option>
                                                                 @endforeach
                                                                 </select>
-                                                                <x-text-input type="datetime-local"
-                                                                    class="mt-2 h-9 w-full text-xs"
-                                                                    wire:model.defer="{{ $linePrefix }}.destination_date"
-                                                                    :disabled="!$form->canEdit" />
+                                                                <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-gray-600">
+                                                                    <div class="flex min-w-0 items-center gap-1">
+                                                                        <span class="shrink-0">Arribo</span>
+                                                                        <label class="relative inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-md border border-gray-300 bg-white px-1 text-gray-800">
+                                                                            <span>{{ $shortDate(data_get($operationLine, 'arrival_date')) }}</span>
+                                                                            <input type="date" value="{{ $dateValue(data_get($operationLine, 'arrival_date')) }}"
+                                                                                aria-label="Fecha de arribo" title="Editar arribo"
+                                                                                wire:change="updateOperationLineDate({{ $lineIndex }}, 'arrival_date', $event.target.value)"
+                                                                                x-on:click="$el.showPicker?.()"
+                                                                                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                                                @disabled(!$form->canEdit) />
+                                                                        </label>
+                                                                    </div>
+                                                                    <div class="flex min-w-0 items-center gap-1">
+                                                                        <span class="shrink-0">Desc.</span>
+                                                                        <label class="relative inline-flex h-7 min-w-0 flex-1 items-center justify-center rounded-md border border-gray-300 bg-white px-1 text-gray-800">
+                                                                            <span>{{ $shortDate(data_get($operationLine, 'destination_date')) }}</span>
+                                                                            <input type="date" value="{{ $dateValue(data_get($operationLine, 'destination_date')) }}"
+                                                                                aria-label="Fecha de descargue" title="Editar descargue"
+                                                                                wire:change="updateOperationLineDate({{ $lineIndex }}, 'destination_date', $event.target.value)"
+                                                                                x-on:click="$el.showPicker?.()"
+                                                                                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                                                                                @disabled(!$form->canEdit) />
+                                                                        </label>
+                                                                    </div>
+                                                                </div>
+                                                                @error($linePrefix . '.arrival_date')
+                                                                    <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
+                                                                @enderror
                                                                 @error($linePrefix . '.destination_id')
                                                                     <p class="mt-1 text-xs text-red-600">{{ $message }}</p>
                                                                 @enderror
@@ -1753,6 +1803,7 @@ new #[Layout('layouts.app')] class extends Component {
                                                     @endforeach
                                                     @if ($operationLines === [])
                                                     <tr>
+                                                        <td class="w-12 px-3 py-3"></td>
                                                         @if ($isTransportOperation)
                                                             <td class="min-w-44 px-3 py-3 align-top">
                                                                 <x-text-input type="text" class="w-full" placeholder="Remesa" disabled />
