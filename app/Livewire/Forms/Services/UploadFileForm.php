@@ -337,19 +337,69 @@ class UploadFileForm extends Form
 
     private function ensureRemoteDirectory(string $remoteDir): void
     {
-        if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
-            Storage::disk('sftp_geodis')->makeDirectory($remoteDir);
-        }
+        $context = $this->sftpDiagnosticContext($remoteDir);
+        $stage = 'directory_check';
 
-        $attempts = 0;
-        while ($attempts < 5 && !Storage::disk('sftp_geodis')->exists($remoteDir)) {
-            usleep(300000 * ($attempts + 1));
-            $attempts++;
-        }
+        try {
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+            $disk = Storage::disk('sftp_geodis');
+            Log::info('UploadFileForm@sftp:directory_start', $context);
 
-        if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
-            throw new \RuntimeException("No se pudo confirmar la creacion del directorio remoto {$remoteDir} por latencia.");
+            if (!$disk->directoryExists($remoteDir)) {
+                $stage = 'directory_create';
+                $created = $disk->makeDirectory($remoteDir);
+                Log::info('UploadFileForm@sftp:directory_create', $context + ['created' => $created]);
+                if (!$created) {
+                    throw new \RuntimeException('makeDirectory retorno false');
+                }
+            }
+
+            $stage = 'directory_verify';
+            $attempts = 0;
+            while (!$disk->directoryExists($remoteDir)) {
+                if ($attempts >= 5) {
+                    throw new \RuntimeException("No se pudo confirmar la creacion del directorio remoto {$remoteDir} por latencia.");
+                }
+                usleep(300000 * ($attempts + 1));
+                $attempts++;
+            }
+
+            Log::info('UploadFileForm@sftp:directory_verified', $context);
+        } catch (\Throwable $e) {
+            Log::error('UploadFileForm@sftp:directory_error', $context + [
+                'stage' => $stage,
+            ] + $this->sftpExceptionContext($e));
+            throw $e;
         }
+    }
+
+    private function sftpDiagnosticContext(string $remotePath): array
+    {
+        $root = (string) config('filesystems.disks.sftp_geodis.root', '');
+
+        return [
+            'service_id' => $this->service_id,
+            'disk' => 'sftp_geodis',
+            'root' => $root,
+            'remote_path' => $remotePath,
+            'effective_path' => rtrim($root, '/') . '/' . ltrim($remotePath, '/'),
+            'timeout_seconds' => config('filesystems.disks.sftp_geodis.timeout'),
+        ];
+    }
+
+    private function sftpExceptionContext(\Throwable $exception): array
+    {
+        $errors = [];
+        do {
+            $errors[] = [
+                'class' => get_class($exception),
+                'code' => $exception->getCode(),
+                'message' => $exception->getMessage(),
+            ];
+            $exception = $exception->getPrevious();
+        } while ($exception !== null && count($errors) < 5);
+
+        return ['exceptions' => $errors];
     }
 
     private function selectedPurchaseOrderContext(): array
@@ -408,10 +458,27 @@ class UploadFileForm extends Form
     {
         $attempts = 0;
         $lastError = null;
+        $context = $this->sftpDiagnosticContext($remotePath);
 
         while ($attempts < 5) {
+            $stage = 'local_file_check';
             try {
-                $result = Storage::disk('sftp_geodis')->putFileAs(
+                clearstatcache(true, $localPath);
+                if (!is_file($localPath) || !is_readable($localPath)) {
+                    throw new \RuntimeException('El archivo temporal no existe o no se puede leer.');
+                }
+                $localSize = filesize($localPath);
+                if ($localSize === false) {
+                    throw new \RuntimeException('No se pudo determinar el tamaño del archivo temporal.');
+                }
+                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+                $disk = Storage::disk('sftp_geodis');
+                Log::info('UploadFileForm@sftp:upload_start', $context + [
+                    'attempt' => $attempts + 1,
+                    'local_size_bytes' => $localSize,
+                ]);
+                $stage = 'file_write';
+                $result = $disk->putFileAs(
                     $remoteDir,
                     new \Illuminate\Http\File($localPath),
                     $remoteFileName
@@ -421,25 +488,49 @@ class UploadFileForm extends Form
                     throw new \RuntimeException('putFileAs retorno false');
                 }
 
-                $verifyTries = 0;
-                while ($verifyTries < 5 && !Storage::disk('sftp_geodis')->exists($remotePath)) {
-                    usleep(300000 * ($verifyTries + 1));
-                    $verifyTries++;
+                Log::info('UploadFileForm@sftp:write_completed', $context + [
+                    'attempt' => $attempts + 1,
+                    'returned_path' => $result,
+                ]);
+                $stage = 'file_verify';
+                $remoteSize = null;
+                for ($verifyTries = 0; $verifyTries <= 5; $verifyTries++) {
+                    $exists = $disk->fileExists($remotePath);
+                    $remoteSize = $exists ? $disk->size($remotePath) : null;
+                    if ($exists && $remoteSize === $localSize) {
+                        Log::info('UploadFileForm@sftp:upload_verified', $context + [
+                            'attempt' => $attempts + 1,
+                            'local_size_bytes' => $localSize,
+                            'remote_size_bytes' => $remoteSize,
+                        ]);
+                        return [true, null];
+                    }
+                    Log::warning('UploadFileForm@sftp:verification_pending', $context + [
+                        'attempt' => $attempts + 1,
+                        'verification_attempt' => $verifyTries + 1,
+                        'file_exists' => $exists,
+                        'local_size_bytes' => $localSize,
+                        'remote_size_bytes' => $remoteSize,
+                    ]);
+                    if ($verifyTries < 5) {
+                        usleep(300000 * ($verifyTries + 1));
+                    }
                 }
-
-                if (!Storage::disk('sftp_geodis')->exists($remotePath)) {
-                    Log::warning("Subida SFTP sin verificacion inmediata por latencia: {$remotePath}");
-                }
-
-                return [true, null];
+                throw new \RuntimeException($exists
+                    ? "El tamaño remoto ({$remoteSize} bytes) no coincide con el local ({$localSize} bytes)."
+                    : 'El archivo no existe en SFTP despues de la escritura.');
             } catch (\Throwable $e) {
                 $lastError = $e->getMessage();
-                Log::warning("Reintento {$attempts} fallido para {$remoteFileName}: {$lastError}");
+                Log::warning('UploadFileForm@sftp:upload_attempt_failed', $context + [
+                    'attempt' => $attempts + 1,
+                    'stage' => $stage,
+                ] + $this->sftpExceptionContext($e));
                 usleep(500000 * ($attempts + 1));
                 $attempts++;
             }
         }
 
+        Log::error('UploadFileForm@sftp:upload_failed', $context + ['message' => $lastError]);
         return [false, $lastError];
     }
 
