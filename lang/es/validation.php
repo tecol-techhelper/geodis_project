@@ -157,7 +157,7 @@ return [
     'string' => 'The :attribute field must be a string.',
     'timezone' => 'The :attribute field must be a valid timezone.',
     'unique' => 'The :attribute has already been taken.',
-    'uploaded' => 'The :attribute failed to upload.',
+    'uploaded' => 'No se pudo cargar :attribute. Intente nuevamente.',
     'uppercase' => 'The :attribute field must be uppercase.',
     'url' => 'The :attribute field must be a valid URL.',
     'ulid' => 'The :attribute field must be a valid ULID.',
@@ -175,6 +175,9 @@ return [
     */
 
     'custom' => [
+        'files.*' => [
+            'max' => 'El archivo supera el tamaño máximo permitido de 10 MB.',
+        ],
         'attribute-name' => [
             'rule-name' => 'custom-message',
         ],
@@ -191,6 +194,12 @@ return [
     |
     */
 
-    'attributes' => [],
+    'attributes' => [
+        'files' => 'los archivos',
+        'files.*' => 'el archivo',
+        'form.files' => 'los archivos',
+        'form.files.*' => 'el archivo',
+        'form' => ['files' => 'los archivos'],
+    ],
 
 ];
