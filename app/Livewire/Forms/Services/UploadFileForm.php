@@ -337,17 +337,17 @@ class UploadFileForm extends Form
 
     private function ensureRemoteDirectory(string $remoteDir): void
     {
-        if (!Storage::disk('sftp')->exists($remoteDir)) {
-            Storage::disk('sftp')->makeDirectory($remoteDir);
+        if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
+            Storage::disk('sftp_geodis')->makeDirectory($remoteDir);
         }
 
         $attempts = 0;
-        while ($attempts < 5 && !Storage::disk('sftp')->exists($remoteDir)) {
+        while ($attempts < 5 && !Storage::disk('sftp_geodis')->exists($remoteDir)) {
             usleep(300000 * ($attempts + 1));
             $attempts++;
         }
 
-        if (!Storage::disk('sftp')->exists($remoteDir)) {
+        if (!Storage::disk('sftp_geodis')->exists($remoteDir)) {
             throw new \RuntimeException("No se pudo confirmar la creacion del directorio remoto {$remoteDir} por latencia.");
         }
     }
@@ -411,7 +411,7 @@ class UploadFileForm extends Form
 
         while ($attempts < 5) {
             try {
-                $result = Storage::disk('sftp')->putFileAs(
+                $result = Storage::disk('sftp_geodis')->putFileAs(
                     $remoteDir,
                     new \Illuminate\Http\File($localPath),
                     $remoteFileName
@@ -422,12 +422,12 @@ class UploadFileForm extends Form
                 }
 
                 $verifyTries = 0;
-                while ($verifyTries < 5 && !Storage::disk('sftp')->exists($remotePath)) {
+                while ($verifyTries < 5 && !Storage::disk('sftp_geodis')->exists($remotePath)) {
                     usleep(300000 * ($verifyTries + 1));
                     $verifyTries++;
                 }
 
-                if (!Storage::disk('sftp')->exists($remotePath)) {
+                if (!Storage::disk('sftp_geodis')->exists($remotePath)) {
                     Log::warning("Subida SFTP sin verificacion inmediata por latencia: {$remotePath}");
                 }
 
