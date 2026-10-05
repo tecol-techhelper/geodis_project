@@ -192,7 +192,7 @@ new class extends Component {
 
                     <p x-cloak x-show="uploadClientError" x-text="uploadClientError" class="text-xs text-red-600"></p>
                     <x-input-error :messages="$errors->get('form.files')" class="text-xs" />
-                    <x-input-error :messages="$errors->get('form.files.*')" class="text-xs" />
+                    <x-input-error :messages="collect($errors->get('form.files.*'))->flatten()->all()" class="text-xs" />
 
                     <!-- CLAVE: target correcto -->
                     <div wire:loading wire:target="form.files" class="text-xs font-medium text-indigo-600">
