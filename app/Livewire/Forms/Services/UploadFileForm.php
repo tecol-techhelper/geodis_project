@@ -226,20 +226,12 @@ class UploadFileForm extends Form
             return false;
         }
 
+        $remoteDir = 'DOCS';
         $service = Service::query()->select(['id', 'consecutive'])->find($this->service_id);
         $serviceConsecutive = $service?->consecutive !== null ? (string) $service->consecutive : (string) $this->service_id;
         $serviceFolder = preg_replace('/[^A-Za-z0-9_-]/', '_', $serviceConsecutive) ?: (string) $this->service_id;
-
-        $year = now()->format('Y');
-        $month = now()->format('m');
-        $remoteDir = "DOCS/{$year}/{$month}/{$serviceFolder}";
-
-        try {
-            $this->ensureRemoteDirectory($remoteDir);
-        } catch (\Throwable $e) {
-            $this->addError('form.files', "Error creando directorio remoto: {$e->getMessage()}");
-            return false;
-        }
+        $uploadDate = now();
+        $sharePointDir = "DOCS/{$uploadDate->format('Y')}/{$uploadDate->format('m')}/{$serviceFolder}";
 
         $successfulCount = 0;
         $totalCount = count($this->tempFiles);
@@ -268,7 +260,7 @@ class UploadFileForm extends Form
             }
 
             try {
-                $sharePointResponse = $sharePointUploader->upload($localPath, $remotePath);
+                $sharePointResponse = $sharePointUploader->upload($localPath, "{$sharePointDir}/{$remoteFileName}");
                 $sharePointUrl = $sharePointResponse['webUrl'] ?? null;
             } catch (\Throwable $e) {
                 Log::warning('UploadFileForm@saveFiles:sharepoint_error', [
@@ -335,42 +327,32 @@ class UploadFileForm extends Form
         return false;
     }
 
-    private function ensureRemoteDirectory(string $remoteDir): void
+    public function deleteSupportFile(int $supportFileId, Service $service, SharePointUploader $sharePointUploader): void
     {
-        $context = $this->sftpDiagnosticContext($remoteDir);
-        $stage = 'directory_check';
+        abort_unless($this->canManageSupports(), 403);
+        $this->resetErrorBag('supportDeletion');
+        $file = $service->support_files()->findOrFail($supportFileId);
 
         try {
-            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-            $disk = Storage::disk('sftp_geodis');
-            Log::info('UploadFileForm@sftp:directory_start', $context);
-
-            if (!$disk->directoryExists($remoteDir)) {
-                $stage = 'directory_create';
-                $created = $disk->makeDirectory($remoteDir);
-                Log::info('UploadFileForm@sftp:directory_create', $context + ['created' => $created]);
-                if (!$created) {
-                    throw new \RuntimeException('makeDirectory retorno false');
-                }
+            if (blank($file->file_url)) {
+                throw new \RuntimeException('El soporte no tiene un enlace de SharePoint.');
             }
 
-            $stage = 'directory_verify';
-            $attempts = 0;
-            while (!$disk->directoryExists($remoteDir)) {
-                if ($attempts >= 5) {
-                    throw new \RuntimeException("No se pudo confirmar la creacion del directorio remoto {$remoteDir} por latencia.");
-                }
-                usleep(300000 * ($attempts + 1));
-                $attempts++;
+            $sharePointUploader->delete($file->file_url);
+            if (!$file->delete()) {
+                throw new \RuntimeException('No se pudo eliminar el registro del soporte.');
             }
-
-            Log::info('UploadFileForm@sftp:directory_verified', $context);
         } catch (\Throwable $e) {
-            Log::error('UploadFileForm@sftp:directory_error', $context + [
-                'stage' => $stage,
-            ] + $this->sftpExceptionContext($e));
-            throw $e;
+            Log::error('UploadFileForm@deleteSupportFile:error', [
+                'service_id' => $service->id,
+                'support_file_id' => $supportFileId,
+                'message' => $e->getMessage(),
+            ]);
+            $this->addError('supportDeletion', 'No se pudo completar la eliminación del soporte. Inténtelo nuevamente; si persiste, revise el registro de errores.');
+            return;
         }
+
+        flash()->title('Soporte eliminado')->success('El soporte fue eliminado de SharePoint y del listado.');
     }
 
     private function sftpDiagnosticContext(string $remotePath): array
