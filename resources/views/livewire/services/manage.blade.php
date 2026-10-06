@@ -645,8 +645,7 @@ new #[Layout('layouts.app')] class extends Component {
 };
 ?>
 @section('title', 'Servicio')
-<div class="space-y-6 pb-8" x-data="{ resourceToRemove: null }"
-    x-on:support-files-saved.window="setTimeout(() => window.location.reload(), 3200)">
+<div class="space-y-6 pb-8" x-data="{ resourceToRemove: null }">
     <div wire:ignore>
         <x-breadcrums :items="[
             ['label' => 'Inicio', 'url' => route('dashboard'), 'icon' => 'home'],
@@ -787,14 +786,8 @@ new #[Layout('layouts.app')] class extends Component {
 
             @if ($form->service)
                 <div class="w-full sm:w-auto">
-                    @if ($canUploadSupports())
-                        <livewire:services.upload-file-modal :service="$form->service" :key="'upload-files-' . $form->service->id" />
-                    @else
-                        <x-primary-button type="button" disabled
-                            class="w-full cursor-not-allowed opacity-60 sm:w-auto">
-                            Cargar soportes
-                        </x-primary-button>
-                    @endif
+                    <livewire:services.upload-file-modal :service="$form->service" :can-upload-supports="$canUploadSupports()"
+                        :key="'upload-files-' . $form->service->id" />
                 </div>
             @endif
 
@@ -3145,54 +3138,6 @@ new #[Layout('layouts.app')] class extends Component {
                             @endif
                         </div>
                     @endforeach
-                </div>
-            </div>
-        @endif
-
-        {{-- ARCHIVOS CARGADOS DEL SERVICIO --}}
-        @if ($form->service?->support_files?->isNotEmpty())
-            <div>
-                <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold text-gray-900">
-                    <svg class="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Soportes Cargados
-                </h2>
-
-                <div class="overflow-x-auto rounded-lg border border-gray-200">
-                    <table class="min-w-full divide-y divide-gray-200 text-sm">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th
-                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    Nombre del Archivo
-                                </th>
-                                <th
-                                    class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    Tipo
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
-                            @foreach ($form->service->support_files as $file)
-                                <tr class="hover:bg-gray-50 transition-colors">
-                                    <td class="px-4 py-3 text-sm">
-                                        @if ($file->file_url)
-                                            <a href="{{ $file->file_url }}" target="_blank"
-                                                rel="noopener noreferrer" class="font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
-                                                {{ $file->file_name ?? '-' }}
-                                            </a>
-                                        @else
-                                            {{ $file->file_name ?? '-' }}
-                                        @endif
-                                    </td>
-                                    <td class="px-4 py-3 text-sm">{{ $file->file_type?->file_type_full_name ?? '-' }}
-                                    </td>
-                                </tr>
-                            @endforeach
-                        </tbody>
-                    </table>
                 </div>
             </div>
         @endif
