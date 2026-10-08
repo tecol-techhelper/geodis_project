@@ -1356,7 +1356,7 @@ class ManageForm extends Form
             }
 
             if ($this->usesOperationLines($rowKey)) {
-                $rules["{$prefix}.operation_lines"] = ['array', 'min:1'];
+                $rules["{$prefix}.operation_lines"] = ['array'];
                 $operationId = (int) data_get($row, 'resource_operation_id', 0);
 
                 foreach ((array) data_get($this->additional_information, "{$rowKey}.operation_lines", []) as $lineIndex => $line) {
