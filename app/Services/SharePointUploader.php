@@ -51,7 +51,7 @@ class SharePointUploader
         $token = $this->auth->getAccessToken();
         $siteId = config('services.msgraph.site_id');
         $baseUrl = "https://graph.microsoft.com/v1.0/sites/{$siteId}/drive";
-        $root = Http::withToken($token)->get("{$baseUrl}/root", ['$select' => 'webUrl']);
+        $root = Http::withToken($token)->get("{$baseUrl}/root", ['$select' => 'webUrl,parentReference']);
 
         if (!$root->successful()) {
             throw new \RuntimeException('No se pudo consultar la biblioteca de SharePoint: ' . $root->body());
@@ -64,24 +64,41 @@ class SharePointUploader
 
         if (empty($rootUrl['host']) || empty($targetUrl['host'])
             || strtolower($rootUrl['host']) !== strtolower($targetUrl['host'])
-            || ($targetUrl['scheme'] ?? '') !== 'https'
-            || !str_starts_with($targetPath, $rootPath)) {
+            || ($targetUrl['scheme'] ?? '') !== 'https') {
             throw new \RuntimeException('El enlace del soporte no pertenece a la biblioteca de SharePoint configurada.');
         }
 
-        $relativePath = substr($targetPath, strlen($rootPath));
-        $segments = explode('/', $relativePath);
-        if (in_array('', $segments, true) || in_array('.', $segments, true) || in_array('..', $segments, true)) {
-            throw new \RuntimeException('La ruta del soporte en SharePoint no es válida.');
-        }
+        if (str_starts_with($targetPath, $rootPath)) {
+            $relativePath = substr($targetPath, strlen($rootPath));
+            $segments = explode('/', $relativePath);
+            if (in_array('', $segments, true) || in_array('.', $segments, true) || in_array('..', $segments, true)) {
+                throw new \RuntimeException('La ruta del soporte en SharePoint no es válida.');
+            }
 
-        $item = Http::withToken($token)->get("{$baseUrl}/root:/{$this->encodePath($relativePath)}", [
-            '$select' => 'id,file',
-        ]);
+            $item = Http::withToken($token)->get("{$baseUrl}/root:/{$this->encodePath($relativePath)}", [
+                '$select' => 'id,file',
+            ]);
 
-        // Permite retirar el registro si el archivo ya no existe en SharePoint.
-        if ($item->status() === 404) {
-            return;
+            // Permite retirar el registro si el archivo ya no existe en SharePoint.
+            if ($item->status() === 404) {
+                return;
+            }
+        } elseif (preg_match('~/_layouts/15/Doc\.aspx$~i', $targetPath)) {
+            $shareId = 'u!' . rtrim(strtr(base64_encode($fileUrl), '+/', '-_'), '=');
+            $item = Http::withToken($token)->get("https://graph.microsoft.com/v1.0/shares/{$shareId}/driveItem", [
+                '$select' => 'id,file,parentReference',
+            ]);
+
+            if (!$item->successful()) {
+                throw new \RuntimeException('No se pudo resolver el enlace de Office en SharePoint: ' . $item->body());
+            }
+
+            $driveId = $root->json('parentReference.driveId');
+            if (!$driveId || $item->json('parentReference.driveId') !== $driveId) {
+                throw new \RuntimeException('El archivo de Office no pertenece a la biblioteca de SharePoint configurada.');
+            }
+        } else {
+            throw new \RuntimeException('El enlace del soporte no pertenece a la biblioteca de SharePoint configurada.');
         }
 
         if (!$item->successful() || !is_array($item->json('file')) || !$item->json('id')) {
