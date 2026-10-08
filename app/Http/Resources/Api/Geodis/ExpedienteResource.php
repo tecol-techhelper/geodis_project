@@ -24,6 +24,7 @@ class ExpedienteResource extends JsonResource
             'item' => $catalogResource?->id !== null
                 ? (string) $catalogResource->id
                 : null,
+            'goods_receipt' => $this->goodsReceipts(),
             'item_geodis' => null,
             'recurso' => $catalogResource?->resource_id,
             'administrativo' => $this->administrativeData(),
@@ -93,6 +94,16 @@ class ExpedienteResource extends JsonResource
         }
 
         return $personnel;
+    }
+
+    private function goodsReceipts(): ?string
+    {
+        $values = ($this->service?->purchase_orders ?? collect())
+            ->pluck('purchase_order_number')
+            ->map(fn ($value): string => trim((string) $value))
+            ->filter(fn (string $value): bool => str_starts_with($value, 'GR'));
+
+        return $values->isEmpty() ? null : $values->implode('/');
     }
 
     private function consolidatedNumbers(): ?string

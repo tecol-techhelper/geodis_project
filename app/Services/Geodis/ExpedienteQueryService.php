@@ -79,7 +79,8 @@ class ExpedienteQueryService
             'service.purchase_orders' => fn ($query) => $query->select([
                 'purchase_orders.id',
                 'purchase_orders.service_id',
-            ]),
+                'purchase_orders.purchase_order_number',
+            ])->orderBy('purchase_orders.id'),
             'service.purchase_orders.order_references' => fn ($query) => $query
                 ->select([
                     'order_references.id',
