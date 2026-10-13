@@ -316,7 +316,26 @@ final class ServiceTable extends PowerGridComponent
 
             Column::make('Consecutivo', 'consecutive')
                 ->sortable()
-                ->searchable(),
+                ->searchable()
+                ->searchableRaw("EXISTS (
+                    SELECT 1
+                    FROM purchase_orders po
+                    INNER JOIN order_references orx ON orx.purchase_order_id = po.id
+                    INNER JOIN reference_types rt ON rt.id = orx.reference_type_id
+                    WHERE po.service_id = services.id
+                      AND po.deleted_at IS NULL
+                      AND orx.deleted_at IS NULL
+                      AND LOWER(TRIM(CASE
+                          WHEN UPPER(TRIM(rt.reference_type_code)) = 'COI' THEN
+                              CASE WHEN INSTR(orx.order_reference_value, '/') > 0
+                                  THEN SUBSTR(orx.order_reference_value, 1, INSTR(orx.order_reference_value, '/') - 1)
+                                  ELSE orx.order_reference_value
+                              END
+                          WHEN UPPER(TRIM(rt.reference_type_code)) = 'AGW'
+                              AND INSTR(orx.order_reference_value, '/') > 0 THEN
+                              SUBSTR(orx.order_reference_value, INSTR(orx.order_reference_value, '/') + 1)
+                      END)) LIKE LOWER(?)
+                )"),
 
             Column::make('Tipo de Servicio', 'service_type', 'acd_type_value')
                 ->sortable(),
@@ -326,35 +345,8 @@ final class ServiceTable extends PowerGridComponent
 
             Column::make('Piezas', 'pieces')->sortable(),
 
-            Column::make('Origen', 'origin_full')
-                ->searchableRaw("EXISTS (
-                    SELECT 1
-                    FROM service_parties sp
-                    INNER JOIN party_types pt ON pt.id = sp.party_type_id
-                    WHERE sp.service_id = services.id
-                      AND UPPER(TRIM(pt.party_qualifier)) = 'PW'
-                      AND CONCAT_WS(' ',
-                          COALESCE(sp.party_name, ''),
-                          COALESCE(sp.party_street, ''),
-                          COALESCE(sp.party_city, ''),
-                          COALESCE(sp.party_region, '')
-                      ) LIKE ?
-                )"),
-            Column::make('Destino', 'destination_full')
-                ->searchableRaw("EXISTS (
-                    SELECT 1
-                    FROM purchase_order_parties pop
-                    INNER JOIN party_types pt ON pt.id = pop.party_type_id
-                    INNER JOIN purchase_orders po ON po.id = pop.purchase_order_id
-                    WHERE po.service_id = services.id
-                      AND UPPER(TRIM(pt.party_qualifier)) = 'DP'
-                      AND CONCAT_WS(' ',
-                          COALESCE(pop.party_name, ''),
-                          COALESCE(pop.party_street, ''),
-                          COALESCE(pop.party_city, ''),
-                          COALESCE(pop.party_region, '')
-                      ) LIKE ?
-                )"),
+            Column::make('Origen', 'origin_full'),
+            Column::make('Destino', 'destination_full'),
         ];
     }
 
