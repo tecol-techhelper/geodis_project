@@ -5,71 +5,49 @@ use Livewire\WithFileUploads;
 use App\Livewire\Forms\Services\UploadFileForm;
 use Livewire\Volt\Component;
 use App\Services\SharePointUploader;
+use App\Services\SupportFileDistributor;
+use App\Services\SupportDocumentNaming;
 
 new class extends Component {
     use WithFileUploads;
     public UploadFileForm $form;
     public Service $service;
     public bool $canUploadSupports = false;
-    public array $cniOptions = [];
-    public array $coiOptions = [];
-
     public function mount(Service $service, bool $canUploadSupports = false): void
     {
         $this->service = $service;
         $this->canUploadSupports = $canUploadSupports;
         $this->form->service_id = $service->id;
-        $service->loadMissing('purchase_orders.order_references.reference_type');
-
-        $this->cniOptions = $service->purchase_orders
-            ->map(function ($purchaseOrder) {
-                $number = trim((string) ($purchaseOrder->purchase_order_number ?? ''));
-
-                return $number !== '' ? [
-                    'id' => $purchaseOrder->id,
-                    'value' => $number,
-                ] : null;
-            })
-            ->filter()
-            ->unique('value')
-            ->values()
-            ->all();
-
-        $this->coiOptions = $service->purchase_orders
-            ->flatMap(fn($purchaseOrder) => $purchaseOrder->order_references ?? collect())
-            ->filter(function ($reference) {
-                return strtoupper(trim((string) ($reference->reference_type?->reference_type_code ?? ''))) === 'COI';
-            })
-            ->map(function ($reference) {
-                $value = trim((string) ($reference->order_reference_value ?? ''));
-                $value = trim(explode('/', $value, 2)[0] ?? '');
-
-                return $value !== '' ? [
-                    'id' => $reference->id,
-                    'value' => $value,
-                ] : null;
-            })
-            ->filter()
-            ->unique('value')
-            ->values()
-            ->all();
-
-        if (count($this->cniOptions) === 1) {
-            $this->form->purchase_order_id = (int) $this->cniOptions[0]['id'];
-            $this->form->purchase_order_number = $this->cniOptions[0]['value'];
-        }
-
-        if (count($this->coiOptions) === 1) {
-            $this->form->order_reference_id = (int) $this->coiOptions[0]['id'];
-            $this->form->order_reference_value = $this->coiOptions[0]['value'];
-        }
     }
 
     public function with(): array
     {
+        $naming = app(SupportDocumentNaming::class);
+        $remainingCharacters = null;
+        if ($this->form->file_type) {
+            $targets = $naming->context($this->service->fresh())['targets'];
+            $extensionLength = collect($this->form->files)
+                ->filter(fn ($file) => is_object($file) && method_exists($file, 'getClientOriginalExtension'))
+                ->map(fn ($file) => strlen($file->getClientOriginalExtension()))
+                ->max() ?? 4;
+            $extra = $naming->normalizeObservations($this->form->free_text);
+            $remainingCharacters = collect($targets)->map(function ($target) use ($naming, $extra, $extensionLength) {
+                $so = $target['sho'] ?? $naming->normalizeObservations($this->service->consecutive);
+                $base = $target['identifier'].'-N-'.$this->form->file_type.($so !== '' ? '-'.$so : '');
+                // Reserve the separator for optional observations, even while the input is empty.
+                return 50 - strlen($base) - 1 - $extensionLength - 1 - ($extra !== $so ? strlen($extra) : 0);
+            })->min();
+        }
+
         return [
-            'supportFiles' => $this->service->support_files()->with('file_type')->get(),
+            'supportFiles' => $this->service->support_files()->with(['file_type', 'copies'])->latest('id')->get(),
+            'remainingCharacters' => $remainingCharacters,
         ];
+    }
+
+    public function retrySupportFile(int $id, SupportFileDistributor $distributor): void
+    {
+        $this->form->retrySupportFile($id, $this->service, $distributor);
     }
 
     public function uploadFiles(): void
@@ -92,9 +70,9 @@ new class extends Component {
         $this->form->deleteSupportFile($supportFileId, $this->service, $sharePointUploader);
     }
 
-    public function saveFiles(SharePointUploader $sharePointUploader): void
+    public function saveFiles(SupportFileDistributor $distributor): void
     {
-        $saved = $this->form->saveFiles($sharePointUploader);
+        $saved = $this->form->saveFiles($distributor);
 
         if ($saved) {
             $this->dispatch('support-files-saved');
@@ -161,7 +139,7 @@ new class extends Component {
                     @if ($canUploadSupports)
                     <div class="space-y-1">
                         <x-input-label for="file_type">Tipo de soporte</x-input-label>
-                        <select id="file_type" wire:model="form.file_type"
+                        <select id="file_type" wire:model.live="form.file_type"
                             class="h-11 w-full cursor-pointer rounded-md border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
                             <option selected value="">Seleccione un tipo</option>
                             <option value="CLI">CUMPLIDO</option>
@@ -180,53 +158,25 @@ new class extends Component {
                         <x-input-error :messages="$errors->get('form.file_type')" class="mt-2" />
                     </div>
 
-                    <div class="grid grid-cols-1 gap-3 pt-3 sm:grid-cols-2">
-                        <div class="space-y-1">
-                            <x-input-label for="cni_value">CNI</x-input-label>
-                            <select id="cni_value" wire:model="form.purchase_order_id"
-                                class="h-11 w-full cursor-pointer rounded-md border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
-                                @disabled(count($cniOptions) <= 1)>
-                                @if (count($cniOptions) !== 1)
-                                    <option value="">Seleccione CNI</option>
-                                @endif
-                                @forelse ($cniOptions as $cniOption)
-                                    <option value="{{ $cniOption['id'] }}">{{ $cniOption['value'] }}</option>
-                                @empty
-                                    <option value="">Sin CNI</option>
-                                @endforelse
-                            </select>
-                        </div>
-
-                        <div class="space-y-1">
-                            <x-input-label for="coi_value">COI</x-input-label>
-                            <select id="coi_value" wire:model="form.order_reference_id"
-                                class="h-11 w-full cursor-pointer rounded-md border-gray-300 bg-white text-sm text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
-                                @disabled(count($coiOptions) <= 1)>
-                                @if (count($coiOptions) !== 1)
-                                    <option value="">Seleccione COI</option>
-                                @endif
-                                @forelse ($coiOptions as $coiOption)
-                                    <option value="{{ $coiOption['id'] }}">{{ $coiOption['value'] }}</option>
-                                @empty
-                                    <option value="">Sin COI</option>
-                                @endforelse
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="pt-3">
-                        <x-input-label for="free_text">Texto libre</x-input-label>
-                        <x-text-input type="text" id="free_text" wire:model.defer="form.free_text" class="w-full" />
-                        <x-input-error :messages="$errors->get('form.free_text')" class="mt-2" />
+                    <div class="space-y-2">
+                        <x-input-label for="free_text">Observaciones</x-input-label>
+                        <x-text-input type="text" id="free_text" wire:model.live.debounce.300ms="form.free_text" maxlength="255" class="w-full" aria-describedby="observationsRemaining" />
+                        <p id="observationsRemaining" class="text-xs {{ $remainingCharacters !== null && $remainingCharacters < 0 ? 'text-red-600' : 'text-gray-500' }}" aria-live="polite">
+                            @if ($remainingCharacters !== null)
+                                {{ max(0, $remainingCharacters) }} caracteres restantes
+                            @endif
+                        </p>
+                        <x-input-error :messages="$errors->get('form.free_text')" />
                     </div>
 
                     <div class="space-y-2">
                         <!-- CLAVE: el input debe apuntar a form.files -->
                         <input multiple wire:model="form.files" type="file"
                             x-on:change="uploadClientError = ''"
-                            x-on:livewire-upload-error="uploadClientError = 'No se pudo cargar el archivo temporal. Verifique que el formato sea permitido y que no supere 10 MB.'"
+                            x-on:livewire-upload-error="uploadClientError = 'No se pudo cargar el archivo temporal. Verifique que el formato sea permitido y que no supere 20 MB.'"
                             class="block w-full cursor-pointer rounded-md border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:cursor-pointer file:border-0 file:bg-gray-100 file:px-4 file:py-2 file:text-sm file:font-medium file:text-gray-700 hover:file:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1" />
 
+                        <p class="text-xs text-gray-600">Máximo 20 MB por archivo. Formatos: JPG, JPEG, PNG, WEBP, PDF, DOC, DOCX, XLS, XLSX, MP4, MOV, AVI y WMV.</p>
                         <p x-cloak x-show="uploadClientError" x-text="uploadClientError" class="text-xs text-red-600"></p>
                         <x-input-error :messages="$errors->get('form.files')" class="text-xs" />
                         <x-input-error :messages="collect($errors->get('form.files.*'))->flatten()->all()" class="text-xs" />
@@ -243,7 +193,9 @@ new class extends Component {
                             class="mt-2 divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white text-sm text-gray-700">
                             @forelse ($form->tempFiles as $index => $file)
                                 <li class="flex items-center justify-between gap-3 px-4 py-3">
-                                    <span class="min-w-0 truncate">{{ $file['fileName'] }}</span>
+                                    <div class="min-w-0">
+                                        <p class="break-all font-medium">{{ $file['fileName'] }}</p>
+                                    </div>
                                     <button type="button" wire:click="removeTempFiles({{ $index }})"
                                         class="shrink-0 text-sm font-medium text-red-600 hover:text-red-700 hover:underline">
                                         Eliminar
@@ -266,6 +218,7 @@ new class extends Component {
                 <section id="supportUploadedPanel" role="tabpanel" aria-labelledby="supportUploadedTab"
                     x-cloak x-show="activeSupportTab === 'uploaded'" class="space-y-3">
                     <x-input-error :messages="$errors->get('form.supportDeletion')" />
+                    <x-input-error :messages="$errors->get('form.supportRetry')" />
                     <div class="overflow-x-auto rounded-lg border border-gray-200">
                         <table class="min-w-full divide-y divide-gray-200 text-sm">
                             <thead class="bg-gray-50">
@@ -278,6 +231,7 @@ new class extends Component {
                                         class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                         Tipo
                                     </th>
+                                    <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">Estado</th>
                                     <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500">
                                         Acciones
                                     </th>
@@ -290,19 +244,25 @@ new class extends Component {
                                             @if ($file->file_url)
                                                 <a href="{{ $file->file_url }}" target="_blank"
                                                     rel="noopener noreferrer" class="font-medium text-indigo-600 hover:text-indigo-800 hover:underline">
-                                                    {{ $file->file_name ?? '-' }}
+                                                    {{ $file->original_name ?? $file->file_name ?? '-' }}
                                                 </a>
                                             @else
-                                                {{ $file->file_name ?? '-' }}
+                                                {{ $file->original_name ?? $file->file_name ?? '-' }}
                                             @endif
                                         </td>
                                         <td class="px-4 py-3 text-sm">{{ $file->file_type?->file_type_full_name ?? '-' }}
                                         </td>
+                                        <td class="px-4 py-3 text-xs text-gray-600">
+                                            <span role="status">{{ $file->copyProgress() }}</span>
+                                        </td>
                                         <td class="px-4 py-3 text-right text-sm">
                                             @if ($canUploadSupports)
+                                                @if ($file->local_path && !$file->deletion_started_at)
+                                                    <button type="button" wire:click="retrySupportFile({{ $file->id }})" wire:loading.attr="disabled" wire:target="retrySupportFile,saveFiles,deleteSupportFile" class="mr-2 text-sm font-medium text-indigo-700 underline disabled:opacity-50">Reintentar guardado</button>
+                                                @endif
                                                 <button type="button" wire:click="deleteSupportFile({{ $file->id }})"
                                                     wire:confirm="¿Eliminar este soporte de SharePoint y del listado?"
-                                                    wire:loading.attr="disabled" wire:target="deleteSupportFile"
+                                                    wire:loading.attr="disabled" wire:target="deleteSupportFile,retrySupportFile,saveFiles"
                                                     aria-label="Eliminar soporte {{ $file->file_name }}"
                                                     title="Eliminar soporte"
                                                     class="inline-flex items-center justify-center rounded-md p-2 text-red-600 transition hover:bg-red-50 hover:text-red-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-50">
@@ -323,7 +283,7 @@ new class extends Component {
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="3" class="px-4 py-4 text-sm text-gray-500">
+                                        <td colspan="4" class="px-4 py-4 text-sm text-gray-500">
                                             No hay soportes cargados.
                                         </td>
                                     </tr>
@@ -397,7 +357,7 @@ new class extends Component {
                         <span>Cargar</span>
                     </x-primary-button>
 
-                    <x-success-button x-show="activeSupportTab === 'upload'" wire:click="saveFiles" wire:loading.attr="disabled" wire:target="saveFiles"
+                    <x-success-button x-show="activeSupportTab === 'upload'" wire:click="saveFiles" wire:loading.attr="disabled" wire:target="saveFiles,retrySupportFile,deleteSupportFile"
                         x-on:click="$nextTick(() => $el.blur())" type="button" class="space-x-1">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
                             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
