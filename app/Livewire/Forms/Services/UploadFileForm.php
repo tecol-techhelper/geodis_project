@@ -2,17 +2,17 @@
 
 namespace App\Livewire\Forms\Services;
 
-use App\Models\FileType;
-use App\Models\OrderReference;
-use App\Models\PurchaseOrder;
 use App\Models\Service;
-use App\Models\SupportFile;
 use App\Models\User;
 use App\Services\SharePointUploader;
+use App\Services\SupportDocumentNaming;
+use App\Services\SupportFileDistributor;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
+use Livewire\Attributes\Locked;
 use Livewire\Attributes\Validate;
 use Livewire\Form;
 use Livewire\WithFileUploads;
@@ -21,8 +21,10 @@ class UploadFileForm extends Form
 {
     use WithFileUploads;
 
-    private const ALLOWED_FILE_TYPES = ['CLI', 'CLP', 'IC', 'IF', 'RT', 'ID', 'TRC', 'TDC', 'GABF301', 'PDR', 'GPS', 'RP'];
+    private const ALLOWED_FILE_TYPES = SupportDocumentNaming::TYPES;
+
     private const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'mov', 'avi', 'wmv', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
+
     private const ALLOWED_MIME_TYPES = [
         'image/jpeg',
         'image/png',
@@ -42,20 +44,19 @@ class UploadFileForm extends Form
 
     #[Validate([
         'files' => 'array|nullable',
-        'files.*' => 'file|max:10240|mimes:jpg,jpeg,png,webp,mp4,mov,avi,wmv,pdf,doc,docx,xls,xlsx',
+        'files.*' => 'file|max:20480|mimes:jpg,jpeg,png,webp,mp4,mov,avi,wmv,pdf,doc,docx,xls,xlsx',
     ], onUpdate: false)]
     public array $files = [];
 
+    #[Locked]
     public array $tempFiles = [];
 
     #[Validate('string|in:CLI,CLP,IC,IF,RT,ID,TRC,TDC,GABF301,PDR,GPS,RP', onUpdate: false)]
     public ?string $file_type = null;
 
     public ?string $free_text = null;
-    public ?int $purchase_order_id = null;
-    public ?string $purchase_order_number = null;
-    public ?int $order_reference_id = null;
-    public ?string $order_reference_value = null;
+
+    #[Locked]
     public ?int $service_id = null;
 
     private function canManageSupports(): bool
@@ -63,7 +64,7 @@ class UploadFileForm extends Form
         /** @var User|null $user */
         $user = Auth::user();
 
-        if (!$user) {
+        if (! $user) {
             return false;
         }
 
@@ -77,254 +78,160 @@ class UploadFileForm extends Form
 
     public function uploadFiles(): void
     {
-        if (!$this->canManageSupports()) {
-            return;
-        }
-
-        $this->resetErrorBag('form.files');
-        $this->resetErrorBag('form.file_type');
-
-        // $this->files siempre será array por la declaración, pero igual lo normalizamos.
-        $incomingFiles = is_array($this->files) ? $this->files : array_filter([$this->files]);
-
-        Log::info('UploadFileForm@uploadFiles:start', [
-            'service_id'   => $this->service_id,
-            'file_type'    => $this->file_type,
-            'files_count'  => count($incomingFiles),
-            'files_type'   => gettype($this->files),
+        abort_unless($this->canManageSupports(), 403);
+        $this->resetValidation();
+        $this->validate([
+            'files' => ['required', 'array', 'min:1'],
+            'file_type' => ['required', 'in:'.implode(',', self::ALLOWED_FILE_TYPES)],
+            'free_text' => ['nullable', 'string', 'max:255'],
         ]);
-
-        if (count($incomingFiles) === 0) {
-            $this->addError('form.files', 'Debe seleccionar al menos 1 archivo');
-            Log::warning('UploadFileForm@uploadFiles:no_files');
-            return;
-        }
-
-        if (!$this->file_type) {
-            $this->addError('form.file_type', 'Debes seleccionar un tipo de soporte.');
-            Log::warning('UploadFileForm@uploadFiles:no_file_type');
-            return;
-        }
-
-        if (!$this->isAllowedFileType($this->file_type)) {
-            $this->addError('form.file_type', 'El tipo de soporte seleccionado no es permitido.');
-            Log::warning('UploadFileForm@uploadFiles:invalid_file_type', [
-                'file_type' => $this->file_type,
-            ]);
-            return;
-        }
-
-        $purchaseOrderContext = $this->selectedPurchaseOrderContext();
-        $orderReferenceContext = $this->selectedOrderReferenceContext();
-        $hadFileErrors = false;
-
+        $naming = app(SupportDocumentNaming::class);
+        $service = Service::findOrFail($this->service_id);
         try {
-            foreach ($incomingFiles as $file) {
-                $fileValidationError = $this->fileValidationError($file);
-                if ($fileValidationError) {
-                    $this->addError('form.files', $fileValidationError);
-                    $hadFileErrors = true;
-                    continue;
+            $targets = $naming->targets($service);
+            $observations = $naming->normalizeObservations($this->free_text);
+            $prepared = [];
+            foreach ($this->files as $file) {
+                if ($error = $this->fileValidationError($file)) {
+                    $this->addError('files', $error);
+
+                    return;
                 }
+                $extension = strtolower($file->getClientOriginalExtension());
+                $names = [];
+                foreach ($targets as $target) {
+                    $suffix = $naming->observations($service, $observations, $target['sho']);
+                    $names[] = $naming->filename($target['identifier'], $this->file_type, $suffix, $extension);
+                }
+                $originalName = basename(str_replace('\\', '/', $file->getClientOriginalName()));
+                if (mb_strlen($originalName) > 255) {
+                    $this->addError('files', 'El nombre original del archivo no puede superar 255 caracteres.');
 
-                $extension = strtolower((string) $file->getClientOriginalExtension());
-                $freeText = trim((string) $this->free_text);
-                $safeFreeText = $freeText !== '' ? preg_replace('/[^A-Za-z0-9_-]/', '_', $freeText) : 'SIN_TEXTO';
-
-                $newFileName = 'N_' . $this->file_type . '_' . $safeFreeText . '_' . Str::random(8) . '.' . $extension;
-
-                $tempPath = $file->storeAs('temp_support_files', $newFileName, 'local');
-
-                $this->tempFiles[] = [
-                    'fileName'               => $newFileName,
-                    'temp_path'              => $tempPath,
-                    'file_type'              => $this->file_type,
-                    'purchase_order_id'      => $purchaseOrderContext['id'],
-                    'purchase_order_number'  => $purchaseOrderContext['number'],
-                    'order_reference_id'     => $orderReferenceContext['id'],
-                    'order_reference_value'  => $orderReferenceContext['value'],
-                ];
-
-                flash()->title('Archivo Cargado')->info("Archivo <b>{$newFileName}</b> Cargado Correctamente!");
+                    return;
+                }
+                $prepared[] = ['file' => $file, 'extension' => $extension, 'names' => $names, 'original' => $originalName];
             }
-        } catch (\Throwable $e) {
-            Log::error('UploadFileForm@uploadFiles:error', [
-                'message' => $e->getMessage(),
-                'trace'   => $e->getTraceAsString(),
-            ]);
-            $this->addError('form.files', 'Error al cargar archivos temporales.');
+        } catch (ValidationException $exception) {
+            foreach ($exception->errors() as $field => $messages) {
+                $this->addError($field, $messages[0]);
+            }
+
             return;
         }
-
-        if (!$hadFileErrors) {
-            $this->resetErrorBag('form.files');
+        foreach ($prepared as $item) {
+            $tempPath = $item['file']->storeAs('temp_support_files', Str::uuid().'.'.$item['extension'], 'local');
+            $this->tempFiles[] = [
+                'fileName' => $item['original'],
+                'temp_path' => $tempPath,
+                'extension' => $item['extension'],
+                'file_type' => $this->file_type,
+                'observations' => $observations,
+                'identifiers' => array_column($targets, 'identifier'),
+                'names' => $item['names'],
+            ];
         }
-
         $this->files = [];
-
-        Log::info('UploadFileForm@uploadFiles:done', [
-            'temp_files_count' => count($this->tempFiles),
-        ]);
     }
 
     public function removeTempFiles(int $index): void
     {
-        if (!$this->canManageSupports()) {
+        abort_unless($this->canManageSupports(), 403);
+        if (! isset($this->tempFiles[$index])) {
             return;
         }
-
-        if (!isset($this->tempFiles[$index])) {
-            return;
-        }
-
-        $fileName = $this->tempFiles[$index]['fileName'];
         $path = $this->tempFiles[$index]['temp_path'];
-
-        if ($path && Storage::disk('local')->exists($path)) {
+        if ($this->isTempPathSafe($path)) {
             Storage::disk('local')->delete($path);
         }
-
         unset($this->tempFiles[$index]);
         $this->tempFiles = array_values($this->tempFiles);
-
-        flash()->title('Archivo Eliminado!')->error("El archivo <b>{$fileName}</b> fue removido correctamente!");
     }
 
     public function clearTempFiles(): void
     {
-        if (!$this->canManageSupports()) {
-            return;
-        }
-
-        foreach ($this->tempFiles as $file) {
-            if (!empty($file['temp_path']) && Storage::disk('local')->exists($file['temp_path'])) {
-                Storage::disk('local')->delete($file['temp_path']);
+        abort_unless($this->canManageSupports(), 403);
+        foreach (array_keys($this->tempFiles) as $index) {
+            // Keep other users' Livewire temporary files intact.
+            $path = $this->tempFiles[$index]['temp_path'];
+            if ($this->isTempPathSafe($path)) {
+                Storage::disk('local')->delete($path);
             }
         }
-
         $this->tempFiles = [];
-        \Illuminate\Support\Facades\File::cleanDirectory(storage_path('app/livewire-tmp'));
     }
 
-    public function saveFiles(SharePointUploader $sharePointUploader): bool
+    public function saveFiles(SupportFileDistributor $distributor): bool
     {
-        if (!$this->canManageSupports()) {
+        abort_unless($this->canManageSupports(), 403);
+        $this->resetValidation();
+        if (! $this->ensureUploadIsNotRateLimited()) {
             return false;
         }
+        if ($this->tempFiles === []) {
+            $this->addError('files', 'No hay archivos pendientes de guardar.');
 
-        if (!$this->ensureUploadIsNotRateLimited()) {
             return false;
         }
-
-        if (!$this->service_id) {
-            $this->addError('form.files', 'No se encontro el servicio asociado para guardar los soportes.');
-            return false;
-        }
-
-        if (count($this->tempFiles) === 0) {
-            $this->addError('form.files', 'No hay archivos temporales para guardar.');
-            return false;
-        }
-
-        $remoteDir = 'DOCS';
-        $service = Service::query()->select(['id', 'consecutive'])->find($this->service_id);
-        $serviceConsecutive = $service?->consecutive !== null ? (string) $service->consecutive : (string) $this->service_id;
-        $serviceFolder = preg_replace('/[^A-Za-z0-9_-]/', '_', $serviceConsecutive) ?: (string) $this->service_id;
-        $uploadDate = now();
-        $sharePointDir = "DOCS/{$uploadDate->format('Y')}/{$uploadDate->format('m')}/{$serviceFolder}";
-
-        $successfulCount = 0;
-        $totalCount = count($this->tempFiles);
-
-        foreach ($this->tempFiles as $temp) {
-            $localPath = Storage::disk('local')->path($temp['temp_path']);
-            if (!$this->isTempPathSafe($temp['temp_path'])) {
-                Log::warning('UploadFileForm@saveFiles:unsafe_temp_path', [
-                    'service_id' => $this->service_id,
-                    'temp_path' => $temp['temp_path'],
-                ]);
-                $this->addError('form.files', 'Ruta temporal inválida.');
-                continue;
-            }
-            $extension = strtolower((string) pathinfo($temp['fileName'], PATHINFO_EXTENSION));
-            if (!$this->isAllowedExtension($extension)) {
-                $this->addError('form.files', "Extensión no permitida: .{$extension}");
-                continue;
-            }
-            $remoteFileName = $temp['fileName'];
-            $remotePath = "{$remoteDir}/{$remoteFileName}";
-
-            if (!is_file($localPath)) {
-                $this->addError('form.files', "No se encontro el archivo temporal: {$localPath}");
-                continue;
-            }
-
+        $service = Service::findOrFail($this->service_id);
+        $naming = app(SupportDocumentNaming::class);
+        $allComplete = true;
+        foreach ($this->tempFiles as $index => $temp) {
             try {
-                $sharePointResponse = $sharePointUploader->upload($localPath, "{$sharePointDir}/{$remoteFileName}");
-                $sharePointUrl = $sharePointResponse['webUrl'] ?? null;
-            } catch (\Throwable $e) {
-                Log::warning('UploadFileForm@saveFiles:sharepoint_error', [
-                    'service_id' => $this->service_id,
-                    'file' => $remoteFileName,
-                    'message' => $e->getMessage(),
-                ]);
-                $this->addError('form.files', 'Error al cargar el archivo en SharePoint.');
-                continue;
-            }
-
-            [$uploaded, $sftpError] = $this->uploadToSftp($remoteDir, $remoteFileName, $remotePath, $localPath);
-
-            if (!$uploaded) {
-                Log::warning('UploadFileForm@saveFiles:sftp_error', [
-                    'service_id' => $this->service_id,
-                    'file' => $remoteFileName,
-                    'message' => $sftpError,
-                ]);
-                $this->addError('form.files', "No se confirmo la subida del archivo {$remoteFileName} en el SFTP.");
-                continue;
-            }
-
-            try {
-                $fileType = FileType::query()
-                    ->where('file_type', '=', $temp['file_type'], 'and')
-                    ->first();
-                $fileTypeId = $fileType?->id;
-
-                $supportFile = SupportFile::create([
-                    'file_name'      => pathinfo($remoteFileName, PATHINFO_FILENAME),
-                    'file_url'       => $sharePointUrl,
-                    'file_size'      => filesize($localPath),
-                    'file_extension' => $extension,
-                    'uploaded_at'    => now()->toDateString(),
-                    'service_id'     => $this->service_id,
-                    'user_id'        => Auth::id(),
-                    'file_type_id'   => $fileTypeId,
-                    'purchase_order_id' => $temp['purchase_order_id'] ?? null,
-                    'purchase_order_number' => $temp['purchase_order_number'] ?? null,
-                    'order_reference_id' => $temp['order_reference_id'] ?? null,
-                    'order_reference_value' => $temp['order_reference_value'] ?? null,
-                    'uploaded_sftp'  => 1,
-                    'sftp_error'     => null,
-                ]);
-
+                if (! $this->isTempPathSafe($temp['temp_path'])) {
+                    throw new \RuntimeException('El archivo temporal no está disponible. Vuelva a seleccionarlo.');
+                }
+                if (Storage::disk('local')->size($temp['temp_path']) > 20 * 1024 * 1024
+                    || ! $this->isAllowedExtension($temp['extension'])) {
+                    throw new \RuntimeException('El archivo no cumple las restricciones de formato o tamaño.');
+                }
+                // Re-resolve against the database before creating any remote copies.
+                $targets = $naming->targets($service->fresh());
+                foreach ($targets as $target) {
+                    $suffix = $naming->observations($service, $temp['observations'], $target['sho']);
+                    $naming->filename($target['identifier'], $temp['file_type'], $suffix, $temp['extension']);
+                }
+                $support = $distributor->stage($service, $temp);
+                unset($this->tempFiles[$index]);
                 Storage::disk('local')->delete($temp['temp_path']);
-                $successfulCount++;
-            } catch (\Throwable $e) {
-                Log::error('Fallo al guardar en BD: ' . $e->getMessage(), [
-                    'service_id' => $this->service_id,
-                    'file'       => $remoteFileName,
-                ]);
+                if (! $distributor->distribute($support)) {
+                    $allComplete = false;
+                    $this->addError('files', 'No se completó el guardado del soporte. Puede reintentarlo desde Cargados.');
+                }
+            } catch (ValidationException $exception) {
+                foreach ($exception->errors() as $field => $messages) {
+                    $this->addError($field, $messages[0]);
+                }
+                $allComplete = false;
+            } catch (\Throwable $exception) {
+                Log::warning('UploadFileForm:distribution_failed', ['service_id' => $this->service_id, 'message' => $exception->getMessage()]);
+                $this->addError('files', 'No se completó el guardado. Revise los archivos pendientes y los estados en Cargados.');
+                $allComplete = false;
             }
         }
-
-        if ($successfulCount === $totalCount) {
-            flash()->title('Archivo Guardado')->success('Todos los Soportes han sido almacenados correctamente');
-            $this->clearTempFiles();
-            return true;
+        $this->tempFiles = array_values($this->tempFiles);
+        if ($allComplete) {
+            flash()->title('Soportes guardados')->success('Los soportes se guardaron correctamente.');
         }
 
-        flash()->title('Carga Parcial')->warning("Se almacenaron correctamente {$successfulCount} de {$totalCount} archivos.");
-        return false;
+        return $allComplete;
+    }
+
+    public function retrySupportFile(int $id, Service $service, SupportFileDistributor $distributor): void
+    {
+        abort_unless($this->canManageSupports(), 403);
+        $this->resetValidation('supportRetry');
+        if (! $this->ensureUploadIsNotRateLimited()) {
+            return;
+        }
+        $support = $service->support_files()->findOrFail($id);
+        try {
+            if (! $distributor->distribute($support)) {
+                $this->addError('supportRetry', 'No se completó el guardado del soporte. Intente nuevamente.');
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('UploadFileForm:retry_failed', ['support_file_id' => $id, 'message' => $exception->getMessage()]);
+            $this->addError('supportRetry', 'No se pudo completar el reintento. Verifique si hay una eliminación o un envío en curso.');
+        }
     }
 
     public function deleteSupportFile(int $supportFileId, Service $service, SharePointUploader $sharePointUploader): void
@@ -334,12 +241,17 @@ class UploadFileForm extends Form
         $file = $service->support_files()->findOrFail($supportFileId);
 
         try {
+            if ($file->getRawOriginal('original_name') !== null) {
+                app(SupportFileDistributor::class)->deleteGroup($file);
+
+                return;
+            }
             if (blank($file->file_url)) {
                 throw new \RuntimeException('El soporte no tiene un enlace de SharePoint.');
             }
 
             $sharePointUploader->delete($file->file_url);
-            if (!$file->delete()) {
+            if (! $file->delete()) {
                 throw new \RuntimeException('No se pudo eliminar el registro del soporte.');
             }
         } catch (\Throwable $e) {
@@ -349,181 +261,16 @@ class UploadFileForm extends Form
                 'message' => $e->getMessage(),
             ]);
             $this->addError('supportDeletion', 'No se pudo completar la eliminación del soporte. Inténtelo nuevamente; si persiste, revise el registro de errores.');
+
             return;
         }
 
         flash()->title('Soporte eliminado')->success('El soporte fue eliminado de SharePoint y del listado.');
     }
 
-    private function sftpDiagnosticContext(string $remotePath): array
-    {
-        $root = (string) config('filesystems.disks.sftp_geodis.root', '');
-
-        return [
-            'service_id' => $this->service_id,
-            'disk' => 'sftp_geodis',
-            'root' => $root,
-            'remote_path' => $remotePath,
-            'effective_path' => rtrim($root, '/') . '/' . ltrim($remotePath, '/'),
-            'timeout_seconds' => config('filesystems.disks.sftp_geodis.timeout'),
-        ];
-    }
-
-    private function sftpExceptionContext(\Throwable $exception): array
-    {
-        $errors = [];
-        do {
-            $errors[] = [
-                'class' => get_class($exception),
-                'code' => $exception->getCode(),
-                'message' => $exception->getMessage(),
-            ];
-            $exception = $exception->getPrevious();
-        } while ($exception !== null && count($errors) < 5);
-
-        return ['exceptions' => $errors];
-    }
-
-    private function selectedPurchaseOrderContext(): array
-    {
-        if (!$this->purchase_order_id || !$this->service_id) {
-            return ['id' => null, 'number' => null];
-        }
-
-        $purchaseOrder = PurchaseOrder::query()
-            ->select(['id', 'purchase_order_number', 'service_id'])
-            ->whereKey($this->purchase_order_id)
-            ->where('service_id', $this->service_id)
-            ->first();
-
-        if (!$purchaseOrder) {
-            return ['id' => null, 'number' => null];
-        }
-
-        $this->purchase_order_number = $purchaseOrder->purchase_order_number;
-
-        return [
-            'id' => $purchaseOrder->id,
-            'number' => $purchaseOrder->purchase_order_number,
-        ];
-    }
-
-    private function selectedOrderReferenceContext(): array
-    {
-        if (!$this->order_reference_id || !$this->service_id) {
-            return ['id' => null, 'value' => null];
-        }
-
-        $reference = OrderReference::query()
-            ->select(['order_references.id', 'order_references.order_reference_value'])
-            ->join('reference_types', 'reference_types.id', '=', 'order_references.reference_type_id')
-            ->join('purchase_orders', 'purchase_orders.id', '=', 'order_references.purchase_order_id')
-            ->where('order_references.id', $this->order_reference_id)
-            ->where('purchase_orders.service_id', $this->service_id)
-            ->whereRaw("UPPER(TRIM(reference_types.reference_type_code)) = 'COI'")
-            ->first();
-
-        if (!$reference) {
-            return ['id' => null, 'value' => null];
-        }
-
-        $value = trim(explode('/', trim((string) $reference->order_reference_value), 2)[0] ?? '');
-        $this->order_reference_value = $value !== '' ? $value : null;
-
-        return [
-            'id' => $reference->id,
-            'value' => $this->order_reference_value,
-        ];
-    }
-
-    private function uploadToSftp(string $remoteDir, string $remoteFileName, string $remotePath, string $localPath): array
-    {
-        $attempts = 0;
-        $lastError = null;
-        $context = $this->sftpDiagnosticContext($remotePath);
-
-        while ($attempts < 5) {
-            $stage = 'local_file_check';
-            try {
-                clearstatcache(true, $localPath);
-                if (!is_file($localPath) || !is_readable($localPath)) {
-                    throw new \RuntimeException('El archivo temporal no existe o no se puede leer.');
-                }
-                $localSize = filesize($localPath);
-                if ($localSize === false) {
-                    throw new \RuntimeException('No se pudo determinar el tamaño del archivo temporal.');
-                }
-                /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-                $disk = Storage::disk('sftp_geodis');
-                Log::info('UploadFileForm@sftp:upload_start', $context + [
-                    'attempt' => $attempts + 1,
-                    'local_size_bytes' => $localSize,
-                ]);
-                $stage = 'file_write';
-                $result = $disk->putFileAs(
-                    $remoteDir,
-                    new \Illuminate\Http\File($localPath),
-                    $remoteFileName
-                );
-
-                if ($result === false) {
-                    throw new \RuntimeException('putFileAs retorno false');
-                }
-
-                Log::info('UploadFileForm@sftp:write_completed', $context + [
-                    'attempt' => $attempts + 1,
-                    'returned_path' => $result,
-                ]);
-                $stage = 'file_verify';
-                $remoteSize = null;
-                for ($verifyTries = 0; $verifyTries <= 5; $verifyTries++) {
-                    $exists = $disk->fileExists($remotePath);
-                    $remoteSize = $exists ? $disk->size($remotePath) : null;
-                    if ($exists && $remoteSize === $localSize) {
-                        Log::info('UploadFileForm@sftp:upload_verified', $context + [
-                            'attempt' => $attempts + 1,
-                            'local_size_bytes' => $localSize,
-                            'remote_size_bytes' => $remoteSize,
-                        ]);
-                        return [true, null];
-                    }
-                    Log::warning('UploadFileForm@sftp:verification_pending', $context + [
-                        'attempt' => $attempts + 1,
-                        'verification_attempt' => $verifyTries + 1,
-                        'file_exists' => $exists,
-                        'local_size_bytes' => $localSize,
-                        'remote_size_bytes' => $remoteSize,
-                    ]);
-                    if ($verifyTries < 5) {
-                        usleep(300000 * ($verifyTries + 1));
-                    }
-                }
-                throw new \RuntimeException($exists
-                    ? "El tamaño remoto ({$remoteSize} bytes) no coincide con el local ({$localSize} bytes)."
-                    : 'El archivo no existe en SFTP despues de la escritura.');
-            } catch (\Throwable $e) {
-                $lastError = $e->getMessage();
-                Log::warning('UploadFileForm@sftp:upload_attempt_failed', $context + [
-                    'attempt' => $attempts + 1,
-                    'stage' => $stage,
-                ] + $this->sftpExceptionContext($e));
-                usleep(500000 * ($attempts + 1));
-                $attempts++;
-            }
-        }
-
-        Log::error('UploadFileForm@sftp:upload_failed', $context + ['message' => $lastError]);
-        return [false, $lastError];
-    }
-
     private function isAllowedExtension(string $extension): bool
     {
         return in_array($extension, self::ALLOWED_EXTENSIONS, true);
-    }
-
-    private function isAllowedFileType(string $fileType): bool
-    {
-        return in_array($fileType, self::ALLOWED_FILE_TYPES, true);
     }
 
     private function isAllowedMimeType(string $mimeType): bool
@@ -533,22 +280,22 @@ class UploadFileForm extends Form
 
     private function fileValidationError($file): ?string
     {
-        if (!is_object($file) || !method_exists($file, 'getClientOriginalExtension')) {
+        if (! is_object($file) || ! method_exists($file, 'getClientOriginalExtension')) {
             return 'El archivo seleccionado no es válido.';
         }
 
         $extension = strtolower((string) $file->getClientOriginalExtension());
-        if (!$this->isAllowedExtension($extension)) {
+        if (! $this->isAllowedExtension($extension)) {
             return "Extensión no permitida: .{$extension}.";
         }
 
         $size = method_exists($file, 'getSize') ? (int) $file->getSize() : 0;
-        if ($size > 10 * 1024 * 1024) {
-            return 'El archivo supera el tamaño máximo permitido de 10 MB.';
+        if ($size > 20 * 1024 * 1024) {
+            return 'El archivo supera el tamaño máximo permitido de 20 MB.';
         }
 
         $mimeType = method_exists($file, 'getMimeType') ? (string) $file->getMimeType() : '';
-        if ($mimeType !== '' && !$this->isAllowedMimeType($mimeType)) {
+        if ($mimeType !== '' && ! $this->isAllowedMimeType($mimeType)) {
             return "Tipo de archivo no permitido: {$mimeType}.";
         }
 
@@ -563,22 +310,24 @@ class UploadFileForm extends Form
         $baseReal = realpath($baseDir);
         $fullReal = realpath($fullPath);
 
-        if (!$baseReal || !$fullReal) {
+        if (! $baseReal || ! $fullReal) {
             return false;
         }
 
-        return str_starts_with($fullReal, $baseReal . DIRECTORY_SEPARATOR);
+        return str_starts_with($fullReal, $baseReal.DIRECTORY_SEPARATOR);
     }
 
     private function ensureUploadIsNotRateLimited(): bool
     {
-        $key = 'support-files:' . (Auth::id() ?? 'guest') . '|' . request()->ip();
+        $key = 'support-files:'.(Auth::id() ?? 'guest').'|'.request()->ip();
         if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($key, 30)) {
             $seconds = \Illuminate\Support\Facades\RateLimiter::availableIn($key);
-            $this->addError('form.files', "Demasiadas cargas. Intenta de nuevo en {$seconds} segundos.");
+            $this->addError('files', "Demasiadas cargas. Intenta de nuevo en {$seconds} segundos.");
+
             return false;
         }
         \Illuminate\Support\Facades\RateLimiter::hit($key, 60);
+
         return true;
     }
 }

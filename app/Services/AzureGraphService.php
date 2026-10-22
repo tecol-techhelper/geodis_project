@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 class AzureGraphService
 {
@@ -19,11 +20,15 @@ class AzureGraphService
             'scope' => 'https://graph.microsoft.com/.default',
         ]);
 
-        if (!$response->successful()) {
-            // Mostramos todo el contenido del error en texto plano
-            dd($response->status(), $response->json());
+        if (! $response->successful()) {
+            throw new RuntimeException('No se pudo autenticar con Azure (HTTP '.$response->status().').');
         }
 
-        return $response->json()['access_token'];
+        $token = $response->json('access_token');
+        if (! is_string($token) || trim($token) === '') {
+            throw new RuntimeException('Azure no devolvió un token de acceso válido.');
+        }
+
+        return $token;
     }
 }
