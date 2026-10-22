@@ -385,6 +385,70 @@ class SupportDocumentDistributionTest extends TestCase
         }
     }
 
+    public static function pairMigrationStates(): array
+    {
+        return [
+            'original schema' => [false, false, true],
+            'column already added' => [true, false, true],
+            'both indexes present' => [true, true, true],
+            'old index already removed' => [true, false, false],
+            'already complete' => [true, true, false],
+        ];
+    }
+
+    #[DataProvider('pairMigrationStates')]
+    public function test_pair_migration_resumes_without_losing_records(bool $hasCni, bool $newIndex, bool $oldIndex): void
+    {
+        $support = $this->stage($this->service());
+        $names = $support->copies()->pluck('file_name')->all();
+        $migration = require database_path('migrations/2026_10_22_120000_group_support_copies_by_identifier_and_cni.php');
+        $migration->down();
+        if ($hasCni) {
+            Schema::table('support_file_copies', fn (Blueprint $table) => $table->string('cni')->nullable());
+            DB::table('support_file_copies')->update(['cni' => 'SHOEXISTING']);
+        }
+        if ($newIndex) {
+            Schema::table('support_file_copies', fn (Blueprint $table) => $table->unique(['support_file_id', 'identifier', 'cni'], 'support_copies_identifier_cni_unique'));
+        }
+        if (! $oldIndex) {
+            Schema::table('support_file_copies', fn (Blueprint $table) => $table->dropUnique(['support_file_id', 'identifier']));
+        }
+        $migration->up();
+        $migration->up();
+        $this->assertTrue(Schema::hasColumn('support_file_copies', 'cni'));
+        $this->assertTrue(Schema::hasIndex('support_file_copies', ['support_file_id', 'identifier', 'cni'], 'unique'));
+        $this->assertFalse(Schema::hasIndex('support_file_copies', ['support_file_id', 'identifier'], 'unique'));
+        $this->assertSame($names, $support->copies()->pluck('file_name')->all());
+        $this->assertSame($hasCni ? ['SHOEXISTING'] : [null], $support->copies()->pluck('cni')->unique()->values()->all());
+    }
+
+    public function test_pair_migration_creates_replacement_index_before_removing_foreign_key_index(): void
+    {
+        $migration = require database_path('migrations/2026_10_22_120000_group_support_copies_by_identifier_and_cni.php');
+        $migration->down();
+        DB::connection()->enableQueryLog();
+        $migration->up();
+        $queries = array_column(DB::getQueryLog(), 'query');
+        DB::connection()->disableQueryLog();
+        $create = array_keys(array_filter($queries, fn ($query) => str_contains(strtolower($query), 'create unique index') && str_contains($query, 'support_copies_identifier_cni_unique')));
+        $drop = array_keys(array_filter($queries, fn ($query) => str_contains(strtolower($query), 'drop index') && str_contains($query, 'support_file_copies_support_file_id_identifier_unique')));
+        $this->assertCount(1, $create);
+        $this->assertCount(1, $drop);
+        $this->assertLessThan($drop[0], $create[0]);
+    }
+
+    public function test_pair_migration_rollback_can_be_repeated(): void
+    {
+        $support = $this->stage($this->service());
+        $names = $support->copies()->pluck('file_name')->all();
+        $migration = require database_path('migrations/2026_10_22_120000_group_support_copies_by_identifier_and_cni.php');
+        $migration->down();
+        $migration->down();
+        $this->assertFalse(Schema::hasColumn('support_file_copies', 'cni'));
+        $this->assertTrue(Schema::hasIndex('support_file_copies', ['support_file_id', 'identifier'], 'unique'));
+        $this->assertSame($names, $support->copies()->pluck('file_name')->all());
+    }
+
     public function test_pair_migration_can_roll_back_without_renaming_existing_files(): void
     {
         $support = $this->stage($this->service());
