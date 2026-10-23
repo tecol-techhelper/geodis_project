@@ -32,9 +32,12 @@ class SupportFile extends Model
         'original_name',
         'observations',
         'deletion_started_at',
+        'processing_status',
+        'processing_token',
+        'processing_heartbeat_at',
     ];
 
-    protected $casts = ['deletion_started_at' => 'datetime'];
+    protected $casts = ['deletion_started_at' => 'datetime', 'processing_heartbeat_at' => 'datetime'];
 
     public function copies(): HasMany
     {
@@ -46,14 +49,32 @@ class SupportFile extends Model
         if ($this->deletion_started_at) {
             return 'Eliminación pendiente';
         }
-        if ($this->copies->isEmpty()) {
+        [$complete, $total] = $this->copyCounts();
+        if ($total === 0 || $complete === $total) {
             return 'Guardado';
         }
-        $complete = $this->copies->filter(fn ($copy) => $copy->isComplete())->count();
 
-        return $complete === $this->copies->count()
-            ? 'Guardado'
-            : 'Pendiente de guardar';
+        return match ($this->processing_status) {
+            'queued' => $this->distributionIsActive() ? 'En espera' : 'Requiere reintento',
+            'processing' => $this->distributionIsActive() ? 'Procesando' : 'Requiere reintento',
+            'failed' => 'Requiere reintento',
+            default => 'Pendiente de guardar',
+        };
+    }
+
+    public function copyCounts(): array
+    {
+        if (array_key_exists('completed_copies_count', $this->getAttributes())) {
+            return [(int) $this->completed_copies_count, (int) $this->copies_count];
+        }
+
+        return [$this->copies->filter(fn ($copy) => $copy->isComplete())->count(), $this->copies->count()];
+    }
+
+    public function distributionIsActive(): bool
+    {
+        return in_array($this->processing_status, ['queued', 'processing'], true)
+            && $this->processing_heartbeat_at?->gt(now()->subMinutes(10));
     }
 
     // Relation(as son)

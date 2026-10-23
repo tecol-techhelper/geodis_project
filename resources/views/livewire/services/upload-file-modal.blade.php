@@ -13,11 +13,31 @@ new class extends Component {
     public UploadFileForm $form;
     public Service $service;
     public bool $canUploadSupports = false;
+    #[\Livewire\Attributes\Locked]
+    public array $observedSupportStates = [];
     public function mount(Service $service, bool $canUploadSupports = false): void
     {
         $this->service = $service;
         $this->canUploadSupports = $canUploadSupports;
         $this->form->service_id = $service->id;
+        $this->observeSupportStates();
+    }
+
+    public function observeSupportStates(): void
+    {
+        $this->observedSupportStates = $this->service->support_files()->pluck('processing_status', 'id')->all();
+    }
+
+    public function refreshSupportProgress(): void
+    {
+        $previous = $this->observedSupportStates;
+        $this->observeSupportStates();
+        foreach ($this->observedSupportStates as $id => $status) {
+            if ($status === 'completed' && in_array($previous[$id] ?? null, ['queued', 'processing'], true)) {
+                flash()->title('Soporte guardado')->success('El envío del soporte terminó correctamente.');
+                $this->dispatch('support-files-saved');
+            }
+        }
     }
 
     public function with(): array
@@ -40,7 +60,10 @@ new class extends Component {
         }
 
         return [
-            'supportFiles' => $this->service->support_files()->with(['file_type', 'copies'])->latest('id')->get(),
+            'supportFiles' => $this->service->support_files()->with('file_type')->withCount([
+                'copies',
+                'copies as completed_copies_count' => fn ($query) => $query->whereNotNull('sharepoint_uploaded_at')->whereNotNull('sftp_uploaded_at'),
+            ])->latest('id')->get(),
             'remainingCharacters' => $remainingCharacters,
         ];
     }
@@ -48,6 +71,7 @@ new class extends Component {
     public function retrySupportFile(int $id, SupportFileDistributor $distributor): void
     {
         $this->form->retrySupportFile($id, $this->service, $distributor);
+        $this->observeSupportStates();
     }
 
     public function uploadFiles(): void
@@ -75,7 +99,8 @@ new class extends Component {
         $saved = $this->form->saveFiles($distributor);
 
         if ($saved) {
-            $this->dispatch('support-files-saved');
+            $this->observeSupportStates();
+            $this->dispatch('support-files-queued');
         }
     }
 }; ?>
@@ -116,7 +141,7 @@ new class extends Component {
             </div>
 
             <!-- Dialog Body -->
-            <div class="space-y-5 overflow-y-auto px-5 py-5">
+            <div class="space-y-5 overflow-y-auto px-5 py-5" wire:poll.5s.visible="refreshSupportProgress">
                 <div class="border-b border-gray-200" role="tablist" aria-label="Secciones de soportes">
                     <button id="supportUploadTab" type="button" role="tab" aria-controls="supportUploadPanel"
                         @click="activeSupportTab = 'upload'"
@@ -254,10 +279,17 @@ new class extends Component {
                                         </td>
                                         <td class="px-4 py-3 text-xs text-gray-600">
                                             <span role="status">{{ $file->copyProgress() }}</span>
+                                            @php([$sentCopies, $totalCopies] = $file->copyCounts())
+                                            @if ($totalCopies > 0)
+                                                <div class="mt-1">{{ $sentCopies }} de {{ $totalCopies }} copias enviadas</div>
+                                                <progress value="{{ $sentCopies }}" max="{{ $totalCopies }}"
+                                                    aria-label="Progreso del envío de {{ $file->original_name ?? $file->file_name }}"
+                                                    class="mt-1 h-2 w-32 accent-indigo-600"></progress>
+                                            @endif
                                         </td>
                                         <td class="px-4 py-3 text-right text-sm">
                                             @if ($canUploadSupports)
-                                                @if ($file->local_path && !$file->deletion_started_at)
+                                                @if ($file->local_path && !$file->deletion_started_at && !$file->distributionIsActive() && $file->processing_status !== 'completed')
                                                     <button type="button" wire:click="retrySupportFile({{ $file->id }})" wire:loading.attr="disabled" wire:target="retrySupportFile,saveFiles,deleteSupportFile" class="mr-2 text-sm font-medium text-indigo-700 underline disabled:opacity-50">Reintentar guardado</button>
                                                 @endif
                                                 <button type="button" wire:click="deleteSupportFile({{ $file->id }})"

@@ -13,7 +13,7 @@ class AzureGraphService
         $clientId = config('services.msgraph.client_id');
         $clientSecret = config('services.msgraph.client_secret');
 
-        $response = Http::asForm()->post("https://login.microsoftonline.com/{$tenantId}/oauth2/v2.0/token", [
+        $response = Http::timeout(20)->connectTimeout(10)->asForm()->post("https://login.microsoftonline.com/{$tenantId}/oauth2/v2.0/token", [
             'grant_type' => 'client_credentials',
             'client_id' => $clientId,
             'client_secret' => $clientSecret,

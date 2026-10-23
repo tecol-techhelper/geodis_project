@@ -2,11 +2,13 @@
 
 namespace App\Services;
 
+use App\Jobs\DistributeSupportFilesJob;
 use App\Models\FileType;
 use App\Models\Service;
 use App\Models\SupportFile;
 use App\Models\SupportFileCopy;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +18,8 @@ use RuntimeException;
 
 class SupportFileDistributor
 {
+    public const LOCK_SECONDS = 330;
+
     public function __construct(
         private SupportDocumentNaming $naming,
         private SharePointUploader $sharePoint,
@@ -78,13 +82,49 @@ class SupportFileDistributor
         }
     }
 
-    public function distribute(SupportFile $support): bool
+    public function enqueue(SupportFile $support): void
     {
-        return Cache::lock('support-file:'.$support->id, 600)->block(1, function () use ($support) {
+        $token = null;
+        try {
+            DB::transaction(function () use ($support, &$token) {
+                $support = SupportFile::withTrashed()->lockForUpdate()->findOrFail($support->id);
+                if ($support->trashed() || $support->deletion_started_at) {
+                    throw new RuntimeException('El soporte tiene una eliminación pendiente o ya fue eliminado.');
+                }
+                if ($support->distributionIsActive() || $support->copies->every(fn ($copy) => $copy->isComplete())) {
+                    return;
+                }
+                if (! $support->local_path || ! str_starts_with($support->local_path, 'support_sources/')
+                    || ! Storage::disk('local')->exists($support->local_path)) {
+                    throw new RuntimeException('No está disponible el archivo original para reintentar.');
+                }
+                $token = (string) Str::uuid();
+                $support->update(['processing_status' => 'queued', 'processing_token' => $token, 'processing_heartbeat_at' => now(), 'sftp_error' => null]);
+                Bus::dispatch(new DistributeSupportFilesJob($support->id, $token));
+            });
+        } catch (\Throwable $exception) {
+            if ($token !== null) {
+                SupportFile::whereKey($support->id)->where('processing_token', $token)
+                    ->update(['processing_status' => 'failed', 'processing_heartbeat_at' => now()]);
+            }
+            throw $exception;
+        }
+    }
+
+    public function distribute(SupportFile $support, ?int $limit = null, ?string $token = null): bool
+    {
+        return Cache::lock('support-file:'.$support->id, self::LOCK_SECONDS)->block(1, function () use ($support, $limit, $token) {
             $support->refresh();
             if ($support->trashed() || $support->deletion_started_at) {
                 throw new RuntimeException('Este soporte está eliminado o tiene una eliminación pendiente.');
             }
+            if ($token !== null) {
+                if ($support->processing_token !== $token) {
+                    return false;
+                }
+                $support->update(['processing_status' => 'processing', 'processing_heartbeat_at' => now()]);
+            }
+            $started = microtime(true);
             $copies = $support->copies()->orderBy('id')->get();
             if ($copies->isEmpty()) {
                 throw new RuntimeException('El soporte no tiene copias para procesar.');
@@ -107,17 +147,23 @@ class SupportFileDistributor
                         }
                     }
                     $support->update(['file_url' => $sharedUrl]);
+                    $support->copies()->whereNull('sftp_uploaded_at')->update(['error_message' => null]);
                 } catch (\Throwable $exception) {
                     $support->copies()->whereNull('sftp_uploaded_at')->update(['error_message' => $exception->getMessage()]);
                     $support->update(['sftp_error' => 'No se completó el guardado del soporte.']);
-                    Log::warning('SupportFileDistributor:sharepoint_failed', ['support_file_id' => $support->id, 'message' => $exception->getMessage()]);
+                    Log::warning('SupportFileDistributor:sharepoint_failed', ['support_file_id' => $support->id, 'exception_class' => get_class($exception), 'message' => $exception->getMessage()]);
 
                     return false;
                 }
+                $processed = 0;
                 foreach ($copies as $copy) {
                     if ($copy->isComplete()) {
                         continue;
                     }
+                    if ($limit !== null && ($processed >= $limit || microtime(true) - $started >= 60)) {
+                        break;
+                    }
+                    $processed++;
                     try {
                         if (! $copy->sharepoint_uploaded_at) {
                             $copy->update(['file_url' => $sharedUrl, 'sharepoint_uploaded_at' => now(), 'error_message' => null]);
@@ -131,7 +177,10 @@ class SupportFileDistributor
                         }
                     } catch (\Throwable $exception) {
                         $copy->update(['error_message' => $exception->getMessage()]);
-                        Log::warning('SupportFileDistributor:copy_failed', ['support_file_id' => $support->id, 'copy_id' => $copy->id, 'message' => $exception->getMessage()]);
+                        Log::warning('SupportFileDistributor:copy_failed', ['support_file_id' => $support->id, 'copy_id' => $copy->id, 'exception_class' => get_class($exception), 'message' => $exception->getMessage()]);
+                    }
+                    if ($token !== null) {
+                        $support->update(['processing_heartbeat_at' => now()]);
                     }
                 }
             }
@@ -141,6 +190,9 @@ class SupportFileDistributor
                 'uploaded_sftp' => $complete,
                 'sftp_error' => $complete ? null : 'No se completó el guardado del soporte.',
             ]);
+            if ($token !== null) {
+                $support->update(['processing_status' => $complete ? 'completed' : 'queued', 'processing_heartbeat_at' => now()]);
+            }
             if ($complete && $support->local_path && Storage::disk('local')->delete($support->local_path)) {
                 $support->update(['local_path' => null]);
             }
@@ -151,7 +203,7 @@ class SupportFileDistributor
 
     public function deleteGroup(SupportFile $support): void
     {
-        Cache::lock('support-file:'.$support->id, 600)->block(1, function () use ($support) {
+        Cache::lock('support-file:'.$support->id, self::LOCK_SECONDS)->block(1, function () use ($support) {
             $support->refresh();
             if ($support->trashed()) {
                 return;

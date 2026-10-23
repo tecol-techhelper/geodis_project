@@ -27,20 +27,20 @@ class SharePointUploader
         $url = "{$baseUrl}/root:/{$encodedPath}:/content";
         $stream = fopen($absolutePath, 'r');
 
-        if (!$stream) {
+        if (! $stream) {
             throw new \RuntimeException("No se pudo abrir el archivo: {$absolutePath}");
         }
 
         try {
-            $response = Http::withToken($token)
+            $response = Http::timeout(20)->connectTimeout(10)->withToken($token)
                 ->withBody(stream_get_contents($stream), 'application/octet-stream')
                 ->put($url);
         } finally {
             fclose($stream);
         }
 
-        if (!$response->successful()) {
-            throw new \RuntimeException('Error al subir el archivo: ' . $response->body());
+        if (! $response->successful()) {
+            throw new \RuntimeException('Error al subir el archivo: '.$response->body());
         }
 
         return $response->json();
@@ -51,15 +51,15 @@ class SharePointUploader
         $token = $this->auth->getAccessToken();
         $siteId = config('services.msgraph.site_id');
         $baseUrl = "https://graph.microsoft.com/v1.0/sites/{$siteId}/drive";
-        $root = Http::withToken($token)->get("{$baseUrl}/root", ['$select' => 'webUrl,parentReference']);
+        $root = Http::timeout(20)->connectTimeout(10)->withToken($token)->get("{$baseUrl}/root", ['$select' => 'webUrl,parentReference']);
 
-        if (!$root->successful()) {
-            throw new \RuntimeException('No se pudo consultar la biblioteca de SharePoint: ' . $root->body());
+        if (! $root->successful()) {
+            throw new \RuntimeException('No se pudo consultar la biblioteca de SharePoint: '.$root->body());
         }
 
         $rootUrl = parse_url((string) $root->json('webUrl'));
         $targetUrl = parse_url($fileUrl);
-        $rootPath = rtrim(rawurldecode($rootUrl['path'] ?? ''), '/') . '/';
+        $rootPath = rtrim(rawurldecode($rootUrl['path'] ?? ''), '/').'/';
         $targetPath = rawurldecode($targetUrl['path'] ?? '');
 
         if (empty($rootUrl['host']) || empty($targetUrl['host'])
@@ -75,7 +75,7 @@ class SharePointUploader
                 throw new \RuntimeException('La ruta del soporte en SharePoint no es válida.');
             }
 
-            $item = Http::withToken($token)->get("{$baseUrl}/root:/{$this->encodePath($relativePath)}", [
+            $item = Http::timeout(20)->connectTimeout(10)->withToken($token)->get("{$baseUrl}/root:/{$this->encodePath($relativePath)}", [
                 '$select' => 'id,file',
             ]);
 
@@ -84,32 +84,32 @@ class SharePointUploader
                 return;
             }
         } elseif (preg_match('~/_layouts/15/Doc\.aspx$~i', $targetPath)) {
-            $shareId = 'u!' . rtrim(strtr(base64_encode($fileUrl), '+/', '-_'), '=');
-            $item = Http::withToken($token)->get("https://graph.microsoft.com/v1.0/shares/{$shareId}/driveItem", [
+            $shareId = 'u!'.rtrim(strtr(base64_encode($fileUrl), '+/', '-_'), '=');
+            $item = Http::timeout(20)->connectTimeout(10)->withToken($token)->get("https://graph.microsoft.com/v1.0/shares/{$shareId}/driveItem", [
                 '$select' => 'id,file,parentReference',
             ]);
 
-            if (!$item->successful()) {
-                throw new \RuntimeException('No se pudo resolver el enlace de Office en SharePoint: ' . $item->body());
+            if (! $item->successful()) {
+                throw new \RuntimeException('No se pudo resolver el enlace de Office en SharePoint: '.$item->body());
             }
 
             $driveId = $root->json('parentReference.driveId');
-            if (!$driveId || $item->json('parentReference.driveId') !== $driveId) {
+            if (! $driveId || $item->json('parentReference.driveId') !== $driveId) {
                 throw new \RuntimeException('El archivo de Office no pertenece a la biblioteca de SharePoint configurada.');
             }
         } else {
             throw new \RuntimeException('El enlace del soporte no pertenece a la biblioteca de SharePoint configurada.');
         }
 
-        if (!$item->successful() || !is_array($item->json('file')) || !$item->json('id')) {
-            throw new \RuntimeException('No se pudo identificar el archivo de SharePoint: ' . $item->body());
+        if (! $item->successful() || ! is_array($item->json('file')) || ! $item->json('id')) {
+            throw new \RuntimeException('No se pudo identificar el archivo de SharePoint: '.$item->body());
         }
 
         $itemId = rawurlencode($item->json('id'));
-        $response = Http::withToken($token)->delete("{$baseUrl}/items/{$itemId}");
+        $response = Http::timeout(20)->connectTimeout(10)->withToken($token)->delete("{$baseUrl}/items/{$itemId}");
 
-        if (!$response->successful() && $response->status() !== 404) {
-            throw new \RuntimeException('No se pudo eliminar el archivo de SharePoint: ' . $response->body());
+        if (! $response->successful() && $response->status() !== 404) {
+            throw new \RuntimeException('No se pudo eliminar el archivo de SharePoint: '.$response->body());
         }
     }
 
@@ -120,13 +120,13 @@ class SharePointUploader
         foreach (explode('/', trim($directory, '/')) as $segment) {
             $path = $parentPath === '' ? $segment : "{$parentPath}/{$segment}";
             $folderUrl = "{$baseUrl}/root:/{$this->encodePath($path)}";
-            $response = Http::withToken($token)->get($folderUrl);
+            $response = Http::timeout(20)->connectTimeout(10)->withToken($token)->get($folderUrl);
 
             if ($response->status() === 404) {
                 $childrenUrl = $parentPath === ''
                     ? "{$baseUrl}/root/children"
                     : "{$baseUrl}/root:/{$this->encodePath($parentPath)}:/children";
-                $response = Http::withToken($token)->post($childrenUrl, [
+                $response = Http::timeout(20)->connectTimeout(10)->withToken($token)->post($childrenUrl, [
                     'name' => $segment,
                     'folder' => (object) [],
                     '@microsoft.graph.conflictBehavior' => 'fail',
@@ -134,12 +134,12 @@ class SharePointUploader
 
                 // Otra carga puede haber creado la misma carpeta entre la consulta y el POST.
                 if ($response->status() === 409) {
-                    $response = Http::withToken($token)->get($folderUrl);
+                    $response = Http::timeout(20)->connectTimeout(10)->withToken($token)->get($folderUrl);
                 }
             }
 
-            if (!$response->successful() || !is_array($response->json('folder'))) {
-                throw new \RuntimeException("No se pudo preparar la carpeta de SharePoint {$path}: " . $response->body());
+            if (! $response->successful() || ! is_array($response->json('folder'))) {
+                throw new \RuntimeException("No se pudo preparar la carpeta de SharePoint {$path}: ".$response->body());
             }
 
             $parentPath = $path;
