@@ -52,10 +52,15 @@ new class extends Component {
                 ->max() ?? 4;
             $extra = $naming->normalizeObservations($this->form->free_text);
             $remainingCharacters = collect($targets)->map(function ($target) use ($naming, $extra, $extensionLength) {
-                $so = $target['sho'] ?? $naming->normalizeObservations($this->service->consecutive);
-                $base = $target['identifier'].'-N-'.$this->form->file_type.($so !== '' ? '-'.$so : '');
-                // Reserve the separator for optional observations, even while the input is empty.
-                return 50 - strlen($base) - 1 - $extensionLength - 1 - ($extra !== $so ? strlen($extra) : 0);
+                try {
+                    $fixed = $naming->observations($this->service, null, $target['sho']);
+                    $suffix = $naming->observations($this->service, $extra, $target['sho']);
+                } catch (\Illuminate\Validation\ValidationException) {
+                    return null;
+                }
+                $base = $target['identifier'].'-N-'.$this->form->file_type.($suffix !== '' ? '-'.$suffix : '');
+                // Reserve the observations separator while no extra text is included.
+                return 50 - strlen($base) - 1 - $extensionLength - ($suffix === $fixed ? 1 : 0);
             })->min();
         }
 

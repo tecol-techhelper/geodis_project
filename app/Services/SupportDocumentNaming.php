@@ -70,10 +70,14 @@ class SupportDocumentNaming
         if ($sho !== null && ! preg_match('/^[A-Za-z0-9]+$/D', $sho)) {
             throw ValidationException::withMessages(['files' => 'La OC/FN no tiene una SHO válida en su bloque CNI. Revise la referencia de origen.']);
         }
-        $so = $sho ?? $this->normalizeObservations($service->consecutive);
+        $so = $this->normalizeObservations($service->consecutive);
+        $parts = $sho === null ? [$so] : [$sho, $so];
         $extra = $this->normalizeObservations($extra);
+        if ($extra !== '' && ! in_array($extra, $parts, true)) {
+            $parts[] = $extra;
+        }
 
-        return implode('-', array_filter([$so, $extra !== $so ? $extra : '']));
+        return implode('-', array_filter($parts, fn ($part) => $part !== ''));
     }
 
     public function filename(string $identifier, string $type, string $observations, string $extension, int $sequence = 1): string
