@@ -193,24 +193,21 @@ class UploadFileForm extends Form
                 $support = $distributor->stage($service, $temp);
                 unset($this->tempFiles[$index]);
                 Storage::disk('local')->delete($temp['temp_path']);
-                if (! $distributor->distribute($support)) {
-                    $allComplete = false;
-                    $this->addError('files', 'No se completó el guardado del soporte. Puede reintentarlo desde Cargados.');
-                }
+                $distributor->enqueue($support);
             } catch (ValidationException $exception) {
                 foreach ($exception->errors() as $field => $messages) {
                     $this->addError($field, $messages[0]);
                 }
                 $allComplete = false;
             } catch (\Throwable $exception) {
-                Log::warning('UploadFileForm:distribution_failed', ['service_id' => $this->service_id, 'message' => $exception->getMessage()]);
+                Log::warning('UploadFileForm:distribution_failed', ['service_id' => $this->service_id, 'exception_class' => get_class($exception), 'message' => $exception->getMessage() ?: 'Excepción sin mensaje']);
                 $this->addError('files', 'No se completó el guardado. Revise los archivos pendientes y los estados en Cargados.');
                 $allComplete = false;
             }
         }
         $this->tempFiles = array_values($this->tempFiles);
         if ($allComplete) {
-            flash()->title('Soportes guardados')->success('Los soportes se guardaron correctamente.');
+            flash()->title('Soportes en espera')->info('El envío continuará en segundo plano. Consulte el progreso en Cargados.');
         }
 
         return $allComplete;
@@ -225,12 +222,10 @@ class UploadFileForm extends Form
         }
         $support = $service->support_files()->findOrFail($id);
         try {
-            if (! $distributor->distribute($support)) {
-                $this->addError('supportRetry', 'No se completó el guardado del soporte. Intente nuevamente.');
-            }
+            $distributor->enqueue($support);
         } catch (\Throwable $exception) {
-            Log::warning('UploadFileForm:retry_failed', ['support_file_id' => $id, 'message' => $exception->getMessage()]);
-            $this->addError('supportRetry', 'No se pudo completar el reintento. Verifique si hay una eliminación o un envío en curso.');
+            Log::warning('UploadFileForm:retry_failed', ['support_file_id' => $id, 'exception_class' => get_class($exception), 'message' => $exception->getMessage() ?: 'Excepción sin mensaje']);
+            $this->addError('supportRetry', 'No se pudo programar el reintento. Verifique que el archivo original siga disponible y revise el registro de errores.');
         }
     }
 

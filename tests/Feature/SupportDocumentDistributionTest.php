@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\DistributeSupportFilesJob;
 use App\Livewire\Forms\Services\UploadFileForm;
 use App\Models\Service;
 use App\Models\SupportFile;
@@ -15,6 +16,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
@@ -47,7 +49,7 @@ class SupportDocumentDistributionTest extends TestCase
                 $table->softDeletes();
             });
         }
-        foreach (['2025_05_30_093303_create_support_files_table.php', '2026_05_16_120000_add_purchase_order_and_reference_to_support_files_table.php', '2026_10_17_120000_add_document_copies_to_support_files.php', '2026_10_22_120000_group_support_copies_by_identifier_and_cni.php'] as $migration) {
+        foreach (['2025_05_30_093303_create_support_files_table.php', '2026_05_16_120000_add_purchase_order_and_reference_to_support_files_table.php', '2026_10_17_120000_add_document_copies_to_support_files.php', '2026_10_22_120000_group_support_copies_by_identifier_and_cni.php', '2026_10_23_160000_add_processing_state_to_support_files.php'] as $migration) {
             (require database_path('migrations/'.$migration))->up();
         }
         DB::table('file_types')->insert(['id' => 1, 'file_type' => 'CLP', 'file_type_full_name' => 'CHECK LIST']);
@@ -56,8 +58,28 @@ class SupportDocumentDistributionTest extends TestCase
         }
         DB::table('users')->insert(['id' => 1, 'username' => 'administrador']);
         $this->actingAs(User::find(1)->setRelation('roles', collect()));
+        Queue::fake([DistributeSupportFilesJob::class]);
         Storage::fake('local');
         Storage::fake('sftp_geodis');
+    }
+
+    private int $processedQueueJobs = 0;
+
+    private function runQueuedSupportUploads(?SupportFileDistributor $distributor = null, bool $expectFailure = false): void
+    {
+        while ($this->processedQueueJobs < Queue::pushed(DistributeSupportFilesJob::class)->count()) {
+            $job = Queue::pushed(DistributeSupportFilesJob::class)[$this->processedQueueJobs++];
+            try {
+                $job->handle($distributor ?? app(SupportFileDistributor::class));
+            } catch (RuntimeException $exception) {
+                if (! $expectFailure) {
+                    throw $exception;
+                }
+                $job->failed($exception);
+
+                return;
+            }
+        }
     }
 
     private function service(string $type = 'DOM-CONSOL', array $references = ['5213111/1', '5213111/2', 'FN226786P125/1']): Service
@@ -121,6 +143,251 @@ class SupportDocumentDistributionTest extends TestCase
         return $cases;
     }
 
+    #[DataProvider('otxFlows')]
+    public function test_large_upload_uses_small_jobs_and_preserves_original_until_all_81_copies_finish(string $flow): void
+    {
+        $service = $this->service($flow, array_fill(0, 81, null));
+        $this->assertLargeQueuedUpload($service);
+    }
+
+    public function test_log_81_oc_sho_pairs_are_processed_in_27_batches(): void
+    {
+        $service = $this->service();
+        DB::table('order_references')->delete();
+        DB::table('purchase_orders')->delete();
+        $acd = DB::table('reference_types')->where('reference_type_code', 'ACD')->value('id');
+        $coi = DB::table('reference_types')->where('reference_type_code', 'COI')->value('id');
+        for ($sho = 1; $sho <= 9; $sho++) {
+            $order = DB::table('purchase_orders')->insertGetId(['service_id' => $service->id, 'purchase_order_number' => 'SHO'.$sho]);
+            DB::table('order_references')->insert(['purchase_order_id' => $order, 'reference_type_id' => $acd, 'order_reference_value' => 'DOM-CONSOL']);
+            for ($oc = 1; $oc <= 9; $oc++) {
+                foreach ([1, 2] as $line) {
+                    DB::table('order_references')->insert(['purchase_order_id' => $order, 'reference_type_id' => $coi, 'order_reference_value' => 'OC'.$oc.'/'.$line]);
+                }
+            }
+        }
+        $this->assertLargeQueuedUpload($service);
+    }
+
+    private function assertLargeQueuedUpload(Service $service): void
+    {
+        $sharepoint = Mockery::mock(SharePointUploader::class);
+        $sharepoint->shouldReceive('upload')->once()->andReturn(['webUrl' => 'https://example.sharepoint.com/original.pdf']);
+        $sent = [];
+        $sftp = Mockery::mock(SupportFileSftpUploader::class);
+        $sftp->shouldReceive('upload')->times(81)->andReturnUsing(function ($directory, $name) use (&$sent) {
+            $this->assertArrayNotHasKey($name, $sent);
+            $sent[$name] = true;
+
+            return [true, null];
+        });
+        $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
+        $support = $this->stage($service, $distributor);
+        $source = $support->local_path;
+        $this->assertSame(81, $support->copies()->count());
+        $distributor->enqueue($support);
+        $this->assertSame('En espera', $support->fresh()->copyProgress());
+        $this->assertCount(0, $sent);
+        $first = Queue::pushed(DistributeSupportFilesJob::class)[0];
+        $this->processedQueueJobs++;
+        $first->handle($distributor);
+        $this->assertSame([3, 81], $support->fresh()->copyCounts());
+        Storage::disk('local')->assertExists($source);
+        $this->assertSame(2, Queue::pushed(DistributeSupportFilesJob::class)->count());
+        $this->runQueuedSupportUploads($distributor);
+        $this->assertSame(27, Queue::pushed(DistributeSupportFilesJob::class)->count());
+        $this->assertSame([81, 81], $support->fresh()->copyCounts());
+        $this->assertSame('completed', $support->fresh()->processing_status);
+        $this->assertSame(1, SupportFile::count());
+        Storage::disk('local')->assertMissing($source);
+    }
+
+    public function test_repeated_retry_does_not_enqueue_duplicates_and_stale_requests_can_resume(): void
+    {
+        $distributor = app(SupportFileDistributor::class);
+        $support = $this->stage($this->service());
+        $distributor->enqueue($support);
+        $oldToken = $support->fresh()->processing_token;
+        $distributor->enqueue($support);
+        Queue::assertPushed(DistributeSupportFilesJob::class, 1);
+        $support->update(['processing_heartbeat_at' => now()->subMinutes(11)]);
+        $distributor->enqueue($support);
+        Queue::assertPushed(DistributeSupportFilesJob::class, 2);
+        $this->assertNotSame($oldToken, $support->fresh()->processing_token);
+        $inactive = Mockery::mock(SupportFileDistributor::class);
+        $inactive->shouldNotReceive('distribute');
+        (new DistributeSupportFilesJob($support->id, $oldToken))->handle($inactive);
+        (new DistributeSupportFilesJob($support->id, $oldToken))->failed(new RuntimeException('old failure'));
+        $this->assertSame('queued', $support->fresh()->processing_status);
+    }
+
+    public function test_large_partial_failure_resumes_without_resending_confirmed_copies(): void
+    {
+        $service = $this->service('DELIVERY-SO', array_fill(0, 81, null));
+        $sharepoint = Mockery::mock(SharePointUploader::class);
+        $sharepoint->shouldReceive('upload')->once()->andReturn(['webUrl' => 'https://example.sharepoint.com/original.pdf']);
+        $sent = [];
+        $failed = false;
+        $sftp = Mockery::mock(SupportFileSftpUploader::class);
+        $sftp->shouldReceive('upload')->times(82)->andReturnUsing(function ($directory, $name) use (&$sent, &$failed) {
+            if (str_starts_with($name, 'GR4-') && ! $failed) {
+                $failed = true;
+
+                return [false, 'offline'];
+            }
+            $this->assertArrayNotHasKey($name, $sent);
+            $sent[$name] = true;
+
+            return [true, null];
+        });
+        $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
+        $support = $this->stage($service, $distributor);
+        $source = $support->local_path;
+        $distributor->enqueue($support);
+        $this->runQueuedSupportUploads($distributor, expectFailure: true);
+        $this->assertSame([5, 81], $support->fresh()->copyCounts());
+        $this->assertSame('failed', $support->fresh()->processing_status);
+        Storage::disk('local')->assertExists($source);
+        $this->form($service)->retrySupportFile($support->id, $service, $distributor);
+        $this->runQueuedSupportUploads($distributor);
+        $this->assertSame([81, 81], $support->fresh()->copyCounts());
+        $this->assertCount(81, $sent);
+        Storage::disk('local')->assertMissing($source);
+    }
+
+    public function test_processing_state_migration_can_resume_and_preserves_old_supports(): void
+    {
+        $support = $this->stage($this->service());
+        $migration = require database_path('migrations/2026_10_23_160000_add_processing_state_to_support_files.php');
+        $migration->down();
+        Schema::table('support_files', fn (Blueprint $table) => $table->string('processing_status', 20)->nullable());
+        $migration->up();
+        $migration->up();
+        $this->assertSame('original.pdf', $support->fresh()->original_name);
+        $this->assertNull($support->fresh()->processing_status);
+        $this->assertTrue(Schema::hasColumn('support_files', 'processing_token'));
+        $this->assertTrue(Schema::hasColumn('support_files', 'processing_heartbeat_at'));
+    }
+
+    public function test_job_waits_for_a_busy_support_lock_instead_of_failing_the_modal_retry(): void
+    {
+        $support = $this->stage($this->service());
+        $distributor = app(SupportFileDistributor::class);
+        $lock = \Illuminate\Support\Facades\Cache::lock('support-file:'.$support->id, 600);
+        $this->assertTrue($lock->get());
+        try {
+            $this->form($support->service)->retrySupportFile($support->id, $support->service, $distributor);
+            $job = Queue::pushed(DistributeSupportFilesJob::class)[0];
+            $job->withFakeQueueInteractions()->handle($distributor);
+            $job->assertReleased(30);
+            $this->assertSame('queued', $support->fresh()->processing_status);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    public function test_deleted_support_is_ignored_by_queued_jobs(): void
+    {
+        $support = $this->stage($this->service());
+        app(SupportFileDistributor::class)->enqueue($support);
+        $job = Queue::pushed(DistributeSupportFilesJob::class)[0];
+        $support->delete();
+        $distributor = Mockery::mock(SupportFileDistributor::class);
+        $distributor->shouldNotReceive('distribute');
+        $job->handle($distributor);
+    }
+
+    public function test_modal_reports_counts_and_notifies_completion_only_once(): void
+    {
+        $service = $this->service();
+        $support = $this->stage($service);
+        app(SupportFileDistributor::class)->enqueue($support);
+        $component = Volt::test('services.upload-file-modal', ['service' => $service, 'canUploadSupports' => true])
+            ->assertSee('En espera')->assertSee('0 de 2 copias enviadas')
+            ->assertSeeHtml('wire:poll.5s.visible="refreshSupportProgress"')
+            ->assertDontSee('Reintentar guardado');
+        $support->copies()->update(['sharepoint_uploaded_at' => now(), 'sftp_uploaded_at' => now()]);
+        $support->update(['processing_status' => 'completed']);
+        $component->call('refreshSupportProgress')->assertDispatched('support-files-saved')
+            ->assertSee('Guardado')->assertSee('2 de 2 copias enviadas');
+        $component->call('refreshSupportProgress')->assertNotDispatched('support-files-saved');
+        $support->copies()->update(['sftp_uploaded_at' => null]);
+        $support->update(['processing_status' => 'failed']);
+        $component->call('refreshSupportProgress')->assertSee('Requiere reintento')->assertSee('Reintentar guardado');
+    }
+
+    public function test_actual_database_queue_runs_the_job_with_no_signed_in_user(): void
+    {
+        (require database_path('migrations/0001_01_01_000002_create_jobs_table.php'))->up();
+        Queue::swap(Queue::getFacadeRoot()->queue);
+        $service = $this->service(references: ['1/1', '2/1', '3/1', '4/1']);
+        $support = $this->stage($service);
+        $sharepoint = Mockery::mock(SharePointUploader::class);
+        $sharepoint->shouldReceive('upload')->once()->andReturn(['webUrl' => 'https://example.sharepoint.com/report.pdf']);
+        $sftp = Mockery::mock(SupportFileSftpUploader::class);
+        $sftp->shouldReceive('upload')->times(4)->andReturn([true, null]);
+        $this->app->instance(SupportFileDistributor::class, new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp));
+        app(SupportFileDistributor::class)->enqueue($support);
+        $this->assertSame('support-files', DB::table('jobs')->value('queue'));
+        $this->app['auth']->logout();
+        $job = Queue::connection('support_uploads')->pop('support-files');
+        $job->fire();
+        $this->assertSame([3, 4], $support->fresh()->copyCounts());
+        $this->assertSame(1, DB::table('jobs')->count());
+        $this->travel(2)->seconds();
+        Queue::connection('support_uploads')->pop('support-files')->fire();
+        $this->assertSame('completed', $support->fresh()->processing_status);
+        $this->assertSame(0, DB::table('jobs')->count());
+    }
+
+    public function test_actual_worker_marks_failed_after_three_exceptions_and_preserves_source(): void
+    {
+        (require database_path('migrations/0001_01_01_000002_create_jobs_table.php'))->up();
+        config(['queue.failed.database' => 'sqlite']);
+        Queue::swap(Queue::getFacadeRoot()->queue);
+        $support = $this->stage($this->service());
+        $source = $support->local_path;
+        $sharepoint = Mockery::mock(SharePointUploader::class);
+        $sharepoint->shouldReceive('upload')->times(3)->andThrow(new RuntimeException('offline'));
+        $sftp = Mockery::mock(SupportFileSftpUploader::class);
+        $sftp->shouldNotReceive('upload');
+        $this->app->instance(SupportFileDistributor::class, new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp));
+        app(SupportFileDistributor::class)->enqueue($support);
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            $this->artisan('queue:work', ['connection' => 'support_uploads', '--queue' => 'support-files', '--once' => true, '--sleep' => 0])->assertExitCode(0);
+            $this->travel(61)->seconds();
+        }
+        $this->assertSame('failed', $support->fresh()->processing_status);
+        $this->assertSame(1, DB::table('failed_jobs')->count());
+        $this->assertSame(0, DB::table('jobs')->count());
+        Storage::disk('local')->assertExists($source);
+    }
+
+    public function test_timeout_and_reservation_allow_the_support_lock_to_expire_before_redelivery(): void
+    {
+        $job = new DistributeSupportFilesJob(1, 'test-token');
+        $this->assertLessThan(SupportFileDistributor::LOCK_SECONDS, $job->timeout);
+        $this->assertLessThan(config('queue.connections.support_uploads.retry_after'), SupportFileDistributor::LOCK_SECONDS);
+        $this->assertSame('support_uploads', $job->connection);
+        $this->assertSame('support-files', $job->queue);
+        $this->assertTrue($job->afterCommit);
+    }
+
+    public function test_queue_dispatch_failure_preserves_original_and_allows_retry(): void
+    {
+        // Force an actual database queue failure after committing the processing state.
+        Queue::swap(Queue::getFacadeRoot()->queue);
+        $support = $this->stage($this->service());
+        try {
+            app(SupportFileDistributor::class)->enqueue($support);
+            $this->fail('The jobs table is intentionally absent.');
+        } catch (\Illuminate\Database\QueryException) {
+            $this->assertFalse($support->fresh()->distributionIsActive());
+            $this->assertSame('failed', $support->fresh()->processing_status);
+            Storage::disk('local')->assertExists($support->local_path);
+        }
+    }
+
     public static function recoveryFlows(): array
     {
         return [
@@ -172,11 +439,12 @@ class SupportDocumentDistributionTest extends TestCase
         $bytes = "%PDF-1.4\nRecoverable original\n%%EOF";
         $form->files = [UploadedFile::fake()->createWithContent('report.pdf', $bytes)];
         $form->uploadFiles();
-        $this->assertFalse($form->saveFiles(app(SupportFileDistributor::class)));
+        $this->assertTrue($form->saveFiles(app(SupportFileDistributor::class)));
+        $this->runQueuedSupportUploads(expectFailure: true);
         $support = SupportFile::firstOrFail();
         $source = $support->local_path;
         $this->assertSame($bytes, Storage::disk('local')->get($source));
-        $this->assertSame('Pendiente de guardar', $support->copyProgress());
+        $this->assertSame('Requiere reintento', $support->copyProgress());
         $this->assertCount(0, $form->tempFiles);
         $this->assertSame(0, $support->copies()->whereNotNull('sftp_uploaded_at')->count());
         $this->assertSame([], Storage::disk('sftp_geodis')->allFiles());
@@ -184,6 +452,7 @@ class SupportDocumentDistributionTest extends TestCase
         $this->assertCount($flow === 'DOM-CONSOL' ? 2 : 3, $support->copies);
         $this->assertStringNotContainsString('sensitive response', implode(' ', $support->copies->pluck('error_message')->all()));
         $this->form($service)->retrySupportFile($support->id, $service, app(SupportFileDistributor::class));
+        $this->runQueuedSupportUploads();
         $this->assertSame('Guardado', $support->fresh()->copyProgress());
         $this->assertSame([$bytes], $uploadedBytes);
         $this->assertSame(2, $tokenRequests);
@@ -220,7 +489,8 @@ class SupportDocumentDistributionTest extends TestCase
             return [false, 'SFTP unavailable'];
         });
         $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
-        $this->assertFalse($form->saveFiles($distributor));
+        $this->assertTrue($form->saveFiles($distributor));
+        $this->runQueuedSupportUploads($distributor, expectFailure: true);
         $this->assertCount(0, $form->tempFiles);
         $this->assertSame(1, SupportFile::count());
         $support = SupportFile::firstOrFail();
@@ -249,6 +519,7 @@ class SupportDocumentDistributionTest extends TestCase
         }
         $retryDistributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $recoveredSftp);
         $this->form($service)->retrySupportFile($support->id, $service, $retryDistributor);
+        $this->runQueuedSupportUploads($retryDistributor);
         $this->assertSame('Guardado', $support->fresh()->copyProgress());
         Storage::disk('local')->assertMissing($source);
         $this->assertSame(1, $support->copies()->get()->pluck('file_url')->unique()->count());
@@ -304,7 +575,8 @@ class SupportDocumentDistributionTest extends TestCase
             ->set('form.files', [UploadedFile::fake()->createWithContent('report.pdf', $bytes)])
             ->call('uploadFiles')->assertHasNoErrors();
         $this->assertCount(1, $component->get('form.tempFiles'));
-        $component->call('saveFiles')->assertHasNoErrors()->assertDispatched('support-files-saved');
+        $component->call('saveFiles')->assertHasNoErrors()->assertDispatched('support-files-queued');
+        $this->runQueuedSupportUploads();
         $this->assertCount(0, $component->get('form.tempFiles'));
         $this->assertSame(1, SupportFile::count());
         $support = SupportFile::firstOrFail();
@@ -699,13 +971,15 @@ class SupportDocumentDistributionTest extends TestCase
         $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
         // A stale or partial snapshot must not narrow the backend target set.
         $form->tempFiles[0]['identifiers'] = ['5213111'];
-        $this->assertFalse($form->saveFiles($distributor));
+        $this->assertTrue($form->saveFiles($distributor));
+        $this->runQueuedSupportUploads($distributor, expectFailure: true);
         $this->assertCount(0, $form->tempFiles);
         $this->assertSame(1, SupportFile::count());
         $this->assertSame(2, SupportFileCopy::count());
         $sftp->shouldReceive('upload')->twice()->andReturn([true, null]);
         $newForm = $this->form($service);
         $newForm->retrySupportFile(SupportFile::first()->id, $service, $distributor);
+        $this->runQueuedSupportUploads($distributor);
         $this->assertSame('Guardado', SupportFile::first()->copyProgress());
     }
 
@@ -739,6 +1013,7 @@ class SupportDocumentDistributionTest extends TestCase
         $sftp->shouldReceive('upload')->times(3)->andReturn([true, null]);
         $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
         $this->assertTrue($form->saveFiles($distributor));
+        $this->runQueuedSupportUploads($distributor);
         $this->assertSame(1, SupportFile::count());
         $this->assertEqualsCanonicalizing(['5213111', 'FN226786P125', '989999'], SupportFileCopy::pluck('identifier')->all());
     }

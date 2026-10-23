@@ -30,6 +30,16 @@ return [
 
     'connections' => [
 
+        // Dedicated worker: timeout (300) < support lock (330) < retry_after (360).
+        'support_uploads' => [
+            'driver' => 'database',
+            'connection' => env('DB_QUEUE_CONNECTION'),
+            'table' => env('DB_QUEUE_TABLE', 'jobs'),
+            'queue' => 'support-files',
+            'retry_after' => 360,
+            'after_commit' => true,
+        ],
+
         'sync' => [
             'driver' => 'sync',
         ],
