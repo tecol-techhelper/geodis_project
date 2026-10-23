@@ -571,7 +571,7 @@ class SupportDocumentDistributionTest extends TestCase
 
         $bytes = "%PDF-1.4\n".$flow.' '.$document."\nDocument content\n%%EOF";
         $component = Volt::test('services.upload-file-modal', ['service' => $service, 'canUploadSupports' => true])
-            ->set('form.file_type', $document)->set('form.free_text', 'Entrega / 1')
+            ->set('form.file_type', $document)->set('form.free_text', 'Envio / 1')
             ->set('form.files', [UploadedFile::fake()->createWithContent('report.pdf', $bytes)])
             ->call('uploadFiles')->assertHasNoErrors();
         $this->assertCount(1, $component->get('form.tempFiles'));
@@ -582,9 +582,9 @@ class SupportDocumentDistributionTest extends TestCase
         $support = SupportFile::firstOrFail();
         $isLog = ! in_array($flow, ['DELIVERY-SO', 'ROAD'], true);
         $expected = $isLog ? [
-            '5213111-N-'.$document.'-SHO001-Entrega1.pdf',
-            'FN226786P125-N-'.$document.'-SHO003-Entrega1.pdf',
-        ] : array_map(fn ($id) => $id.'-N-'.$document.'-N3708865-Entrega1.pdf', ['GR1', 'GR2', 'GR3']);
+            '5213111-N-'.$document.'-SHO001-N3708865-Envio1.pdf',
+            'FN226786P125-N-'.$document.'-SHO003-N3708865-Envio1.pdf',
+        ] : array_map(fn ($id) => $id.'-N-'.$document.'-N3708865-Envio1.pdf', ['GR1', 'GR2', 'GR3']);
         $copies = $support->copies()->get();
         $this->assertSame($expected, $copies->pluck('file_name')->all());
         $this->assertTrue($copies->every(fn ($copy) => $copy->isComplete()));
@@ -618,8 +618,8 @@ class SupportDocumentDistributionTest extends TestCase
         $copies = $support->copies()->get();
         $this->assertSame(1, SupportFile::count());
         $this->assertCount(2, $copies);
-        $this->assertSame('5213111-N-CLP-SHO001.pdf', $copies[0]->file_name);
-        $this->assertSame('FN226786P125-N-CLP-SHO003.pdf', $copies[1]->file_name);
+        $this->assertSame('5213111-N-CLP-SHO001-N3708865.pdf', $copies[0]->file_name);
+        $this->assertSame('FN226786P125-N-CLP-SHO003-N3708865.pdf', $copies[1]->file_name);
         $this->assertCount(2, $copies[0]->associations);
         $this->assertCount(1, $copies->pluck('sharepoint_path')->unique());
         $this->assertStringEndsWith('/SUP-'.$support->id.'-original.pdf', $copies[0]->sharepoint_path);
@@ -633,7 +633,7 @@ class SupportDocumentDistributionTest extends TestCase
             ->update(['order_reference_value' => '5213111/3']);
         $support = $this->stage($service);
         $copies = $support->copies()->orderBy('id')->get();
-        $this->assertSame(['5213111-N-CLP-SHO001.pdf', '5213111-N-CLP-SHO003.pdf'], $copies->pluck('file_name')->all());
+        $this->assertSame(['5213111-N-CLP-SHO001-N3708865.pdf', '5213111-N-CLP-SHO003-N3708865.pdf'], $copies->pluck('file_name')->all());
         $this->assertSame(['SHO001', 'SHO003'], $copies->pluck('cni')->all());
         $this->assertCount(2, $copies[0]->associations);
         $this->assertCount(1, $copies[1]->associations);
@@ -799,6 +799,29 @@ class SupportDocumentDistributionTest extends TestCase
         app(SupportDocumentNaming::class)->filename('GR/123', 'CLP', 'N1', 'pdf');
     }
 
+    public function test_log_places_so_after_sho_and_before_optional_observations(): void
+    {
+        $service = new Service(['consecutive' => 'N3562738']);
+        $naming = app(SupportDocumentNaming::class);
+        $this->assertSame('FN230056P003-N-RT-SH001857533-N3562738.pdf',
+            $naming->filename('FN230056P003', 'RT', $naming->observations($service, null, 'SH001857533'), 'pdf'));
+        $this->assertSame('FN230056P003-N-RT-SH001857533-N3562738-Rem123.pdf',
+            $naming->filename('FN230056P003', 'RT', $naming->observations($service, 'Rem 123', 'SH001857533'), 'pdf'));
+        $this->assertSame('SH001857533-N3562738', $naming->observations($service, 'N3562738', 'SH001857533'));
+        $this->assertSame('N3562738-Rem123', $naming->observations($service, 'Rem 123'));
+    }
+
+    public function test_log_name_limit_includes_the_so_and_observations(): void
+    {
+        $service = new Service(['consecutive' => 'N3562738']);
+        $naming = app(SupportDocumentNaming::class);
+        $base = $naming->filename('FN230056P003', 'RT', $naming->observations($service, null, 'SH001857533'), 'pdf');
+        $extra = str_repeat('A', 50 - strlen($base) - 1);
+        $this->assertSame(50, strlen($naming->filename('FN230056P003', 'RT', $naming->observations($service, $extra, 'SH001857533'), 'pdf')));
+        $this->expectException(ValidationException::class);
+        $naming->filename('FN230056P003', 'RT', $naming->observations($service, $extra.'A', 'SH001857533'), 'pdf');
+    }
+
     public function test_linked_sho_is_added_by_backend_when_observations_are_empty_or_have_extra_text(): void
     {
         $service = $this->service();
@@ -807,12 +830,12 @@ class SupportDocumentDistributionTest extends TestCase
         $form->files = [UploadedFile::fake()->create('report.pdf', 1, 'application/pdf')];
         $form->uploadFiles();
         $this->assertSame('', $form->tempFiles[0]['observations']);
-        $this->assertSame('5213111-N-CLP-SHO001.pdf', $form->tempFiles[0]['names'][0]);
+        $this->assertSame('5213111-N-CLP-SHO001-N3708865.pdf', $form->tempFiles[0]['names'][0]);
         $form->free_text = 'Entrega 1';
         $form->files = [UploadedFile::fake()->create('delivery.pdf', 1, 'application/pdf')];
         $form->uploadFiles();
         $this->assertSame('Entrega1', $form->tempFiles[1]['observations']);
-        $this->assertSame('5213111-N-CLP-SHO001-Entrega1.pdf', $form->tempFiles[1]['names'][0]);
+        $this->assertSame('5213111-N-CLP-SHO001-N3708865-Entrega1.pdf', $form->tempFiles[1]['names'][0]);
         $this->assertSame('N3708865', app(SupportDocumentNaming::class)->observations($service, 'N3708865'));
     }
 
@@ -821,8 +844,8 @@ class SupportDocumentDistributionTest extends TestCase
         $service = $this->service();
         $first = $this->stage($service);
         $second = $this->stage($service);
-        $this->assertSame('5213111-N-CLP-SHO001.pdf', $first->copies()->first()->file_name);
-        $this->assertSame('5213111-N-CLP-SHO001-2.pdf', $second->copies()->first()->file_name);
+        $this->assertSame('5213111-N-CLP-SHO001-N3708865.pdf', $first->copies()->first()->file_name);
+        $this->assertSame('5213111-N-CLP-SHO001-N3708865-2.pdf', $second->copies()->first()->file_name);
     }
 
     public function test_partial_retry_skips_successful_copies_and_sharepoint_stages(): void
@@ -830,8 +853,8 @@ class SupportDocumentDistributionTest extends TestCase
         $sharepoint = Mockery::mock(SharePointUploader::class);
         $sharepoint->shouldReceive('upload')->once()->andReturn(['webUrl' => 'https://example.sharepoint.com/support.pdf']);
         $sftp = Mockery::mock(SupportFileSftpUploader::class);
-        $sftp->shouldReceive('upload')->with('DOCS', '5213111-N-CLP-SHO001.pdf', 'DOCS/5213111-N-CLP-SHO001.pdf', Mockery::type('string'), Mockery::type('int'))->once()->andReturn([true, null]);
-        $sftp->shouldReceive('upload')->with('DOCS', 'FN226786P125-N-CLP-SHO003.pdf', 'DOCS/FN226786P125-N-CLP-SHO003.pdf', Mockery::type('string'), Mockery::type('int'))->twice()->andReturn([false, 'offline'], [true, null]);
+        $sftp->shouldReceive('upload')->with('DOCS', '5213111-N-CLP-SHO001-N3708865.pdf', 'DOCS/5213111-N-CLP-SHO001-N3708865.pdf', Mockery::type('string'), Mockery::type('int'))->once()->andReturn([true, null]);
+        $sftp->shouldReceive('upload')->with('DOCS', 'FN226786P125-N-CLP-SHO003-N3708865.pdf', 'DOCS/FN226786P125-N-CLP-SHO003-N3708865.pdf', Mockery::type('string'), Mockery::type('int'))->twice()->andReturn([false, 'offline'], [true, null]);
         $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
         $support = $this->stage($this->service(), $distributor);
         $source = $support->local_path;
@@ -1114,8 +1137,8 @@ class SupportDocumentDistributionTest extends TestCase
         SupportFile::create(['file_name' => 'legacy', 'file_extension' => 'pdf', 'service_id' => $service->id, 'file_type_id' => 1, 'user_id' => 1, 'uploaded_at' => now()->toDateString()]);
         Volt::test('services.upload-file-modal', ['service' => $service, 'canUploadSupports' => true])
             ->assertSet('form.free_text', null)
-            ->set('form.file_type', 'CLP')->assertSee('19 caracteres restantes')
-            ->set('form.free_text', 'abc')->assertSee('16 caracteres restantes')
+            ->set('form.file_type', 'CLP')->assertSee('10 caracteres restantes')
+            ->set('form.free_text', 'abc')->assertSee('7 caracteres restantes')
             ->assertDontSee('Área N fija.')
             ->assertSee('original.pdf')->assertSee('legacy')->assertSee('Pendiente de guardar')
             ->assertDontSee('Cada archivo se carga una sola vez')
