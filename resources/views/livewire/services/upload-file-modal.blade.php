@@ -285,7 +285,7 @@ new class extends Component {
                                         <td class="px-4 py-3 text-xs text-gray-600">
                                             <span role="status">{{ $file->copyProgress() }}</span>
                                             @php([$sentCopies, $totalCopies] = $file->copyCounts())
-                                            @if ($totalCopies > 0)
+                                            @if ($totalCopies > 0 && $sentCopies < $totalCopies)
                                                 <div class="mt-1">{{ $sentCopies }} de {{ $totalCopies }} copias enviadas</div>
                                                 <progress value="{{ $sentCopies }}" max="{{ $totalCopies }}"
                                                     aria-label="Progreso del envío de {{ $file->original_name ?? $file->file_name }}"
