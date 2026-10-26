@@ -303,13 +303,13 @@ class SupportDocumentDistributionTest extends TestCase
         $support = $this->stage($service);
         app(SupportFileDistributor::class)->enqueue($support);
         $component = Volt::test('services.upload-file-modal', ['service' => $service, 'canUploadSupports' => true])
-            ->assertSee('En espera')->assertSee('0 de 2 copias enviadas')
+            ->assertSee('En espera')->assertSee('0 de 2 copias enviadas')->assertSeeHtml('<progress')
             ->assertSeeHtml('wire:poll.5s.visible="refreshSupportProgress"')
             ->assertDontSee('Reintentar guardado');
         $support->copies()->update(['sharepoint_uploaded_at' => now(), 'sftp_uploaded_at' => now()]);
         $support->update(['processing_status' => 'completed']);
         $component->call('refreshSupportProgress')->assertDispatched('support-files-saved')
-            ->assertSee('Guardado')->assertSee('2 de 2 copias enviadas');
+            ->assertSee('Guardado')->assertDontSee('2 de 2 copias enviadas')->assertDontSeeHtml('<progress');
         $component->call('refreshSupportProgress')->assertNotDispatched('support-files-saved');
         $support->copies()->update(['sftp_uploaded_at' => null]);
         $support->update(['processing_status' => 'failed']);

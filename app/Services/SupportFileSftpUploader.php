@@ -16,7 +16,7 @@ class SupportFileSftpUploader
             'disk' => 'sftp_geodis',
             'root' => $root,
             'remote_path' => $remotePath,
-            'effective_path' => rtrim($root, '/').'/'.ltrim($remotePath, '/'),
+            'effective_path' => rtrim($root, '/') . '/' . ltrim($remotePath, '/'),
             'timeout_seconds' => config('filesystems.disks.sftp_geodis.timeout'),
         ];
     }
