@@ -65,6 +65,52 @@ class SupportDocumentDistributionTest extends TestCase
 
     private int $processedQueueJobs = 0;
 
+    public function test_large_support_associations_are_audited_without_truncation(): void
+    {
+        (require database_path('migrations/2026_04_16_000000_create_session_logs_table.php'))->up();
+        $service = $this->service();
+        $existing = DB::table('audits')->orderBy('audit_id')->first();
+        $this->assertNotNull($existing);
+
+        $migration = require database_path('migrations/2026_10_30_120000_expand_audit_values_to_longtext.php');
+        $migration->up();
+        $this->assertEquals($existing, DB::table('audits')->where('audit_id', $existing->audit_id)->first());
+
+        $coi = DB::table('reference_types')->where('reference_type_code', 'COI')->value('id');
+        $order = $service->purchase_orders()->first();
+        foreach (range(3, 80) as $item) {
+            DB::table('order_references')->insert([
+                'purchase_order_id' => $order->id,
+                'reference_type_id' => $coi,
+                'order_reference_value' => '5213111/'.$item,
+            ]);
+        }
+
+        $support = $this->stage($service);
+        $copy = $support->copies()->where('identifier', '5213111')->firstOrFail();
+        $this->assertCount(80, $copy->associations);
+        $audit = DB::table('audits')->where('auditable_type', SupportFileCopy::class)
+            ->where('auditable_id', $copy->id)->where('auditable_action', 'CREATED')->first();
+        $this->assertGreaterThan(2048, strlen($audit->new_value));
+        $this->assertSame($copy->associations, json_decode(json_decode($audit->new_value, true)['associations'], true));
+
+        $copy->update(['associations' => array_slice($copy->associations, 0, 40)]);
+        $updated = DB::table('audits')->where('auditable_type', SupportFileCopy::class)
+            ->where('auditable_id', $copy->id)->where('auditable_action', 'UPDATED')->first();
+        $this->assertGreaterThan(2048, strlen($updated->old_value));
+        $this->assertGreaterThan(2048, strlen($updated->new_value));
+        $this->assertCount(80, json_decode($updated->old_value, true)['associations']);
+        $this->assertCount(40, json_decode(json_decode($updated->new_value, true)['associations'], true));
+
+        try {
+            $migration->down();
+            $this->fail('Rollback must preserve oversized audit values.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('2048', $exception->getMessage());
+        }
+        $this->assertSame($audit->new_value, DB::table('audits')->where('audit_id', $audit->audit_id)->value('new_value'));
+    }
+
     private function runQueuedSupportUploads(?SupportFileDistributor $distributor = null, bool $expectFailure = false): void
     {
         while ($this->processedQueueJobs < Queue::pushed(DistributeSupportFilesJob::class)->count()) {
