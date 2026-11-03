@@ -36,8 +36,8 @@ class SupportDocumentNaming
                     }
                     // Prefixing prevents PHP from coercing numeric OC keys to integers.
                     $cni = trim((string) $order->purchase_order_number);
-                    $key = 'id:'.$identifier.'|cni:'.$cni;
-                    $targets[$key] ??= ['identifier' => $identifier, 'cni' => $cni, 'sho' => $isLog ? $cni : null, 'associations' => []];
+                    $key = 'id:'.$identifier;
+                    $targets[$key] ??= ['identifier' => $identifier, 'cni' => $isLog ? null : $cni, 'associations' => []];
                     $targets[$key]['associations'][] = [
                         'purchase_order_id' => $order->id,
                         'cni' => $order->purchase_order_number,
@@ -47,14 +47,23 @@ class SupportDocumentNaming
             }
         }
 
-        return ['type' => $type, 'label' => $isLog ? 'OC / FN' : 'GR / Identificador CNI', 'targets' => array_values($targets)];
+        return ['type' => $type, 'is_log' => $isLog, 'label' => $isLog ? 'OC / FN' : 'GR / Identificador CNI', 'targets' => array_values($targets)];
     }
 
-    public function targets(Service $service): array
+    public function targets(Service $service, ?array $selectedIdentifiers = null): array
     {
-        $targets = $this->context($service)['targets'];
+        $context = $this->context($service);
+        $targets = $context['targets'];
         if ($targets === []) {
             throw ValidationException::withMessages(['files' => 'El servicio no tiene identificadores válidos para generar las copias. Revise sus referencias de origen.']);
+        }
+
+        if ($context['is_log'] && $selectedIdentifiers !== null) {
+            $available = array_column($targets, 'identifier');
+            if ($selectedIdentifiers === [] || collect($selectedIdentifiers)->contains(fn ($identifier) => ! is_string($identifier) || ! in_array($identifier, $available, true))) {
+                throw ValidationException::withMessages(['selectedIdentifiers' => 'Seleccione al menos una OC/FN válida de este servicio.']);
+            }
+            $targets = array_values(array_filter($targets, fn ($target) => in_array($target['identifier'], $selectedIdentifiers, true)));
         }
 
         return $targets;
@@ -65,13 +74,10 @@ class SupportDocumentNaming
         return preg_replace('/[^A-Za-z0-9]/', '', Str::ascii(trim((string) $observations)));
     }
 
-    public function observations(Service $service, ?string $extra, ?string $sho = null): string
+    public function observations(Service $service, ?string $extra): string
     {
-        if ($sho !== null && ! preg_match('/^[A-Za-z0-9]+$/D', $sho)) {
-            throw ValidationException::withMessages(['files' => 'La OC/FN no tiene una SHO válida en su bloque CNI. Revise la referencia de origen.']);
-        }
         $so = $this->normalizeObservations($service->consecutive);
-        $parts = $sho === null ? [$so] : [$sho, $so];
+        $parts = [$so];
         $extra = $this->normalizeObservations($extra);
         if ($extra !== '' && ! in_array($extra, $parts, true)) {
             $parts[] = $extra;

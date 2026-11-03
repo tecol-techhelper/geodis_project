@@ -20,7 +20,19 @@ new class extends Component {
         $this->service = $service;
         $this->canUploadSupports = $canUploadSupports;
         $this->form->service_id = $service->id;
+        $this->selectAllPurchaseOrders();
         $this->observeSupportStates();
+    }
+
+    public function selectAllPurchaseOrders(): void
+    {
+        $context = app(SupportDocumentNaming::class)->context($this->service->fresh());
+        $this->form->selectedIdentifiers = $context['is_log'] ? array_column($context['targets'], 'identifier') : null;
+    }
+
+    public function clearPurchaseOrderSelection(): void
+    {
+        $this->form->selectedIdentifiers = [];
     }
 
     public function observeSupportStates(): void
@@ -43,9 +55,13 @@ new class extends Component {
     public function with(): array
     {
         $naming = app(SupportDocumentNaming::class);
+        $context = $naming->context($this->service->fresh());
+        $targets = $context['targets'];
+        if ($context['is_log'] && $this->form->selectedIdentifiers !== null) {
+            $targets = array_values(array_filter($targets, fn ($target) => in_array($target['identifier'], $this->form->selectedIdentifiers, true)));
+        }
         $remainingCharacters = null;
         if ($this->form->file_type) {
-            $targets = $naming->context($this->service->fresh())['targets'];
             $extensionLength = collect($this->form->files)
                 ->filter(fn ($file) => is_object($file) && method_exists($file, 'getClientOriginalExtension'))
                 ->map(fn ($file) => strlen($file->getClientOriginalExtension()))
@@ -53,8 +69,8 @@ new class extends Component {
             $extra = $naming->normalizeObservations($this->form->free_text);
             $remainingCharacters = collect($targets)->map(function ($target) use ($naming, $extra, $extensionLength) {
                 try {
-                    $fixed = $naming->observations($this->service, null, $target['sho']);
-                    $suffix = $naming->observations($this->service, $extra, $target['sho']);
+                    $fixed = $naming->observations($this->service, null);
+                    $suffix = $naming->observations($this->service, $extra);
                 } catch (\Illuminate\Validation\ValidationException) {
                     return null;
                 }
@@ -70,6 +86,8 @@ new class extends Component {
                 'copies as completed_copies_count' => fn ($query) => $query->whereNotNull('sharepoint_uploaded_at')->whereNotNull('sftp_uploaded_at'),
             ])->latest('id')->get(),
             'remainingCharacters' => $remainingCharacters,
+            'namingContext' => $context,
+            'selectedPurchaseOrderCount' => count($targets),
         ];
     }
 
@@ -187,6 +205,28 @@ new class extends Component {
                         </select>
                         <x-input-error :messages="$errors->get('form.file_type')" class="mt-2" />
                     </div>
+
+                    @if ($namingContext['is_log'])
+                    <fieldset class="space-y-3 rounded-lg border border-gray-200 p-4">
+                        <legend class="px-1 text-sm font-medium text-gray-700">OC / FN asociadas</legend>
+                        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                            <button type="button" wire:click="selectAllPurchaseOrders" class="text-indigo-600 underline">Seleccionar todas</button>
+                            <button type="button" wire:click="clearPurchaseOrderSelection" class="text-gray-600 underline">Quitar selección</button>
+                            <span class="text-gray-500" aria-live="polite">{{ $selectedPurchaseOrderCount }} de {{ count($namingContext['targets']) }} seleccionadas</span>
+                        </div>
+                        <div class="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
+                            @forelse ($namingContext['targets'] as $target)
+                                <label wire:key="support-order-{{ $target['identifier'] }}" class="flex cursor-pointer items-center gap-2 rounded-md border border-gray-200 p-3 text-sm text-gray-700">
+                                    <input type="checkbox" wire:model.live="form.selectedIdentifiers" value="{{ $target['identifier'] }}" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                                    <span class="break-all">{{ $target['identifier'] }}</span>
+                                </label>
+                            @empty
+                                <p class="text-sm text-gray-500">El servicio no tiene OC/FN disponibles.</p>
+                            @endforelse
+                        </div>
+                        <x-input-error :messages="$errors->get('form.selectedIdentifiers')" />
+                    </fieldset>
+                    @endif
 
                     <div class="space-y-2">
                         <x-input-label for="free_text">Observaciones</x-input-label>

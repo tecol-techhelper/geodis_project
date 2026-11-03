@@ -28,8 +28,8 @@ class SupportFileDistributor
 
     public function stage(Service $service, array $temp): SupportFile
     {
-        // Every new original must cover all current identifiers, regardless of client metadata.
-        $targets = $this->naming->targets($service->fresh());
+        // Validate the saved selection against current service references before staging.
+        $targets = $this->naming->targets($service->fresh(), $temp['identifiers'] ?? null);
         $fileType = FileType::query()->where('file_type', $temp['file_type'])->firstOrFail();
         $source = 'support_sources/'.Str::uuid().'.'.$temp['extension'];
         if (! Storage::disk('local')->copy($temp['temp_path'], $source)) {
@@ -58,7 +58,7 @@ class SupportFileDistributor
                     $sharepointPath = $directory.'/SUP-'.$support->id.'-'.($originalStem ?: 'soporte').'.'.$temp['extension'];
                     foreach ($targets as $target) {
                         $sequence = 1;
-                        $suffix = $this->naming->observations($service, $temp['observations'], $target['sho']);
+                        $suffix = $this->naming->observations($service, $temp['observations']);
                         do {
                             $name = $this->naming->filename($target['identifier'], $temp['file_type'], $suffix, $temp['extension'], $sequence++);
                         } while (SupportFileCopy::where('file_name', $name)->exists()

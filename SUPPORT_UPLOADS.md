@@ -9,6 +9,18 @@ transferencias. Una transferencia ya iniciada puede superar ese presupuesto.
 El siguiente trabajo continúa con las copias pendientes. SharePoint conserva
 un original y SFTP usa `sftp_geodis` con los nombres documentales.
 
+Para Logística de Entrada, cada archivo genera una copia SFTP por OC/FN distinta
+seleccionada, sin multiplicar por SHO. Todas las OC/FN aparecen seleccionadas al
+abrir el modal. Al pulsar Cargar, se conserva la selección y el tipo documental
+de ese archivo; cambiar la selección después solo afecta a los siguientes archivos.
+El nombre es `OC/FN-N-CodigoDocumento-SO-Observaciones.ext` (sin el segmento de
+observaciones si está vacío). El backend verifica que cada OC/FN seleccionada
+pertenezca al servicio al cargar y al guardar.
+
+TEBS/ROAD conserva una copia por identificador CNI distinto, con el nombre
+`CNI-N-CodigoDocumento-SO-Observaciones.ext`. Las copias ya registradas, incluidos
+los envíos pendientes y reintentos, conservan sus nombres y destinos anteriores.
+
 ## Activación en producción
 
 Después de actualizar el código:
