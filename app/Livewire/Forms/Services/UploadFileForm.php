@@ -56,6 +56,8 @@ class UploadFileForm extends Form
 
     public ?string $free_text = null;
 
+    public ?array $selectedIdentifiers = null;
+
     #[Locked]
     public ?int $service_id = null;
 
@@ -88,7 +90,7 @@ class UploadFileForm extends Form
         $naming = app(SupportDocumentNaming::class);
         $service = Service::findOrFail($this->service_id);
         try {
-            $targets = $naming->targets($service);
+            $targets = $naming->targets($service, $this->selectedIdentifiers);
             $observations = $naming->normalizeObservations($this->free_text);
             $prepared = [];
             foreach ($this->files as $file) {
@@ -100,7 +102,7 @@ class UploadFileForm extends Form
                 $extension = strtolower($file->getClientOriginalExtension());
                 $names = [];
                 foreach ($targets as $target) {
-                    $suffix = $naming->observations($service, $observations, $target['sho']);
+                    $suffix = $naming->observations($service, $observations);
                     $names[] = $naming->filename($target['identifier'], $this->file_type, $suffix, $extension);
                 }
                 $originalName = basename(str_replace('\\', '/', $file->getClientOriginalName()));
@@ -185,9 +187,9 @@ class UploadFileForm extends Form
                     throw new \RuntimeException('El archivo no cumple las restricciones de formato o tamaño.');
                 }
                 // Re-resolve against the database before creating any remote copies.
-                $targets = $naming->targets($service->fresh());
+                $targets = $naming->targets($service->fresh(), $temp['identifiers'] ?? null);
                 foreach ($targets as $target) {
-                    $suffix = $naming->observations($service, $temp['observations'], $target['sho']);
+                    $suffix = $naming->observations($service, $temp['observations']);
                     $naming->filename($target['identifier'], $temp['file_type'], $suffix, $temp['extension']);
                 }
                 $support = $distributor->stage($service, $temp);
