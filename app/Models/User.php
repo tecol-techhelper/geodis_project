@@ -121,6 +121,13 @@ class User extends Authenticatable
         return $rolePermissions || $userPermissions;
     }
 
+    public function canManageSupportFiles(): bool
+    {
+        return strtolower(trim((string) $this->username)) === 'administrador'
+            || $this->hasRole('admin')
+            || $this->hasRole('coord');
+    }
+
     // Overwriting reset-pass notification
     public function sendPasswordResetNotification($token)
     {

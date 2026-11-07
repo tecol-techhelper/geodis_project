@@ -18,6 +18,10 @@ use Throwable;
 
 final class ServiceTable extends PowerGridComponent
 {
+    private const TABLE_STATE_PROPERTIES = [
+        'search', 'filters', 'enabledFilters', 'sortField', 'sortDirection', 'sortArray', 'multiSort', 'showTrash',
+    ];
+
     private const EDIFACT_FLOW_BY_SO_TYPE = [
         'POST-CARRIAGE' => [13, 29],
         'DOM-CONSOL' => [35, 74],
@@ -48,6 +52,36 @@ final class ServiceTable extends PowerGridComponent
         $this->canPurgeServices = (bool) $user?->hasRole('admin');
 
         parent::mount();
+
+        $state = session()->get($this->tableStateSessionKey(), []);
+        foreach (self::TABLE_STATE_PROPERTIES as $property) {
+            if (array_key_exists($property, $state)) {
+                $this->{$property} = $state[$property];
+            }
+        }
+        $this->showTrash = $this->showTrash && $this->canPurgeServices;
+
+        $footer = $this->setUp['footer'];
+        if (isset($state['perPage']) && in_array($state['perPage'], $footer->perPageValues, true)) {
+            $footer->perPage = $state['perPage'];
+        }
+        $this->setPage(max(1, (int) request()->query($footer->pageName, $state['page'] ?? 1)), $footer->pageName);
+    }
+
+    public function dehydrate(): void
+    {
+        $state = [];
+        foreach (self::TABLE_STATE_PROPERTIES as $property) {
+            $state[$property] = $this->{$property};
+        }
+        $state['perPage'] = data_get($this->setUp, 'footer.perPage');
+        $state['page'] = $this->getPage(data_get($this->setUp, 'footer.pageName', 'page'));
+        session()->put($this->tableStateSessionKey(), $state);
+    }
+
+    private function tableStateSessionKey(): string
+    {
+        return 'services.table-state.'.(Auth::id() ?? 'guest');
     }
 
     public function setUp(): array
