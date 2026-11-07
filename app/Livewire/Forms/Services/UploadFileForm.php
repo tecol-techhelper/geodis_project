@@ -66,16 +66,7 @@ class UploadFileForm extends Form
         /** @var User|null $user */
         $user = Auth::user();
 
-        if (! $user) {
-            return false;
-        }
-
-        $username = strtolower(trim((string) ($user->username ?? '')));
-        if ($username === 'administrador') {
-            return true;
-        }
-
-        return method_exists($user, 'hasRole') && $user->hasRole('admin');
+        return $user?->canManageSupportFiles() ?? false;
     }
 
     public function uploadFiles(): void

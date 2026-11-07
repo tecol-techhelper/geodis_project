@@ -15,6 +15,7 @@ use App\Services\SupportFileSftpUploader;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Schema;
@@ -64,6 +65,114 @@ class SupportDocumentDistributionTest extends TestCase
     }
 
     private int $processedQueueJobs = 0;
+
+    private function signInWithDocumentaryRole(string $role): void
+    {
+        Schema::create('roles', function (Blueprint $table) {
+            $table->id();
+            $table->string('rol_key');
+        });
+        Schema::create('role_user', function (Blueprint $table) {
+            $table->unsignedBigInteger('role_id');
+            $table->unsignedBigInteger('user_id');
+        });
+        DB::table('users')->insert(['id' => 2, 'username' => 'documentary-user']);
+        DB::table('roles')->insert(['id' => 1, 'rol_key' => $role]);
+        DB::table('role_user')->insert(['role_id' => 1, 'user_id' => 2]);
+        $this->actingAs(User::findOrFail(2));
+    }
+
+    public function test_coord_can_manage_the_complete_documentary_flow(): void
+    {
+        $this->signInWithDocumentaryRole('coord');
+        $this->assertTrue(Gate::allows('manage-support-files'));
+        $service = $this->service();
+        Volt::test('services.upload-file-modal', ['service' => $service, 'canUploadSupports' => auth()->user()->canManageSupportFiles()])
+            ->assertSee('Tipo de soporte')->assertSee('Guardar')->assertDontSee('solo lectura');
+
+        $form = $this->form($service);
+        $form->files = [UploadedFile::fake()->create('discard.pdf', 1, 'application/pdf')];
+        $form->uploadFiles();
+        $form->removeTempFiles(0);
+        $this->assertSame([], $form->tempFiles);
+        $form->files = [UploadedFile::fake()->create('clear.pdf', 1, 'application/pdf')];
+        $form->uploadFiles();
+        $form->clearTempFiles();
+        $this->assertSame([], $form->tempFiles);
+
+        $form->files = [UploadedFile::fake()->create('report.pdf', 1, 'application/pdf')];
+        $form->uploadFiles();
+        $sharepoint = Mockery::mock(SharePointUploader::class);
+        $sharepoint->shouldReceive('upload')->once()->andReturn(['webUrl' => 'https://example.sharepoint.com/coord.pdf']);
+        $sharepoint->shouldReceive('delete')->once()->with('https://example.sharepoint.com/coord.pdf');
+        $sftp = Mockery::mock(SupportFileSftpUploader::class);
+        $sftp->shouldReceive('upload')->twice()->andReturn([false, 'offline']);
+        $distributor = new SupportFileDistributor(app(SupportDocumentNaming::class), $sharepoint, $sftp);
+        $this->app->instance(SupportFileDistributor::class, $distributor);
+
+        $this->assertTrue($form->saveFiles($distributor));
+        $this->runQueuedSupportUploads($distributor, expectFailure: true);
+        $support = SupportFile::firstOrFail();
+        $this->assertSame(2, $support->user_id);
+        $this->assertSame('Requiere reintento', $support->fresh()->copyProgress());
+        $sftp->shouldReceive('upload')->twice()->andReturn([true, null]);
+        $form->retrySupportFile($support->id, $service, $distributor);
+        $this->runQueuedSupportUploads($distributor);
+        $this->assertSame('Guardado', $support->fresh()->copyProgress());
+        $form->deleteSupportFile($support->id, $service, $sharepoint);
+        $this->assertTrue(SupportFile::withTrashed()->findOrFail($support->id)->trashed());
+    }
+
+    public static function restrictedDocumentaryRoles(): array
+    {
+        return array_combine(['account', 'od', 'sec', 'spec'], [['account'], ['od'], ['sec'], ['spec']]);
+    }
+
+    #[DataProvider('restrictedDocumentaryRoles')]
+    public function test_other_roles_keep_read_only_access_to_documentary_actions(string $role): void
+    {
+        $this->signInWithDocumentaryRole($role);
+        $this->assertFalse(Gate::allows('manage-support-files'));
+        $service = $this->service();
+        Volt::test('services.upload-file-modal', ['service' => $service, 'canUploadSupports' => auth()->user()->canManageSupportFiles()])
+            ->assertSee('solo lectura')->assertDontSee('Tipo de soporte');
+        $form = $this->form($service);
+        $distributor = app(SupportFileDistributor::class);
+        $sharepoint = Mockery::mock(SharePointUploader::class);
+        $sharepoint->shouldNotReceive('delete');
+        foreach ([
+            fn () => $form->uploadFiles(),
+            fn () => $form->saveFiles($distributor),
+            fn () => $form->removeTempFiles(0),
+            fn () => $form->clearTempFiles(),
+            fn () => $form->retrySupportFile(1, $service, $distributor),
+            fn () => $form->deleteSupportFile(1, $service, $sharepoint),
+        ] as $action) {
+            try {
+                $action();
+                $this->fail('The documentary action must remain restricted.');
+            } catch (\Symfony\Component\HttpKernel\Exception\HttpException $exception) {
+                $this->assertSame(403, $exception->getStatusCode());
+            }
+        }
+        $this->assertSame(0, SupportFile::count());
+    }
+
+    public function test_documentary_routes_use_shared_authorization_and_admin_routes_stay_restricted(): void
+    {
+        $this->signInWithDocumentaryRole('coord');
+        foreach (['upload.file', 'uploaded.file'] as $name) {
+            $middleware = app('router')->getRoutes()->getByName($name)->gatherMiddleware();
+            $this->assertContains('can:manage-support-files', $middleware);
+            $this->assertContains('auth', $middleware);
+            $this->assertContains('is_active', $middleware);
+            $this->assertNotContains('role:admin', $middleware);
+        }
+        $this->assertContains('role:admin', app('router')->getRoutes()->getByName('user.index')->gatherMiddleware());
+        $this->assertTrue(Gate::allows('manage-support-files'));
+        $this->app['auth']->forgetGuards();
+        $this->assertFalse(Gate::allows('manage-support-files'));
+    }
 
     public function test_large_support_associations_are_audited_without_truncation(): void
     {

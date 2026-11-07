@@ -658,19 +658,7 @@ new #[Layout('layouts.app')] class extends Component {
         $statusLabel = function ($st) {
             return $st->status_name ?? ($st->status_be ?? ($st->status_description ?? 'Estado #' . $st->id));
         };
-        $canUploadSupports = function () {
-            $user = auth()->user();
-            if (!$user) {
-                return false;
-            }
-
-            $username = strtolower(trim((string) ($user->username ?? '')));
-            if ($username === 'administrador') {
-                return true;
-            }
-
-            return method_exists($user, 'hasRole') && $user->hasRole('admin');
-        };
+        $canUploadSupports = fn () => (bool) auth()->user()?->canManageSupportFiles();
         $isBlank = function ($value) {
             if ($value === null) {
                 return true;

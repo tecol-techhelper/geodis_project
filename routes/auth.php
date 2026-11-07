@@ -42,10 +42,6 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
         Volt::route('filesIndex', 'services.edifact-file-manager.files-index')
             ->name('edifactfiles.index');
 
-        Volt::route('uploadFile', 'services.upload-file-modal')->name('upload.file');
-
-        Volt::route('file_management', 'services.uploaded-file')->name('uploaded.file');
-
         Volt::route('auditoria', 'pages.audits.index')
             ->name('audits.index');
 
@@ -63,6 +59,11 @@ Route::middleware(['auth', 'blocked', 'is_active'])->group(function () {
 
         Volt::route('regionales', 'pages.admin.regions.index')
             ->name('regions.index');
+    });
+
+    Route::middleware('can:manage-support-files')->group(function () {
+        Volt::route('uploadFile', 'services.upload-file-modal')->name('upload.file');
+        Volt::route('file_management', 'services.uploaded-file')->name('uploaded.file');
     });
 
     Route::middleware(['blocked'])->group(function () {

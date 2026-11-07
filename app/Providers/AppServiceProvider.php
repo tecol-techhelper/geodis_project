@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Core\InternalControllers\AuditController;
+use App\Models\User;
 use DateInterval;
 use Illuminate\Auth\SessionGuard;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -11,6 +12,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
@@ -32,6 +34,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Gate::define('manage-support-files', fn (User $user): bool => $user->canManageSupportFiles());
+
         RateLimiter::for('geodis-api', function (Request $request): Limit {
             return Limit::perMinute(max(1, (int) config('geodis_api.rate_limit_per_minute', 60)))
                 ->by('geodis-api:ip:'.($request->ip() ?: 'unknown'));
